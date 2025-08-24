@@ -491,7 +491,7 @@ public:
         */
         if (s->fb_w < 1200) return;
 
-        NVGcolor color[3] = { COLOR_YELLOW, COLOR_GREEN, COLOR_ORANGE };
+        NVGcolor color[3] = { COLOR_RED, COLOR_GREEN, COLOR_ORANGE };
         for (int i = 0; i < 3; i++) {
             drawPlotting(s, i, plotIndex, plotX, plotQueue[i], plotSize, &color[i], 3.0f);
         }
