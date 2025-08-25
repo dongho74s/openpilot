@@ -25,7 +25,7 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
       "OpenpilotEnabledToggle",
       tr("Enable openpilot"),
       tr("Use the openpilot system for adaptive cruise control and lane keep driver assistance. Your attention is required at all times to use this feature. Changing this setting takes effect when the car is powered off."),
-      "../assets/img_spinner_Trailblazerw.png",
+      "../assets/img_spinner_TrailblazerW.png",
     },
     {
       "ExperimentalMode",
