@@ -41,7 +41,7 @@ class Spinner:
   def render(self):
     center = rl.Vector2(gui_app.width / 2.0, gui_app.height / 2.0)
     spinner_origin = rl.Vector2(TEXTURE_SIZE / 2.0, TEXTURE_SIZE / 2.0)
-    comma_position = rl.Vector2(center.x - TEXTURE_SIZE / 2.0, center.y +35 - TEXTURE_SIZE / 2.0)
+    comma_position = rl.Vector2(center.x - TEXTURE_SIZE / 2.0, center.y +350 - TEXTURE_SIZE / 2.0)
 
     delta_time = rl.get_frame_time()
     self._rotation = (self._rotation + DEGREES_PER_SECOND * delta_time) % 360.0
