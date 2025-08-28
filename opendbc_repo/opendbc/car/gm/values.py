@@ -43,7 +43,7 @@ class CarControllerParams:
     if CP.carFingerprint in (CAMERA_ACC_CAR | SDGM_CAR) and CP.carFingerprint not in CC_ONLY_CAR:
       self.MAX_GAS = 1346.0
       self.MAX_ACC_REGEN = -540.0
-      self.INACTIVE_REGEN = -400.0
+      self.INACTIVE_REGEN = -350.0
       # Camera ACC vehicles have no regen while enabled.
       # Camera transitions to MAX_ACC_REGEN from ZERO_GAS and uses friction brakes instantly
       max_regen_acceleration = 0.
