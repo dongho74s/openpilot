@@ -297,7 +297,7 @@ class CarInterface(CarInterfaceBase):
       ret.stoppingDecelRate = 1.5 # brake_travel/s while trying to stop
       ret.vEgoStopping = 0.4
       ret.vEgoStarting = 0.35
-      ret.stopAccel = -0.5
+      ret.stopAccel = -1.5
       ret.startingState = True
       ret.startAccel = 1.0
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
