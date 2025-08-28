@@ -264,7 +264,7 @@ static safety_config gm_init(uint16_t param) {
     .max_gas = 1018 * GM_GAS_TO_CAN,
     .min_gas = -650 * GM_GAS_TO_CAN,
     .inactive_gas = -650 * GM_GAS_TO_CAN,
-    .max_brake = 400,
+    .max_brake = 600,
   };
 
   static const CanMsg GM_ASCM_TX_MSGS[] = {{0x180, 0, 4}, {0x409, 0, 7}, {0x40A, 0, 7}, {0x2CB, 0, 8}, {0x370, 0, 6}, {0x200, 0, 6}, {0x1E1, 0, 7}, {0xBD, 0, 7},// pt bus
