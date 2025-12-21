@@ -73,6 +73,8 @@ class CAR:
   BOLT_EUV = "CHEVROLET BOLT EUV 2022"
   SILVERADO = "CHEVROLET SILVERADO 1500 2020"
   EQUINOX = "CHEVROLET EQUINOX 2019"
+  TRAILBLAZER = "CHEVROLET TRAILBLAZER 2021~2023"
+  TRAX = "CHEVROLET TRAX CROSSOVER 2023"
   # Separate car def is required when there is no ASCM
   # (for now) unless there is a way to detect it when it has been unplugged...
   # TODO EB: 0x2cb in fingerprint[0] seems to indicate ASCM presence
@@ -120,7 +122,9 @@ CAR_INFO: Dict[str, Union[GMCarInfo, List[GMCarInfo]]] = {
   CAR.EQUINOX: GMCarInfo("Chevrolet Equinox 2019-22"),
   CAR.VOLT_CC: GMCarInfo("Chevrolet Volt No ACC"),
   CAR.BOLT_CC: GMCarInfo("Chevrolet Bolt No ACC"),
-}
+  CAR.TRAILBLAZER:GMCarInfo("CHEVROLET TRAILBLAZER 2021~2023"),
+  CAR.TRAX: GMCarInfo("CHEVROLET TRAX CROSSOVER 2023"),
+  }
 
 
 class CruiseButtons:
@@ -275,7 +279,15 @@ FINGERPRINTS = {
   {
     190: 6, 193: 8, 197: 8, 201: 8, 209: 7, 211: 2, 241: 6, 249: 8, 257: 8, 288: 5, 289: 8, 298: 8, 304: 1, 309: 8, 311: 8, 313: 8, 320: 3, 328: 1, 352: 5, 381: 8, 384: 4, 386: 8, 388: 8, 413: 8, 451: 8, 452: 8, 453: 6, 455: 7, 463: 3, 479: 3, 481: 7, 485: 8, 489: 8, 497: 8, 500: 6, 501: 8, 510: 8, 528: 5, 532: 6, 560: 8, 562: 8, 563: 5, 565: 5, 608: 8, 609: 6, 610: 6, 611: 6, 612: 8, 613: 8, 707: 8, 715: 8, 717: 5, 753: 5, 761: 7, 789: 5, 800: 6, 810: 8, 840: 5, 842: 5, 844: 8, 869: 4, 880: 6, 977: 8, 1001: 8, 1011: 6, 1017: 8, 1020: 8, 1033: 7, 1034: 7, 1217: 8, 1221: 5, 1233: 8, 1249: 8, 1259: 8, 1261: 7, 1263: 4, 1265: 8, 1267: 1, 1271: 8, 1280: 4, 1296: 4, 1300: 8, 1930: 7
   }],
-}
+  CAR.TRAILBLAZER: [
+  {
+    190: 6, 193: 8, 197: 8, 201: 8, 209: 7, 211: 2, 241: 6, 249: 8, 288: 5, 298: 8, 304: 3, 309: 8, 311: 8, 313: 8, 320: 4, 328: 1, 352: 5, 381: 8, 384: 4, 386: 8, 388: 8, 413: 8, 451: 8, 452: 8, 453: 6, 455: 7, 463: 3, 479: 3, 481: 7, 485: 8, 489: 8, 497: 8, 500: 6, 501: 8, 532: 6, 560: 8, 562: 8, 563: 5, 565: 5, 707: 8, 715: 8, 717: 5, 761: 7, 789: 5, 800: 6, 810: 8, 840: 5, 842: 5, 844: 8, 869: 4, 880: 6, 977: 8, 1001: 8, 1011: 6, 1017: 8, 1020: 8, 1217: 8, 1221: 5, 1233: 8, 1249: 8, 1259: 8, 1261: 7, 1263: 4, 1265: 8, 1267: 1, 1271: 8, 1280: 4, 1296: 4, 1300: 8, 1930: 7 
+  }],
+  CAR.TRAX: [
+  {
+    190: 6, 193: 8, 197: 8, 201: 8, 209: 7, 211: 2, 241: 6, 249: 8, 288: 5, 298: 8, 304: 3, 309: 8, 311: 8, 313: 8, 320: 4, 322: 7, 328: 1, 352: 5, 381: 8, 384: 4, 386: 8, 388: 8, 413: 8, 451: 8, 452: 8, 453: 6, 455: 7, 479: 3, 481: 7, 485: 8, 489: 8, 497: 8, 500: 6, 501: 8, 532: 6, 560: 8, 562: 8, 563: 5, 565: 5, 608: 8, 609: 6, 610: 6, 611: 6, 612: 8, 613: 8, 707: 8, 715: 8, 717: 5, 761: 7, 789: 5, 800: 6, 810: 8, 840: 5, 842: 5, 844: 8, 869: 4, 880: 6, 977: 8, 1001: 8, 1011: 6, 1017: 8, 1020: 8, 1217: 8, 1221: 5, 1233: 8, 1249: 8, 1259: 8, 1261: 7, 1263: 4, 1265: 8, 1267: 1, 1271: 8, 1280: 4, 1296: 4, 1300: 8, 1930: 7
+  }],
+  }
 
 DBC: Dict[str, Dict[str, str]] = defaultdict(lambda: dbc_dict('gm_global_a_powertrain_generated', 'gm_global_a_object', chassis_dbc='gm_global_a_chassis'))
 
@@ -283,7 +295,7 @@ EV_CAR = {CAR.VOLT, CAR.BOLT_EUV, CAR.VOLT_CC, CAR.BOLT_CC}
 CC_ONLY_CAR = {CAR.VOLT_CC, CAR.BOLT_CC}
 
 # We're integrated at the camera with VOACC on these cars (instead of ASCM w/ OBD-II harness)
-CAMERA_ACC_CAR = {CAR.BOLT_EUV, CAR.SILVERADO, CAR.EQUINOX, CAR.VOLT_CC, CAR.BOLT_CC}
+CAMERA_ACC_CAR = {CAR.BOLT_EUV, CAR.SILVERADO, CAR.EQUINOX, CAR.TRAILBLAZER, CAR.TRAX, CAT.VOLT, CAR.BOLT_CC}
 
 STEER_THRESHOLD = 1.0
 
