@@ -236,6 +236,15 @@ class CarInterface(CarInterfaceBase):
       ret.centerToFront = ret.wheelbase * 0.4
       ret.tireStiffnessFactor = 1.0
       ret.steerActuatorDelay = 0.2
+     
+      ret.longitudinalTuning.kpV = [2.0, 1.5]
+      ret.longitudinalTuning.kiV = [0.72]
+
+      ret.lateralTuning.pid.kpBP = [0., 40.]
+      ret.lateralTuning.pid.kpV = [0., 0.17]
+      ret.lateralTuning.pid.kiBP = [0.]
+      ret.lateralTuning.pid.kiV = [0.]
+      ret.lateralTuning.pid.kf = 1.
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
     
     elif candidate == CAR.TRAX:
