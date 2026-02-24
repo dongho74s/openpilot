@@ -303,7 +303,7 @@ class DriverStatus():
 
     standstill_exemption = standstill and self.awareness - self.step_change <= self.threshold_prompt
     certainly_distracted = self.driver_distraction_filter.x > 0.63 and self.driver_distracted and self.face_detected
-    maybe_distracted = self.hi_stds > self.settings._HI_STD_FALLBACK_TIME or not self.face_detected
+    maybe_distracted = self.hi_stds > self.settings._HI_STD_FALLBACK_TIME
     if certainly_distracted or maybe_distracted:
       # should always be counting if distracted unless at standstill and reaching orange
       if not standstill_exemption:
