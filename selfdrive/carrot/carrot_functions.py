@@ -21,6 +21,9 @@ LaneChangeState = log.LaneChangeState
 _SPDTF_BP    = [20.0, 32.0, 50.0, 80.0]   # 속도 보간점(km/h)
 _SPDTF_DELTA = [-0.20, 0.0, 0.18, 0.28]   # 위 속도에서 t_follow 가감(초)
 _SPDTF_MIN   = 0.55                        # 보정 후 t_follow 안전 하한(초)
+# t_follow 감소(앞차 가속 등으로 간격 좁힐 때) 변화율 제한 — 즉시 스냅하면 '순간 가속'으로
+# 느껴지므로 부드럽게. 증가(0.1)보다 빠르게 둬 추종 반응성은 유지. (스텝/호출당, *DT_MDL)
+_TF_DECREASE_RATE = 1.5
 
 class XState(Enum):
   lead = 0
@@ -368,6 +371,9 @@ class CarrotPlanner:
     # 증가 방향만 천천히 반영
     if t_follow > self.t_follow_last:
       t_follow = min(t_follow, self.t_follow_last + 0.1 * DT_MDL)
+    elif t_follow < self.t_follow_last:
+      # 감소(앞차 가속 등으로 간격 좁힐 때)도 즉시 스냅하지 않고 부드럽게 → 순간 가속 완화.
+      t_follow = max(t_follow, self.t_follow_last - _TF_DECREASE_RATE * DT_MDL)
 
     self.t_follow_last = float(t_follow)
     return float(t_follow + adjust_t_follow)

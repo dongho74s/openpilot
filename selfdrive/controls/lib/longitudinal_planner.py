@@ -33,7 +33,7 @@ JERK_EASE_TIME = 0.4        # 새 maneuver 시작 후 jerk를 100%로 키우는 
 JERK_EASE_FLOOR = 0.3       # 시작 시 jerk 비율 하한(감속 onset 등)
 # 가속은 선행차 추종 재가속(거리 좁히기)이 느리지 않게 시작 jerk를 더 높게 둔다.
 # (감속보다 높은 floor → 초중반 가속력↑, 단 0에서 시작하는 ease 자체는 유지해 급가속감 방지)
-JERK_EASE_FLOOR_ACCEL = 0.55
+JERK_EASE_FLOOR_ACCEL = 0.6
 # 가속 ease-out: 가속을 마무리하며(현재 가속 중, 양의 가속을 0 근처로 줄이는 구간) 목표
 # 차간거리에 살며시 도달하도록 부드러운 jerk를 쓴다(사용자 요청: 끝부분은 더 부드럽게).
 ACCEL_EASEOUT_JERK = 1.2
@@ -41,6 +41,13 @@ ACCEL_EASEOUT_JERK = 1.2
 # 충분한 제동이 미리 들어가게 한다(고속 늦은 감지로 인한 충돌 우려 대응).
 HIGH_SPEED_BRAKE_KPH = 70.0
 HIGH_SPEED_BRAKE_TTC = 8.0  # 이 TTC(초) 이내로 접근 중이면 제동 ease 해제
+
+# 내리막 정지 보정: 내리막에선 중력(전방가속 g·sin)이 더해져 같은 제동으로도 덜 감속되어
+# 정지점을 지나쳐 선행차에 밀착한다. 정지/선행차 감속 접근 중 + 저속 + 내리막일 때만
+# 중력분을 보강 제동해 내리막 정지를 평지와 동일하게 한다(정속 주행엔 미적용=이중제동 방지).
+GRADE_STOP_V = 9.0      # 이 속도(m/s, ~32km/h) 미만에서만 적용
+GRADE_STOP_GAIN = 0.35  # 중력분 보상 비율 (0.8→0.35: 과제동 완화, 평지 대비 약 10% 더만)
+GRADE_STOP_MAX = 0.25   # 보강 제동 상한(m/s^2) (0.6→0.25)
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [2.4, 4.8] #[1.7, 3.2]
@@ -258,6 +265,29 @@ class LongitudinalPlanner:
     a_target = float(np.interp(self.dt, CONTROL_N_T_IDX, self.a_desired_trajectory))
     v_ego_kph = v_ego * CV.MS_TO_KPH
 
+    # ── 내리막 정지 보정 (중력 보상) ──────────────────────────────────────────
+    # 정지(e2eStop/shouldStop) 또는 선행차 감속 접근 중 + 저속 + 내리막일 때만, 중력
+    # 전방가속분을 제동에 보강해 정지점을 넘어 밀착하는 것을 막는다(평지와 동일하게).
+    if v_ego < GRADE_STOP_V and a_target < -0.3:
+      try:
+        onced = sm['carControl'].orientationNED
+        pitch = float(onced[1]) if len(onced) == 3 else 0.0
+      except Exception:
+        pitch = 0.0
+      if pitch < -0.005:  # 내리막
+        decel_intent = False
+        try:
+          if carrot.xState.value == 3 or sm['modelV2'].action.shouldStop:
+            decel_intent = True
+          else:
+            _l = sm['radarState'].leadOne
+            if _l.status and _l.vRel < -0.3:  # 선행차 접근/감속
+              decel_intent = True
+        except Exception:
+          pass
+        if decel_intent:
+          a_target -= min(-9.81 * math.sin(pitch) * GRADE_STOP_GAIN, GRADE_STOP_MAX)
+
     # ── Jerk ease-in (A안): 가감속 시작 시 jerk를 점증(S-curve)시켜 onset jolt 완화 ──
     # maneuver phase를 a_target '부호'로 판정하고 데드밴드(±0.15)로 미세 진동을 무시한다.
     # 가속↔감속 '전환'에서만 ramp를 재시작하므로, 지속 가감속에서는 jerk가 100%까지
@@ -283,7 +313,7 @@ class LongitudinalPlanner:
       else:
         # 진짜 가속 build-up. 선행차 추종 재가속(거리 좁히기)이 느리지 않도록 저속 jerk를
         # 올리고(0.6→0.8) 가속 전용 ease floor(0.5)로 초중반 가속력을 높인다(급가속감은 ease로 방지).
-        jerk_speed = float(np.interp(v_ego_kph, [0.0, 30.0, 80.0], [0.85, 1.15, 1.4]))
+        jerk_speed = float(np.interp(v_ego_kph, [0.0, 30.0, 80.0], [0.95, 1.2, 1.4]))
         jerk_accel = float(np.interp(a_prev, [0.0, 1.0], [1.0, 0.7]))
         ease_acc = float(np.clip(self._jerk_ramp_t / JERK_EASE_TIME, JERK_EASE_FLOOR_ACCEL, 1.0))
         max_positive_jerk = jerk_speed * jerk_accel * ease_acc
