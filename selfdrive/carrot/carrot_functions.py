@@ -156,6 +156,7 @@ class CarrotPlanner:
     self.learner = CarrotLearner()
     self.profiler = DrivingStyleProfiler()
     self.filtered_j_lead = 0.0
+    self._v_ego_kph = 0.0
 
   def _params_update(self):
     self.frame += 1
@@ -314,6 +315,7 @@ class CarrotPlanner:
     v_kph = v_ego * CV.MS_TO_KPH
     tf_final = max(tf_final + float(np.interp(v_kph, _SPDTF_BP, _SPDTF_DELTA)), _SPDTF_MIN)
     self._tf_applied = float(tf_final)
+    self._v_ego_kph = float(v_kph)   # dynamic_t_follow catch-up 속도 게이트용
     return self.apply_t_follow(tf_final)
 
 
@@ -348,6 +350,15 @@ class CarrotPlanner:
         t_follow += np.interp(self.filtered_j_lead, [-3.0, -0.5, 0.5, 2.0], [1.0, 0.0, 0.0, -1.0]) * self.dynamicTFollow
         t_follow = np.clip(t_follow, 0.3, 2.0)
 
+      # 선행차가 '정속으로 멀어지는'(vRel>0, jLead~0) 경우엔 위 jLead 로직이 반응하지 않아
+      # 중고속에서 재가속(catch-up)이 약했다(로그 0101: 40-70 +0.5, 70+ +0.2). 간격목표를
+      # 속도비례로 살짝 좁혀 catch-up을 민첩하게. 저속(≤30, 이미 충분)·밀착(≤6m)엔 미적용.
+      v_kph = getattr(self, "_v_ego_kph", 0.0)
+      if lead.vRel > 0.5 and lead.dRel > 6.0:
+        catchup = float(np.interp(v_kph, [30.0, 50.0, 90.0], [0.0, 0.15, 0.30]))
+        catchup *= float(np.interp(lead.vRel, [0.5, 3.0], [0.0, 1.0]))
+        t_follow = max(t_follow - catchup, 0.3)
+
       # Dynamic Jerk Control for early & gentle braking:
       # If lead deceleration is detected and we are not braking hard, increase jerk penalty (make it smoother/gentler).
       # Relax it back to normal jerk factor as distance error grows or ego deceleration increases.
@@ -358,9 +369,9 @@ class CarrotPlanner:
         scale_decel = float(np.interp(prev_a_scalar, [-1.5, -0.5], [1.0, 1.8]))
         jerk_scale = min(scale_err, scale_decel)
         self.jerk_factor_apply = self.jerk_factor * jerk_scale
-      elif self.filtered_j_lead > 0.5:
-        # 선행차가 가속하며 멀어짐: jerk penalty를 약간 낮춰 재가속을 민첩하게 (부분 복원).
-        # 원래(0.2/0.5)보다 둔감한 임계(0.5)·완화(0.7)로 토크 surge를 피하면서 회복성만 보강.
+      elif self.filtered_j_lead > 0.5 or lead.vRel > 1.0:
+        # 선행차가 가속/정속으로 멀어짐: jerk penalty를 약간 낮춰 재가속을 민첩하게 (부분 복원).
+        # jLead(가속 변화)뿐 아니라 vRel>1(정속 이탈)에도 적용 → 중고속 catch-up 보강.
         self.jerk_factor_apply = self.jerk_factor * 0.7
 
     return self.apply_t_follow(t_follow, 0.0)

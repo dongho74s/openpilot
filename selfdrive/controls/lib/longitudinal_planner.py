@@ -268,7 +268,9 @@ class LongitudinalPlanner:
     # ── 내리막 정지 보정 (중력 보상) ──────────────────────────────────────────
     # 정지(e2eStop/shouldStop) 또는 선행차 감속 접근 중 + 저속 + 내리막일 때만, 중력
     # 전방가속분을 제동에 보강해 정지점을 넘어 밀착하는 것을 막는다(평지와 동일하게).
-    if v_ego < GRADE_STOP_V and a_target < -0.3:
+    # a_target<0.15: 가속 중이 아닐 때(정지/제동/완만한 추종)만 개입 → 중력에 끌려 간격이
+    # 좁아지는(내리막 밀착) 정속 추종까지 포함해 보정(가속 중엔 미개입=catch-up 방해 방지).
+    if v_ego < GRADE_STOP_V and a_target < 0.15:
       try:
         onced = sm['carControl'].orientationNED
         pitch = float(onced[1]) if len(onced) == 3 else 0.0
@@ -281,7 +283,9 @@ class LongitudinalPlanner:
             decel_intent = True
           else:
             _l = sm['radarState'].leadOne
-            if _l.status and _l.vRel < -0.3:  # 선행차 접근/감속
+            # 선행차 추종 중이면(정속 포함) 내리막에서 중력에 끌려 간격이 좁아지므로 간격
+            # 유지를 위해 개입(기존엔 접근 vRel<-0.3에서만 → 완만한 추종 중 밀착이 방치됨).
+            if _l.status:
               decel_intent = True
         except Exception:
           pass
@@ -313,7 +317,7 @@ class LongitudinalPlanner:
       else:
         # 진짜 가속 build-up. 선행차 추종 재가속(거리 좁히기)이 느리지 않도록 저속 jerk를
         # 올리고(0.6→0.8) 가속 전용 ease floor(0.5)로 초중반 가속력을 높인다(급가속감은 ease로 방지).
-        jerk_speed = float(np.interp(v_ego_kph, [0.0, 30.0, 80.0], [0.95, 1.2, 1.4]))
+        jerk_speed = float(np.interp(v_ego_kph, [0.0, 30.0, 80.0], [0.95, 1.5, 2.0]))
         jerk_accel = float(np.interp(a_prev, [0.0, 1.0], [1.0, 0.7]))
         ease_acc = float(np.clip(self._jerk_ramp_t / JERK_EASE_TIME, JERK_EASE_FLOOR_ACCEL, 1.0))
         max_positive_jerk = jerk_speed * jerk_accel * ease_acc
