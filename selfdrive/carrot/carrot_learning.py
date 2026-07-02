@@ -29,6 +29,7 @@ karpathy.md 원칙 준수: 최소 구현, 단일 목적.
 
 import json
 import math
+from collections import deque
 import numpy as np
 from openpilot.common.params import Params
 from openpilot.common.conversions import Conversions as CV
@@ -54,8 +55,14 @@ _CURVE_RATE_DEG_S = 10.0        # (구) 커브 진입 판단: 조향각 변화�
 _CURVE_DEG = 8.0               # 커브 구간 판단 조향각 임계값 (도). 이 이상이면 코너로 보고 매 틱 표본 수집
 _LATERAL_MIN_SAMPLES = 200      # PathOffset 추천을 위한 최소 직진 샘플 수
 _LATERAL_MIN_CURVE = 100        # SteerActuatorDelay 추천 최소 커브 표본 수 (per-tick, _DT=0.1 → 약 10초)
-_PATH_OFFSET_DEG_THRESHOLD = 1.5  # 평균 편차가 이 이상이면 PathOffset 추천 (도)
-_PATH_OFFSET_DEG_PER_UNIT = 0.1   # 1 도 편차 ≈ 10 units PathOffset 변화 (실험값)
+# PathOffset 신호: 차선중심 대비 횡편차(m). (구버전: 직진 평균 '조향각'을 신호로 썼으나
+# PathOffset은 경로 횡위치만 옮길 뿐 조향각 평균(캠버/얼라인먼트로 결정)을 못 바꿔 신호가
+# 수렴하지 않고 ±150(=±1.5m!)까지 폭주 → 차선 쏠림 유발. 차선중심 편차는 보정이 반영되면
+# 0으로 수렴하는 자기제한 신호.)
+_PATH_OFFSET_LC_MIN_M = 0.08      # 평균 차선중심 편차가 이 이상(m)이면 추천
+_PATH_OFFSET_LC_GAIN = 0.5        # 편차(m)→units 변환 감쇠(0.5: 과보정 방지, 2~3사이클 수렴)
+_PATH_OFFSET_STEP_MAX = 10        # 1회 추천 최대 변화량(units)
+_PATH_OFFSET_ABS_MAX = 30         # 절대 상한(units, =0.30m). 구버전 ±150에서 대폭 축소
 _CURVE_OVERRIDE_RATIO = 0.5     # 커브 진입의 50% 이상에서 override → SteerActuatorDelay 증가
 _DELAY_STEP_UNIT = 10           # SteerActuatorDelay 한 번 추천 시 변화량 (UI 단위, +0.1s)
 _SAD_LEARN_MIN = 15             # SteerActuatorDelay 학습 하한 (0.15s) — 과거 50은 너무 높았음
@@ -285,6 +292,8 @@ class CarrotLearner:
     # Phase 2
     self._steer_acc = 0.0        # 직진 구간 조향각 누적합 (도)
     self._steer_count = 0        # 직진 샘플 수
+    self._lane_center_acc = 0.0  # 직진 구간 차선중심 y좌표 누적합 (m, 모델 프레임 — path.y와 동일 좌표계)
+    self._lane_center_n = 0      # 차선중심 표본 수 (세션 한정, 비영속)
     self._prev_steer_deg = 0.0   # 이전 프레임 조향각
     self._curve_entries = 0      # 커브 진입 이벤트 수
     self._curve_overrides = 0    # 커브 진입 중 steeringPressed 이벤트 수
@@ -379,6 +388,8 @@ class CarrotLearner:
     self._prev_long_err = 0.0        # 이전 프레임 추종 오차
     self._prev_cmd_accel = 0.0       # 이전 프레임 지령가속도 (transient 감지용)
     self._long_trans_hold = 0        # transient 유지 카운터(스텝)
+    self._cmd_hist = deque(maxlen=12)  # 지령가속도 이력(지연보상 비교용, 1.2s, 비영속)
+    self._long_delay_units = 20      # LongActuatorDelay 캐시(UI units, 주기 갱신)
     self._long_trans_samples = 0     # transient(지령 변화 중) 표본 수 → lag 분모
     self._long_trans_lag = 0         # transient 중 lag(둔감) 표본 수
     self._long_trans_err_sum = 0.0   # transient 중 |추종오차| 누적
@@ -580,6 +591,17 @@ class CarrotLearner:
         if abs(steer_deg) < _STRAIGHT_DEG and not steer_pressed:
           self._steer_acc += steer_deg
           self._steer_count += 1
+          # PathOffset용 차선중심 편차(m) 수집 — PathOffset이 실제로 바꾸는 신호(횡위치)
+          try:
+            if sm is not None and sm.alive.get('modelV2', False):
+              md = sm['modelV2']
+              ll, lp = md.laneLines, md.laneLineProbs
+              if len(ll) >= 4 and len(lp) >= 4 and lp[1] > 0.5 and lp[2] > 0.5 \
+                 and len(ll[1].y) > 0 and len(ll[2].y) > 0:
+                self._lane_center_acc += (ll[1].y[0] + ll[2].y[0]) * 0.5
+                self._lane_center_n += 1
+          except Exception:
+            pass
 
         # 커브 구간 감지: 조향각이 충분히 크고 속도가 있으면 코너로 보고 "매 틱" 표본 수집.
         # (구버전은 진입 순간 1틱에서 steer_pressed인 경우만 봐서, 코너 중간에 들어가는
@@ -830,7 +852,16 @@ class CarrotLearner:
         and v_ego_kph >= 20.0 and sm is not None and sm.alive.get('carControl', False)):
       try:
         cmd_accel = sm['carControl'].actuators.accel
-        long_err = cmd_accel - a_ego
+        # 지연 보상 비교: 출력(cmd)은 계획을 action_t(=LongActuatorDelay+DT_MDL)만큼 앞서
+        # 샘플한 값이므로, 현재 실측(a_ego)은 'action_t 전의 지령'과 비교해야 공정하다.
+        # (구버전: cmd(t)-a_ego(t) → transient마다 선행분이 통째로 lag로 계산돼 Delay/Kf가
+        #  무한 상향되는 양의 피드백(runaway 20→90) → 감지 순간 과제동 유발)
+        if self._long_samples % 100 == 0:
+          self._long_delay_units = max(0, self._params.get_int("LongActuatorDelay"))
+        self._cmd_hist.append(float(cmd_accel))
+        n_delay = min(len(self._cmd_hist) - 1,
+                      int((self._long_delay_units * 0.01 + 0.05) / _DT + 0.5))
+        long_err = self._cmd_hist[-1 - n_delay] - a_ego
         self._long_samples += 1
         self._long_err_sum += abs(long_err)
         if abs(long_err) >= _LONG_ERR_THRESHOLD:
@@ -856,6 +887,10 @@ class CarrotLearner:
         self._prev_long_err = long_err
       except Exception:
         pass
+    else:
+      # 수집 구간 단절(페달 개입/저속 등) → 이력 클리어로 stale 지연보상 비교 방지
+      self._cmd_hist.clear()
+      self._long_trans_hold = 0
 
     # ── Phase 9: 수동주행 기준분포 로거 ──────────────────────────────
     # openpilot 비인게이지(=사람이 직접 운전) 주행 중, 상황별 사람의 가감속·추종거리·
@@ -945,6 +980,8 @@ class CarrotLearner:
     """조향 (PathOffset/SteerActuatorDelay/SteerRatioRate + 토크 조향) — 방향 카운터 포함"""
     self._steer_acc = 0.0
     self._steer_count = 0
+    self._lane_center_acc = 0.0
+    self._lane_center_n = 0
     self._curve_entries = 0
     self._curve_overrides = 0
     self._curve_overrides_understeer = 0
@@ -1429,20 +1466,24 @@ class CarrotLearner:
     # ── Phase 2: 조향 패턴 추천 ─────────────────────────────────────
     if apply_lat and self.is_angle_control:
       # ── [A] 앵글 조향 차량 튜닝 ────────────────────────────────────
-      # Phase 2a: PathOffset (직진 편차)
-      if self._steer_count >= _LATERAL_MIN_SAMPLES:
-        avg_deg = self._steer_acc / self._steer_count
-        if abs(avg_deg) >= _PATH_OFFSET_DEG_THRESHOLD:
+      # Phase 2a: PathOffset (차선중심 편차) — 신호를 조향각→차선중심 편차(m)로 교체.
+      # 조향각 평균은 PathOffset으로 바뀌지 않아 수렴 불가(runaway ±150, 차선 쏠림 유발).
+      if self._lane_center_n >= _LATERAL_MIN_SAMPLES:
+        # avg_lc = 차선중심의 y좌표(모델 프레임, ego=0). path.y와 같은 좌표계이므로
+        # 경로를 avg_lc 방향으로 그만큼 옮기면 차가 차선중심에 수렴한다(프레임 무관).
+        avg_lc = self._lane_center_acc / self._lane_center_n
+        if abs(avg_lc) >= _PATH_OFFSET_LC_MIN_M:
           current_offset = self._params.get_int("PathOffset")
-          # 양수 avg_deg: 차가 우측으로 쏠림 → PathOffset 증가 (경로를 우측으로)
-          delta = int(avg_deg / _PATH_OFFSET_DEG_PER_UNIT)
-          recommended = int(np.clip(current_offset + delta, -150, 150))
+          delta = int(np.clip(avg_lc * 100.0 * _PATH_OFFSET_LC_GAIN,
+                              -_PATH_OFFSET_STEP_MAX, _PATH_OFFSET_STEP_MAX))
+          recommended = int(np.clip(current_offset + delta,
+                                    -_PATH_OFFSET_ABS_MAX, _PATH_OFFSET_ABS_MAX))
           if recommended != current_offset:
             result["조향 (Steering)"]["PathOffset"] = {
               "current": current_offset,
               "recommended": recommended,
-              "band_kph": "직진 주행 편차 보정",
-              "avg_deg": round(avg_deg, 2),
+              "band_kph": "차선중심 편차 보정",
+              "avg_m": round(avg_lc, 2),
             }
 
       # Phase 2b: SteerActuatorDelay & SteerRatioRate
@@ -1966,6 +2007,20 @@ class CarrotLearner:
             "band_kph": f"거친 정지 완화 (harsh {harsh_ratio*100:.0f}%)",
             "stop_events": self._stop_events,
           }
+      elif harsh_ratio <= 0.2:
+        # 정지가 부드러움: 기본값 방향으로 약하게 감쇠(단방향 래칫 방지).
+        # 근본 원인(예: Delay runaway 과제동)이 고쳐진 뒤 올라간 값이 눌러앉는 것을 막는다.
+        cur_ve = self._cur_or_default("VEgoStopping")
+        default_ve = _PARAM_SPEC["VEgoStopping"]["default"]
+        if cur_ve > default_ve:
+          rec_ve = _decay_toward(cur_ve, default_ve, 2)
+          if rec_ve != cur_ve:
+            result["주행 (Driving)"]["VEgoStopping"] = {
+              "current": cur_ve,
+              "recommended": rec_ve,
+              "band_kph": f"정지 양호 → 기본값 감쇠 (harsh {harsh_ratio*100:.0f}%)",
+              "stop_events": self._stop_events,
+            }
 
       # (3) StopDistanceCarrot: 선행차 뒤 최종 정지 거리 보정
       if self._stop_lead_gap_count >= 3:
@@ -2030,6 +2085,20 @@ class CarrotLearner:
             "band_kph": f"가감속 진동 억제 (overshoot {overshoot_ratio*100:.0f}%)",
             "samples": self._long_samples,
           }
+      elif lag_ratio < 0.15 and overshoot_ratio < 0.15:
+        # 건강(추종 양호): Kf/Delay를 기본값 방향으로 약하게 감쇠 — 단방향 래칫 방지.
+        # (0.15~0.30 사이는 히스테리시스 데드밴드로 무조치. _clamp_spec이 규격 밖으로
+        #  올라가버린 과거 값(예: Delay 90)도 상한으로 즉시 회수한다.)
+        for pkey, step in (("LongTuningKf", _LONG_KF_STEP), ("LongActuatorDelay", _LONG_DELAY_STEP)):
+          cur = self._cur_or_default(pkey)
+          rec = _clamp_spec(pkey, _decay_toward(cur, _PARAM_SPEC[pkey]["default"], step))
+          if rec != cur:
+            result["주행 (Driving)"][pkey] = {
+              "current": cur,
+              "recommended": rec,
+              "band_kph": f"양호 → 기본값 감쇠 (lag {lag_ratio*100:.0f}%)",
+              "samples": self._long_samples,
+            }
 
     # ── Phase 9: 수동주행 코스팅 측정 → LongCoastBand 추천 ────────────
     # 사람이 무페달로 코스팅할 때의 자연 감속(회생제동/엔진브레이크)을 측정하여,
