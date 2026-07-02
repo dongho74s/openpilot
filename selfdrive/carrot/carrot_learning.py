@@ -177,8 +177,11 @@ _PARAM_SPEC = {
   # 종방향 PID / 액추에이터 (문서2)
   "LongTuningKpV":      {"min": 0,    "max": 150,  "default": 100, "conv": 0.01,  "direction": 1,  "apply": "long"},
   "LongTuningKiV":      {"min": 0,    "max": 2000, "default": 0,   "conv": 0.001, "direction": 1,  "apply": "long"},
-  "LongTuningKf":       {"min": 0,    "max": 200,  "default": 100, "conv": 0.01,  "direction": 1,  "apply": "long"},
-  "LongActuatorDelay":  {"min": 0,    "max": 200,  "default": 20,  "conv": 0.01,  "direction": 1,  "apply": "long"},
+  # max 200→120/30: lag 지표가 action_t(=LongActuatorDelay) 선행분만큼 cmd-actual 차이를
+  # 부풀려 무한 상향(runaway, 20→90)시키고 그 결과 output이 궤적을 과도히 앞서 감지 순간
+  # 급제동을 유발 → 상한을 실제 물리값 근방으로 제한.
+  "LongTuningKf":       {"min": 0,    "max": 120,  "default": 100, "conv": 0.01,  "direction": 1,  "apply": "long"},
+  "LongActuatorDelay":  {"min": 0,    "max": 30,   "default": 20,  "conv": 0.01,  "direction": 1,  "apply": "long"},
   # 코스팅 데드밴드(0=비활성). 값↑ = 더 넓은 무가감속 구간 → 코스팅(회생제동) 더 적극 사용
   "LongCoastBand":      {"min": 0,    "max": 40,   "default": 0,   "conv": 0.01,  "direction": 1,  "apply": "long"},
   # 커브 감속 (문서1/실제 knob: vturn_speed의 AutoCurveSpeedFactor)
