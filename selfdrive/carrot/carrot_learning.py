@@ -91,6 +91,10 @@ _JLEAD_AUTO_PANIC_DECEL = -2.5 # TTC와 무관하게 늦은 제동으로 인정�
 _JLEAD_STEP_UNIT = 20           # JLeadFactor3 한 번 추천 시 변화량 (강화: 10 -> 20)
 _JLEAD_REDUCE_STEP = -7         # 제동 과다 시 변화량
 _JLEAD_GAS_THRESHOLD_SEC = 5.0  # 제동 중 가속 개입 누적 기준 (초)
+# JLeadFactor3 추천 상한(80→20). late-braking 신호로 무한 상향되어(runaway) 37까지 올라
+# 선행차 감지 초기 지령 jerk 스파이크(급격한 onset)를 유발한 문제 대응. 고속 선제 제동은
+# 별도 Lever A/C(HIGH_SPEED_*)가 담당하므로 이 상한을 낮춰도 고속 안전성은 유지된다.
+_JLEAD_MAX_RECO = 20
 
 # ── Phase 5 상수 (DynamicTFollow / TFollowDecelBoost) ────────────────
 # DynamicTFollow: 앞차 급감속(jLead↓) 중 브레이크 개입 횟수 기반
@@ -1685,7 +1689,7 @@ class CarrotLearner:
           dynamic_step = _JLEAD_PROACTIVE_STEP
           reason = "proactive braking (manual)"
 
-        recommended = min(80, current_jlead + dynamic_step) # 상한 100 -> 80
+        recommended = min(_JLEAD_MAX_RECO, current_jlead + dynamic_step) # 상한 80 -> 20 (runaway 방지)
         if recommended != current_jlead:
           jlead_candidate = {
             "current": current_jlead,
@@ -1696,8 +1700,8 @@ class CarrotLearner:
           }
       elif self._jlead_gas_acc >= _JLEAD_GAS_THRESHOLD_SEC:
         current_jlead = self._params.get_int("JLeadFactor3")
-        recommended = max(50, current_jlead + _JLEAD_REDUCE_STEP)
-        recommended = min(80, recommended) # 상한 80 적용
+        recommended = max(0, current_jlead + _JLEAD_REDUCE_STEP)
+        recommended = min(_JLEAD_MAX_RECO, recommended) # 상한 20 적용
         if recommended != current_jlead:
           jlead_candidate = {
             "current": current_jlead,
