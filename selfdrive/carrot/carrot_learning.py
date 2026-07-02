@@ -414,6 +414,14 @@ class CarrotLearner:
     """현재 GAP 단계 설정 (1~4). CarrotPlanner에서 매 프레임 전달."""
     self._current_gap = max(1, min(4, gap))
 
+  def _cur_or_default(self, key: str) -> int:
+    """현재 파라미터값(get_int). 미설정(≤0)이면 레지스트리 기본값으로 대체.
+    (추천 계산에서 반복되던 'get_int 후 ≤0이면 default' 패턴을 통일.)"""
+    cur = self._params.get_int(key)
+    if cur <= 0:
+      cur = _PARAM_SPEC[key]["default"]
+    return cur
+
   def update(self, v_ego_kph: float, gas_pressed: bool, engaged: bool, gear_park: bool,
              steer_deg: float = 0.0, steer_pressed: bool = False,
              brake_pressed: bool = False, lead_drel: float = 0.0, lead_v_kph: float = 0.0,
@@ -1860,9 +1868,7 @@ class CarrotLearner:
     #   값↑ = 곡률을 더 민감하게 인식 → 커브 목표속도↓ → 커브 시작 전 더 일찍/충분히 감속.
     # (과거: 미사용 파라미터 AutoCurveSpeedAggressiveness를 조정해 실주행 효과가 없었음)
     key = "AutoCurveSpeedFactor"
-    current_raw = self._params.get_int(key)
-    if current_raw <= 0:
-      current_raw = _PARAM_SPEC["AutoCurveSpeedFactor"]["default"]
+    current_raw = self._cur_or_default(key)
 
     recommended_raw = current_raw
     reason = ""
@@ -1944,9 +1950,7 @@ class CarrotLearner:
 
       # (2) VEgoStopping: 거친 정지 비율이 높으면 정지 판정 속도 상향 → 부드럽게 멈춤
       if harsh_ratio >= 0.5:
-        cur_ve = self._params.get_int("VEgoStopping")
-        if cur_ve <= 0:
-          cur_ve = _PARAM_SPEC["VEgoStopping"]["default"]
+        cur_ve = self._cur_or_default("VEgoStopping")
         rec_ve = _clamp_spec("VEgoStopping", cur_ve + _STOP_VEGO_STEP)
         if rec_ve != cur_ve:
           result["주행 (Driving)"]["VEgoStopping"] = {
@@ -1959,9 +1963,7 @@ class CarrotLearner:
       # (3) StopDistanceCarrot: 선행차 뒤 최종 정지 거리 보정
       if self._stop_lead_gap_count >= 3:
         avg_gap = self._stop_lead_gap_sum / self._stop_lead_gap_count
-        cur_sd = self._params.get_int("StopDistanceCarrot")
-        if cur_sd <= 0:
-          cur_sd = _PARAM_SPEC["StopDistanceCarrot"]["default"]
+        cur_sd = self._cur_or_default("StopDistanceCarrot")
         rec_sd = cur_sd
         sd_reason = ""
         if avg_gap >= _STOP_GAP_WIDE_M and gas_per > brake_per:
@@ -1992,9 +1994,7 @@ class CarrotLearner:
 
       if lag_ratio >= _LONG_LAG_RATIO and lag_ratio > overshoot_ratio:
         # 둔감(추종 지연) 우세 → 피드포워드/지연보정 상향 (선제 가감속)
-        cur_kf = self._params.get_int("LongTuningKf")
-        if cur_kf <= 0:
-          cur_kf = _PARAM_SPEC["LongTuningKf"]["default"]
+        cur_kf = self._cur_or_default("LongTuningKf")
         rec_kf = _clamp_spec("LongTuningKf", cur_kf + _LONG_KF_STEP)
         if rec_kf != cur_kf:
           result["주행 (Driving)"]["LongTuningKf"] = {
@@ -2003,9 +2003,7 @@ class CarrotLearner:
             "band_kph": f"가감속 둔감 보정 (lag {lag_ratio*100:.0f}%, err {mean_abs_err:.2f})",
             "samples": self._long_samples,
           }
-        cur_ld = self._params.get_int("LongActuatorDelay")
-        if cur_ld <= 0:
-          cur_ld = _PARAM_SPEC["LongActuatorDelay"]["default"]
+        cur_ld = self._cur_or_default("LongActuatorDelay")
         rec_ld = _clamp_spec("LongActuatorDelay", cur_ld + _LONG_DELAY_STEP)
         if rec_ld != cur_ld:
           result["주행 (Driving)"]["LongActuatorDelay"] = {
@@ -2016,9 +2014,7 @@ class CarrotLearner:
           }
       elif overshoot_ratio >= _LONG_OVERSHOOT_RATIO and overshoot_ratio > lag_ratio:
         # 진동(과반응) 우세 → 비례게인 하향
-        cur_kp = self._params.get_int("LongTuningKpV")
-        if cur_kp <= 0:
-          cur_kp = _PARAM_SPEC["LongTuningKpV"]["default"]
+        cur_kp = self._cur_or_default("LongTuningKpV")
         rec_kp = _clamp_spec("LongTuningKpV", cur_kp - _LONG_KP_STEP)
         if rec_kp != cur_kp:
           result["주행 (Driving)"]["LongTuningKpV"] = {
