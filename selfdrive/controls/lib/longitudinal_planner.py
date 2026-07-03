@@ -186,17 +186,28 @@ class LongitudinalPlanner:
     아님(a_target<0.15)일 때만 중력분을 보강 제동해 평지와 동일하게 한다. 가속 중엔 미개입
     (=재가속 catch-up 방해 방지). 정속 추종도 포함해 완만한 추종 중 밀착을 막는다.
     """
-    if v_ego >= GRADE_STOP_V or a_target >= 0.15:
+    # v_ego<0.5 게이트: 정지/크립 시작 구간에서 comp가 a_desired를 계속 끌어내리면
+    # v_desired가 VEgoStopping 문턱을 못 넘어 stopping 상태가 래치(브레이크 유지)되어
+    # 재출발이 막힘(로그 0109: aTarget +0.35인데 cmd -0.9 유지 → 운전자 가속 개입).
+    # 정지 유지 자체는 stopping 컨트롤러가 담당하므로 comp가 필요 없다.
+    if v_ego >= GRADE_STOP_V or v_ego < 0.5 or a_target >= 0.15:
       return a_target
     pitch = self._road_pitch(sm)
     if pitch >= -0.005:  # 평지/오르막
       return a_target
     try:
-      following = sm['radarState'].leadOne.status
+      _l = sm['radarState'].leadOne
+      # 멀어지는 선행차(vRel>0.3)엔 미적용 — 재출발/따라붙기를 방해하지 않는다.
+      # (이전: status만 봐서 이탈 중에도 보강 제동 → 내리막 재출발 지연의 원인)
+      following = _l.status and _l.vRel < 0.3
     except Exception:
       following = False
     if self._is_stopping(sm, carrot) or following:
-      a_target -= min(-9.81 * math.sin(pitch) * GRADE_STOP_GAIN, GRADE_STOP_MAX)
+      comp = min(-9.81 * math.sin(pitch) * GRADE_STOP_GAIN, GRADE_STOP_MAX)
+      # 정지 직전(<1.5m/s)엔 테이퍼 아웃: 막판 과제동으로 '멀리·거칠게 정차'하는 것 방지.
+      # (마지막 구간은 MPC·stopping 컨트롤러가 담당; comp 역할은 중속 접근 구간의 밀착 방지)
+      comp *= float(np.interp(v_ego, [0.5, 1.5], [0.0, 1.0]))
+      a_target -= comp
     return a_target
 
   def _positive_jerk_limit(self, a_prev, v_ego_kph):
