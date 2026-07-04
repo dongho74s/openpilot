@@ -42,13 +42,6 @@ ACCEL_EASEOUT_JERK = 1.2
 HIGH_SPEED_BRAKE_KPH = 70.0
 HIGH_SPEED_BRAKE_TTC = 8.0  # 이 TTC(초) 이내로 접근 중이면 제동 ease 해제
 
-# 내리막 정지 보정: 내리막에선 중력(전방가속 g·sin)이 더해져 같은 제동으로도 덜 감속되어
-# 정지점을 지나쳐 선행차에 밀착한다. 정지/선행차 감속 접근 중 + 저속 + 내리막일 때만
-# 중력분을 보강 제동해 내리막 정지를 평지와 동일하게 한다(정속 주행엔 미적용=이중제동 방지).
-GRADE_STOP_V = 9.0      # 이 속도(m/s, ~32km/h) 미만에서만 적용
-GRADE_STOP_GAIN = 0.35  # 중력분 보상 비율 (0.8→0.35: 과제동 완화, 평지 대비 약 10% 더만)
-GRADE_STOP_MAX = 0.25   # 보강 제동 상한(m/s^2) (0.6→0.25)
-
 # Lookup table for turns
 _A_TOTAL_MAX_V = [2.4, 4.8] #[1.7, 3.2]
 _A_TOTAL_MAX_BP = [20., 40.]
@@ -169,46 +162,6 @@ class LongitudinalPlanner:
     except Exception:
       return False
 
-  @staticmethod
-  def _road_pitch(sm):
-    """도로 경사(rad). 음수=내리막. orientationNED[1]."""
-    try:
-      onced = sm['carControl'].orientationNED
-      return float(onced[1]) if len(onced) == 3 else 0.0
-    except Exception:
-      return 0.0
-
-  def _grade_stop_compensation(self, a_target, v_ego, sm, carrot):
-    """내리막 정지/추종 중력 보상.
-
-    내리막에선 중력 전방가속분(g·sinθ)이 더해져 같은 제동으로도 덜 감속 → 정지점을 넘어
-    밀착하거나 추종 간격이 좁아진다. 저속 + 내리막 + (정지 의도 또는 선행차 추종) + 가속 중
-    아님(a_target<0.15)일 때만 중력분을 보강 제동해 평지와 동일하게 한다. 가속 중엔 미개입
-    (=재가속 catch-up 방해 방지). 정속 추종도 포함해 완만한 추종 중 밀착을 막는다.
-    """
-    # v_ego<0.5 게이트: 정지/크립 시작 구간에서 comp가 a_desired를 계속 끌어내리면
-    # v_desired가 VEgoStopping 문턱을 못 넘어 stopping 상태가 래치(브레이크 유지)되어
-    # 재출발이 막힘(로그 0109: aTarget +0.35인데 cmd -0.9 유지 → 운전자 가속 개입).
-    # 정지 유지 자체는 stopping 컨트롤러가 담당하므로 comp가 필요 없다.
-    if v_ego >= GRADE_STOP_V or v_ego < 0.5 or a_target >= 0.15:
-      return a_target
-    pitch = self._road_pitch(sm)
-    if pitch >= -0.005:  # 평지/오르막
-      return a_target
-    try:
-      _l = sm['radarState'].leadOne
-      # 멀어지는 선행차(vRel>0.3)엔 미적용 — 재출발/따라붙기를 방해하지 않는다.
-      # (이전: status만 봐서 이탈 중에도 보강 제동 → 내리막 재출발 지연의 원인)
-      following = _l.status and _l.vRel < 0.3
-    except Exception:
-      following = False
-    if self._is_stopping(sm, carrot) or following:
-      comp = min(-9.81 * math.sin(pitch) * GRADE_STOP_GAIN, GRADE_STOP_MAX)
-      # 정지 직전(<1.5m/s)엔 테이퍼 아웃: 막판 과제동으로 '멀리·거칠게 정차'하는 것 방지.
-      # (마지막 구간은 MPC·stopping 컨트롤러가 담당; comp 역할은 중속 접근 구간의 밀착 방지)
-      comp *= float(np.interp(v_ego, [0.5, 1.5], [0.0, 1.0]))
-      a_target -= comp
-    return a_target
 
   def _positive_jerk_limit(self, a_prev, v_ego_kph):
     """가속 방향(a_target>a_prev) jerk 상한."""
@@ -376,8 +329,9 @@ class LongitudinalPlanner:
     a_target = float(np.interp(self.dt, CONTROL_N_T_IDX, self.a_desired_trajectory))
     v_ego_kph = v_ego * CV.MS_TO_KPH
 
-    # 내리막 정지/추종 중력 보상 → jerk(가속도 변화율) 제한 순으로 a_target을 다듬는다.
-    a_target = self._grade_stop_compensation(a_target, v_ego, sm, carrot)
+    # jerk(가속도 변화율) 제한으로 a_target을 다듬는다.
+    # (내리막 중력보상은 제거 — 내리막 크롤링 추종/재출발에서 MPC와 충돌해 과감속·stuck을
+    #  반복 유발. 평지와 동일한 openpilot 기본 동작 유지. git 히스토리에 보존.)
     a_target = self._apply_jerk_limits(a_target, a_prev, v_ego_kph, sm, carrot)
     self.a_desired = a_target
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.a_desired + a_prev) / 2.0
