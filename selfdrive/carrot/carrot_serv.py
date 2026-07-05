@@ -1022,13 +1022,17 @@ class CarrotServ:
           max_head = AUTO_MAX_HEAD_LEAD_KPH  # 선행차 캐치업: 헤드룸 확장
 
       engaged = sm.alive['selfdriveState'] and sm['selfdriveState'].enabled
-      if not engaged or v_ego_kph < 1.0:
-        self.auto_speed = v_ego_kph  # 정지/미인게이지: 현재속도에서 재시작
+      if not engaged:
+        self.auto_speed = v_ego_kph  # 미인게이지: 현재속도에서 재시작
       elif auto_target <= self.auto_speed:
         self.auto_speed = auto_target  # 감속: 즉시 하강
       else:
-        self.auto_speed = min(auto_target, self.auto_speed + AUTO_RISE_KPH_S * AUTO_DT)  # 완만 상승
+        # 완만 상승. 정지 상태(v_ego≈0)에서도 상승시켜야 출발이 가능하다(현재속도+헤드룸까지).
+        # 목표를 0에 못박으면 desiredSpeed=0이 되어 선행차 출발/신호 출발 시 가속 데드락 발생.
+        self.auto_speed = min(auto_target, self.auto_speed + AUTO_RISE_KPH_S * AUTO_DT)
       # 안티와인드업: 목표가 현재속도+헤드룸 이상 앞서지 않게(급가속 방지). 감속목표(<현재)엔 영향 없음.
+      # 정지 시엔 현재속도+헤드룸(=헤드룸)까지만 목표가 오르며, 실제 정지 유지는 downstream
+      # MPC(선행차 추종/e2e stop, v_cruise=0)가 담당하므로 크리프 없이 안전하게 출발 대기한다.
       self.auto_speed = min(self.auto_speed, v_ego_kph + max_head)
       self.auto_speed = max(self.auto_speed, min(auto_target, v_ego_kph))  # 현재속도 이하로 불필요 하강 방지
 
@@ -1050,6 +1054,12 @@ class CarrotServ:
       if desired_speed < self.gas_override_speed:
         source = "gas"
         desired_speed = self.gas_override_speed
+        # 가스 오버라이드도 auto 램프 헤드룸(현재속도+head) 안으로 제한 → 페달을 뗀 뒤
+        # 목표가 현재속도보다 크게 앞서 급가속하거나 'gas' 표시가 오래 남는 것을 방지.
+        # (auto_speed는 이미 설정속도·저속제한을 반영하므로 안전한 상한이다)
+        if self.auto_speed < desired_speed:
+          desired_speed = self.auto_speed
+          source = "auto"
 
       self.debugText += f"route={route_speed:.1f}"#f"desired={desired_speed:.1f},{source},g={self.gas_override_speed:.0f}"
 
