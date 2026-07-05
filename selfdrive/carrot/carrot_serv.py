@@ -78,6 +78,18 @@ nav_type_mapping = {
 }
 
 import collections
+
+# 부드러운 재가속 auto(목표속도 slew 리미터).
+# 목표속도(desiredSpeed)를 실제 도달목표(설정속도 이하)로 "완만히 상승, 즉시 하강"시킨다.
+#  - AUTO_RISE_KPH_S: 상승 기울기(kph/초). 사용자 체감상 초당 약 +5 상승.
+#  - AUTO_MAX_HEAD_KPH: 목표가 현재속도보다 앞설 수 있는 최대치(가속 권한/안티와인드업).
+#    작으면 가속이 약해 저속에서 못 오르고(데드락), 크면 급가속. 5→10으로 상향해 데드락 해소.
+#  - AUTO_MAX_HEAD_LEAD_KPH: 선행차가 확실히 빠르게 앞서갈 때만 헤드룸을 넓혀 답답함 없이 캐치업.
+AUTO_RISE_KPH_S = 5.0
+AUTO_MAX_HEAD_KPH = 10.0
+AUTO_MAX_HEAD_LEAD_KPH = 18.0
+AUTO_DT = 0.05  # update_navi 주기(20Hz)
+
 class CarrotServ:
   def __init__(self):
     self.params = Params()
@@ -188,6 +200,7 @@ class CarrotServ:
     self.gas_override_speed = 0
     self.gas_pressed_state = False
     self.source_last = "none"
+    self.auto_speed = 0.0  # 재가속 auto slew 상태(kph)
 
     self.debugText = ""
 
@@ -991,7 +1004,38 @@ class CarrotServ:
 
     desired_speed, source = min(speed_n_sources, key=lambda x: x[0])
 
+    # 재가속 auto(목표속도 slew 리미터): 목표속도를 실제 도달목표(설정속도 이하)로
+    # "완만히 상승, 즉시 하강"시켜 모든 상황에서 급가속을 막으면서도 목표에 반드시 도달·유지한다.
+    #  - 상승: 초당 AUTO_RISE_KPH_S만큼, 단 현재속도+헤드룸을 넘지 않음(안티와인드업).
+    #  - 하강(감속 소스 등장): 즉시 반영(안전). 정지/미인게이지: 현재속도에서 재시작.
+    #  - 선행차가 확실히 빠르면 헤드룸을 넓혀 답답함 없이 캐치업(실제 거리는 추종 로직이 관리).
+    # 과거 "현재속도+5 고정" 방식은 목표가 실제 도달점에 못 오르고 저속에서 가속 데드락을
+    # 유발했고, 선행차 예외(+15)가 목표를 설정속도 위로 부풀렸다 → slew 방식으로 두 문제 해소.
     if CS is not None:
+      v_max = CS.vCruise if 0.0 < CS.vCruise < 200.0 else 250.0
+      auto_target = min(desired_speed, v_max)  # 실제 도달목표(설정속도 이하)
+
+      max_head = AUTO_MAX_HEAD_KPH
+      if sm.alive['radarState']:
+        lead = sm['radarState'].leadOne
+        if lead.status and lead.vLeadK * CV.MS_TO_KPH > v_ego_kph + 3.0:
+          max_head = AUTO_MAX_HEAD_LEAD_KPH  # 선행차 캐치업: 헤드룸 확장
+
+      engaged = sm.alive['selfdriveState'] and sm['selfdriveState'].enabled
+      if not engaged or v_ego_kph < 1.0:
+        self.auto_speed = v_ego_kph  # 정지/미인게이지: 현재속도에서 재시작
+      elif auto_target <= self.auto_speed:
+        self.auto_speed = auto_target  # 감속: 즉시 하강
+      else:
+        self.auto_speed = min(auto_target, self.auto_speed + AUTO_RISE_KPH_S * AUTO_DT)  # 완만 상승
+      # 안티와인드업: 목표가 현재속도+헤드룸 이상 앞서지 않게(급가속 방지). 감속목표(<현재)엔 영향 없음.
+      self.auto_speed = min(self.auto_speed, v_ego_kph + max_head)
+      self.auto_speed = max(self.auto_speed, min(auto_target, v_ego_kph))  # 현재속도 이하로 불필요 하강 방지
+
+      if self.auto_speed < desired_speed:
+        desired_speed = self.auto_speed
+        source = "auto"  # UI 표시 라벨
+
       if source != self.source_last:
         self.gas_override_speed = 0
         self.gas_pressed_state = CS.gasPressed
