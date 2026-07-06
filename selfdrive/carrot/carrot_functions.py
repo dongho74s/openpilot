@@ -25,6 +25,13 @@ _SPDTF_MIN   = 0.55                        # 보정 후 t_follow 안전 하한(�
 # 느껴지므로 부드럽게. 증가(0.1)보다 빠르게 둬 추종 반응성은 유지. (스텝/호출당, *DT_MDL)
 _TF_DECREASE_RATE = 1.5
 
+# 정차 후 출발 catch-up: 완전정지→출발 구간에서 일시적으로 Gap1(최근접)으로 추종해
+# 선행차를 민첩하게 따라잡고, 일정 속도 이상이면 원래 Gap으로 복귀한다. dynamic_t_follow의
+# catch-up이 저속(<30)에서 꺼져 있어(사각지대) 이 구간을 보완. 거리(t_follow)에만 적용하고
+# jerk/가속 특성은 원래 Gap을 유지하며, 복귀 시 apply_t_follow 증가율제한이 부드럽게 처리.
+_LAUNCH_GAP_ARM_KPH    = 3.0    # 이 속도 미만(정차/near-stop)에서 Gap1 무장
+_LAUNCH_GAP_REVERT_KPH = 40.0   # 이 속도 이상이면 원래 Gap으로 복귀
+
 class XState(Enum):
   lead = 0
   cruise = 1
@@ -118,6 +125,7 @@ class CarrotPlanner:
     self.enableSpeedTF = 0
     self.tFollowDecelBoost = 0.0
     self.personality = 1
+    self.launch_close_gap = False  # 정차 후 출발 catch-up: Gap1 일시 적용 상태
 
     self.cruiseMaxVals0 = 1.6
     self.cruiseMaxVals1 = 1.6
@@ -305,6 +313,8 @@ class CarrotPlanner:
     return float(np.clip(t_follow, max(0.3, tf_min), tf_max))
 
   def get_T_FOLLOW(self, personality=log.LongitudinalPersonality.standard, v_ego=0.0, a_ego=0.0):
+    if self.launch_close_gap:
+      personality = log.LongitudinalPersonality.aggressive  # 정차 후 출발: 최근접 Gap으로 catch-up
     tf_base = self._get_base_t_follow(personality, v_ego)
     tf_target = self._apply_speed_t_follow_scale(tf_base, v_ego)
     tf_adjusted = self._apply_decel_hold_and_boost_t_follow(tf_target, a_ego)
@@ -691,7 +701,14 @@ class CarrotPlanner:
     from cereal import car
     gear_park = carstate.gearShifter == car.CarState.GearShifter.park
     engaged = sm.alive.get('selfdriveState', False) and sm['selfdriveState'].enabled
-    
+
+    # 정차 후 출발 catch-up: 완전정지(near-stop)에서 Gap1 무장 → 출발하며 선행차 민첩 추종,
+    # 일정 속도 이상/선행차 없음/미인게이지 시 원래 Gap 복귀. (get_T_FOLLOW에서 소비)
+    if not engaged or not lead_detected or v_ego_kph >= _LAUNCH_GAP_REVERT_KPH:
+      self.launch_close_gap = False
+    elif v_ego_kph < _LAUNCH_GAP_ARM_KPH:
+      self.launch_close_gap = True
+
     # 현재 GAP 단계 파악 (Personality 기반)
     personality = sm['selfdriveState'].personality
     current_gap = 2  # default standard
