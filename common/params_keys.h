@@ -165,8 +165,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ShowPlotMode", {PERSISTENT, INT, "0"}},
     {"CarrotTireTrajectory", {PERSISTENT, INT, "0"}},
     {"CarrotLearningActive", {PERSISTENT, INT, "0"}},          // Auto-Tuner: 학습 활성화 (0=off, 1=on)
-    {"CarrotTunerApplyLat", {PERSISTENT, INT, "1"}},           // Auto-Tuner: 조향(LAT) 적용 여부 (0=off, 1=on)
-    {"CarrotTunerApplyLong", {PERSISTENT, INT, "1"}},          // Auto-Tuner: 가감속(LONG) 적용 여부 (0=off, 1=on)
+    {"CarrotTunerApplyLat", {PERSISTENT, INT, "0"}},           // Auto-Tuner: 조향(LAT) 적용 여부 (0=off, 1=on)
+    {"CarrotTunerApplyLong", {PERSISTENT, INT, "0"}},          // Auto-Tuner: 가감속(LONG) 적용 여부 (0=off, 1=on)
     {"CarrotLearningData", {PERSISTENT, BYTES, ""}},           // Auto-Tuner: 누적 데이터 (JSON)
     {"CarrotLearningRecommend", {PERSISTENT, BYTES, ""}},      // Auto-Tuner: 추천값 (JSON)
     {"CarrotLearningPopupReady", {PERSISTENT, BOOL, "0"}},     // Auto-Tuner: 팝업 신호

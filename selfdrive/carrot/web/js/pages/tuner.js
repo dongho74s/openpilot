@@ -288,13 +288,36 @@ function tunerRenderChips() {
   }
 }
 
+// Learning(master) ↔ LAT/LONG 연동 규칙 (C4 등 단말 메뉴가 없는 차량 지원):
+//   • Learning ON  → LAT ON, LONG ON 자동 동반
+//   • Learning OFF → LAT OFF, LONG OFF 자동 동반
+//   • Learning OFF 상태에서 LAT 또는 LONG 중 하나라도 ON → Learning ON
+//   • LAT/LONG 모두 OFF가 되면 → Learning OFF
 async function tunerToggleParam(key, currentlyOn) {
   if (typeof setParam !== "function") return;
+  const next = currentlyOn ? 0 : 1;
+  const onFlag = !currentlyOn;
   try {
-    await setParam(key, currentlyOn ? 0 : 1);
-    if (key === "CarrotLearningActive") tunerState.active = !currentlyOn;
-    else if (key === "CarrotTunerApplyLat") tunerState.applyLat = !currentlyOn;
-    else if (key === "CarrotTunerApplyLong") tunerState.applyLong = !currentlyOn;
+    if (key === "CarrotLearningActive") {
+      // 마스터 스위치: LAT/LONG을 함께 켜고/끈다
+      await setParam("CarrotLearningActive", next);
+      await setParam("CarrotTunerApplyLat", next);
+      await setParam("CarrotTunerApplyLong", next);
+      tunerState.active = onFlag;
+      tunerState.applyLat = onFlag;
+      tunerState.applyLong = onFlag;
+    } else {
+      // 개별 LAT/LONG 토글
+      await setParam(key, next);
+      if (key === "CarrotTunerApplyLat") tunerState.applyLat = onFlag;
+      else if (key === "CarrotTunerApplyLong") tunerState.applyLong = onFlag;
+      // Learning은 LAT/LONG 상태를 따라감: 하나라도 ON이면 ON, 모두 OFF면 OFF
+      const anyOn = tunerState.applyLat || tunerState.applyLong;
+      if (anyOn !== tunerState.active) {
+        await setParam("CarrotLearningActive", anyOn ? 1 : 0);
+        tunerState.active = anyOn;
+      }
+    }
     tunerRenderChips();
   } catch (e) {
     if (typeof showAppToast === "function") showAppToast(tT("tuner_save_failed", "Save failed"), { kind: "error" });
