@@ -121,6 +121,7 @@ _DECEL_BOOST_MAX = 40           # 최대값
 _TFOLLOW_KEYS = ["TFollowGap1", "TFollowGap2", "TFollowGap3", "TFollowGap4"]
 _TFOLLOW_NAMES = ["GAP1", "GAP2", "GAP3", "GAP4"]
 _TFOLLOW_GAS_THRESHOLD_SEC = 15.0  # 선행차 추종 중 gas 누적 개입 시간 기준
+_TFOLLOW_GAP_DIFF_MIN = 10         # 축소 최소 근거: 운전자가 설정보다 ≥0.10s 더 바짝 따라간 경우만
 _TFOLLOW_STEP_UNIT = -5            # 감소 추천 (-5 units = -0.05s)
 _TFOLLOW_MAX_LEAD_DREL = 150.0     # 선행차 거리 인식 최대 한계선
 _TFOLLOW_MIN_V_KPH = 40.0          # 학습을 개시할 최소 주행 속도 (60 -> 40)
@@ -1769,7 +1770,10 @@ class CarrotLearner:
             }
 
     # ── Phase 4: TFollowGap (선행차 추종 중 거리 좁히기 가속 개입) ──
-    if apply_long:
+    # EnableSpeedTF<0(속도 앵커 모드)에선 GAP1~4가 '버튼 단계'가 아니라 '속도 앵커'이므로
+    # 현재 버튼 gap을 학습하는 이 로직이 의미상 맞지 않는다(예: 고속 추종은 gap3/4가 지배하는데
+    # 현재 버튼 gap2만 축소됨). 이 경우 자동학습을 끄고 사용자가 앵커값을 직접 설정하도록 둔다.
+    if apply_long and self._params.get_int("EnableSpeedTF") >= 0:
       for i, gas_sec in enumerate(self._tfollow_gas_acc):
         key = _TFOLLOW_KEYS[i]
         name = _TFOLLOW_NAMES[i]
@@ -1780,13 +1784,15 @@ class CarrotLearner:
         
         recommended_val = current_val
         if gas_sec >= _TFOLLOW_GAS_THRESHOLD_SEC:
-          # 실제 차간 거리 오차에 기반한 동적 감소 계산
+          # 실제 차간 거리 오차에 기반한 동적 감소 계산.
+          # 운전자가 현재 설정보다 실제로 더 바짝(gap_diff>MIN) 따라간 근거가 있을 때만 축소한다.
+          # min_gap이 설정 이상(gap_diff<=MIN)이면 '더 좁히려는' 근거가 없으므로 미조정
+          # (과거: 근거 없이도 매번 -5 축소 → 120으로 재설정해도 계속 줄어드는 폭주 버그).
           target_val = int(self._tfollow_min_gap[i] * 100)
           gap_diff = current_val - target_val
-          if gap_diff > 10:
-            dynamic_step = float(np.clip(int(gap_diff * 0.5), 5, 25))
-          else:
-            dynamic_step = 5
+          if gap_diff <= _TFOLLOW_GAP_DIFF_MIN:
+            continue
+          dynamic_step = float(np.clip(int(gap_diff * 0.5), 5, 25))
           recommended_val = max(70, current_val - int(dynamic_step))
           reason = f"too wide (gap diff {gap_diff*0.01:.2f}s, step -{int(dynamic_step)})"
           sec = gas_sec
