@@ -37,8 +37,8 @@ _LAUNCH_GAP_REVERT_KPH = 40.0   # 이 속도 이상이면 원래 Gap으로 복�
 # 위해 배수를 S-커브(smoothstep)로 이징: 출발 초반(급발진 방지)·40km/h 복귀(툭 끊김 방지)
 # 양 끝을 완만하게 하고 중속 구간에서 최대. 상한(ceiling)만 키우므로 catch-up이 필요할 때만
 # MPC가 실제로 사용한다(정속·근접 추종에선 미사용).
-_LAUNCH_ACCEL_GAIN     = 1.3    # 부스트 최대 배수(≈HIGH 모드 factor 상당)
-_LAUNCH_EASE_IN_KPH    = 15.0   # 0→이 속도까지 S-커브로 부스트 상승(급발진 방지)
+_LAUNCH_ACCEL_GAIN     = 1.4    # 부스트 최대 배수(≈HIGH 모드 factor 상당)
+_LAUNCH_EASE_IN_KPH    = 10.0   # 0→이 속도까지 S-커브로 부스트 상승(급발진 방지)
 _LAUNCH_EASE_OUT_KPH   = 30.0   # 이 속도→REVERT까지 S-커브로 부스트 하강(복귀 부드럽게)
 
 class XState(Enum):
