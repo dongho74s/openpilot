@@ -89,6 +89,10 @@ AUTO_RISE_KPH_S = 5.0
 AUTO_MAX_HEAD_KPH = 10.0
 AUTO_MAX_HEAD_LEAD_KPH = 18.0
 AUTO_DT = 0.05  # update_navi 주기(20Hz)
+# 선행차 캐치업 시 상승률. 기본 5kph/s(=1.39m/s²)는 정차출발 가속부스트(상한 ~2.47m/s²=8.9kph/s)
+# 보다 낮아, desiredSpeed가 못 따라오면 순항목표가 현재속도에 붙어 가속을 되레 1.39로 제한한다.
+# 캐치업 구간에선 상승률을 높여(부스트가 실제로 쓰이도록) 병목을 제거. 평시 완만함은 기본값 유지.
+AUTO_RISE_LEAD_KPH_S = 15.0
 
 class CarrotServ:
   def __init__(self):
@@ -1016,10 +1020,12 @@ class CarrotServ:
       auto_target = min(desired_speed, v_max)  # 실제 도달목표(설정속도 이하)
 
       max_head = AUTO_MAX_HEAD_KPH
+      rise = AUTO_RISE_KPH_S
       if sm.alive['radarState']:
         lead = sm['radarState'].leadOne
         if lead.status and lead.vLeadK * CV.MS_TO_KPH > v_ego_kph + 3.0:
           max_head = AUTO_MAX_HEAD_LEAD_KPH  # 선행차 캐치업: 헤드룸 확장
+          rise = AUTO_RISE_LEAD_KPH_S        # + 상승률↑ → 가속부스트/Gap1 병목 제거
 
       engaged = sm.alive['selfdriveState'] and sm['selfdriveState'].enabled
       if not engaged:
@@ -1029,7 +1035,7 @@ class CarrotServ:
       else:
         # 완만 상승. 정지 상태(v_ego≈0)에서도 상승시켜야 출발이 가능하다(현재속도+헤드룸까지).
         # 목표를 0에 못박으면 desiredSpeed=0이 되어 선행차 출발/신호 출발 시 가속 데드락 발생.
-        self.auto_speed = min(auto_target, self.auto_speed + AUTO_RISE_KPH_S * AUTO_DT)
+        self.auto_speed = min(auto_target, self.auto_speed + rise * AUTO_DT)
       # 안티와인드업: 목표가 현재속도+헤드룸 이상 앞서지 않게(급가속 방지). 감속목표(<현재)엔 영향 없음.
       # 정지 시엔 현재속도+헤드룸(=헤드룸)까지만 목표가 오르며, 실제 정지 유지는 downstream
       # MPC(선행차 추종/e2e stop, v_cruise=0)가 담당하므로 크리프 없이 안전하게 출발 대기한다.
