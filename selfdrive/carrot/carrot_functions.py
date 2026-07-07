@@ -32,6 +32,15 @@ _TF_DECREASE_RATE = 1.5
 _LAUNCH_GAP_ARM_KPH    = 3.0    # 이 속도 미만(정차/near-stop)에서 Gap1 무장
 _LAUNCH_GAP_REVERT_KPH = 40.0   # 이 속도 이상이면 원래 Gap으로 복귀
 
+# 정차 후 출발 가속 부스트: 위 launch 구간에서 가속 상한을 HIGH 모드 수준으로 일시 확대해
+# 캐치업 가속력을 확보한다(NORMAL 모드 CruiseMaxVals 상한에 막히는 문제 보완). 급발진 방지를
+# 위해 배수를 S-커브(smoothstep)로 이징: 출발 초반(급발진 방지)·40km/h 복귀(툭 끊김 방지)
+# 양 끝을 완만하게 하고 중속 구간에서 최대. 상한(ceiling)만 키우므로 catch-up이 필요할 때만
+# MPC가 실제로 사용한다(정속·근접 추종에선 미사용).
+_LAUNCH_ACCEL_GAIN     = 1.3    # 부스트 최대 배수(≈HIGH 모드 factor 상당)
+_LAUNCH_EASE_IN_KPH    = 15.0   # 0→이 속도까지 S-커브로 부스트 상승(급발진 방지)
+_LAUNCH_EASE_OUT_KPH   = 30.0   # 이 속도→REVERT까지 S-커브로 부스트 하강(복귀 부드럽게)
+
 class XState(Enum):
   lead = 0
   cruise = 1
@@ -213,10 +222,27 @@ class CarrotPlanner:
 
       self.params_count = 0
 
+  def _launch_accel_factor(self, v_ego):
+    # 정차 후 출발 구간에서만 가속 상한 배수를 S-커브(smoothstep)로 이징해 반환.
+    # 양 끝(출발 0, 복귀 REVERT)에서 1.0으로 수렴 → 급발진·복귀 툭 끊김 없이 매끄럽게.
+    if not self.launch_close_gap:
+      return 1.0
+    v_kph = v_ego * CV.MS_TO_KPH
+    if v_kph <= _LAUNCH_EASE_IN_KPH:
+      s = v_kph / max(1.0, _LAUNCH_EASE_IN_KPH)                       # 0→1 (이징 인)
+    elif v_kph >= _LAUNCH_EASE_OUT_KPH:
+      span = max(1.0, _LAUNCH_GAP_REVERT_KPH - _LAUNCH_EASE_OUT_KPH)
+      s = float(np.clip((_LAUNCH_GAP_REVERT_KPH - v_kph) / span, 0.0, 1.0))  # 1→0 (이징 아웃)
+    else:
+      s = 1.0                                                          # 중속: 최대 부스트
+    w = s * s * (3.0 - 2.0 * s)                                        # smoothstep(양 끝 기울기 0)
+    return 1.0 + (_LAUNCH_ACCEL_GAIN - 1.0) * w
+
   def get_carrot_accel(self, v_ego):
     cruiseMaxVals = [self.cruiseMaxVals0, self.cruiseMaxVals1, self.cruiseMaxVals2, self.cruiseMaxVals3, self.cruiseMaxVals4, self.cruiseMaxVals5, self.cruiseMaxVals6]
     factor = self.myHighModeFactor if self.myDrivingMode == DrivingMode.High else self.mySafeFactor
-    return np.interp(v_ego, A_CRUISE_MAX_BP_CARROT, cruiseMaxVals) * factor
+    accel = float(np.interp(v_ego, A_CRUISE_MAX_BP_CARROT, cruiseMaxVals) * factor)
+    return accel * self._launch_accel_factor(v_ego)
 
   def _get_base_t_follow(self, personality, v_ego):
     if self.enableSpeedTF < 0:
