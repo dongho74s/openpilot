@@ -18,8 +18,8 @@ LaneChangeState = log.LaneChangeState
 # (로그 f7: 5-15kph 3.4s vs 45kph+ 1.6s → 저속 과도하게 넓고 중고속은 좁음). 속도가 낮을수록
 # t_follow를 약간 줄여(≤30 좁게) 저속 간격을 당기고, 높을수록 늘려(≥30 넓게) time-gap을
 # 정상화한다(저속 좁게/고속 넓게 — 사용자 요청).
-_SPDTF_BP    = [20.0, 32.0, 50.0, 80.0]   # 속도 보간점(km/h)
-_SPDTF_DELTA = [-0.20, 0.0, 0.18, 0.28]   # 위 속도에서 t_follow 가감(초)
+_SPDTF_BP    = [20.0, 32.0, 50.0, 80.0, 110.0]   # 속도 보간점(km/h)
+_SPDTF_DELTA = [-0.20, 0.0, 0.18, 0.32, 0.42]   # 위 속도에서 t_follow 가감(초)
 _SPDTF_MIN   = 0.55                        # 보정 후 t_follow 안전 하한(초)
 # t_follow 감소(앞차 가속 등으로 간격 좁힐 때) 변화율 제한 — 즉시 스냅하면 '순간 가속'으로
 # 느껴지므로 부드럽게. 증가(0.1)보다 빠르게 둬 추종 반응성은 유지. (스텝/호출당, *DT_MDL)
@@ -29,17 +29,17 @@ _TF_DECREASE_RATE = 1.5
 # 선행차를 민첩하게 따라잡고, 일정 속도 이상이면 원래 Gap으로 복귀한다. dynamic_t_follow의
 # catch-up이 저속(<30)에서 꺼져 있어(사각지대) 이 구간을 보완. 거리(t_follow)에만 적용하고
 # jerk/가속 특성은 원래 Gap을 유지하며, 복귀 시 apply_t_follow 증가율제한이 부드럽게 처리.
-_LAUNCH_GAP_ARM_KPH    = 3.0    # 이 속도 미만(정차/near-stop)에서 Gap1 무장
-_LAUNCH_GAP_REVERT_KPH = 40.0   # 이 속도 이상이면 원래 Gap으로 복귀
+_LAUNCH_GAP_ARM_KPH    = 2.0    # 이 속도 미만(정차/near-stop)에서 Gap1 무장
+_LAUNCH_GAP_REVERT_KPH = 25.0   # 이 속도 이상이면 원래 Gap으로 복귀
 
 # 정차 후 출발 가속 부스트: 위 launch 구간에서 가속 상한을 HIGH 모드 수준으로 일시 확대해
 # 캐치업 가속력을 확보한다(NORMAL 모드 CruiseMaxVals 상한에 막히는 문제 보완). 급발진 방지를
-# 위해 배수를 S-커브(smoothstep)로 이징: 출발 초반(급발진 방지)·40km/h 복귀(툭 끊김 방지)
+# 위해 배수를 S-커브(smoothstep)로 이징: 출발 초반(급발진 방지)·25km/h 복귀(툭 끊김 방지)
 # 양 끝을 완만하게 하고 중속 구간에서 최대. 상한(ceiling)만 키우므로 catch-up이 필요할 때만
 # MPC가 실제로 사용한다(정속·근접 추종에선 미사용).
-_LAUNCH_ACCEL_GAIN     = 1.4    # 부스트 최대 배수(≈HIGH 모드 factor 상당)
+_LAUNCH_ACCEL_GAIN     = 1.33   # 부스트 최대 배수(≈HIGH 모드 factor 상당)
 _LAUNCH_EASE_IN_KPH    = 10.0   # 0→이 속도까지 S-커브로 부스트 상승(급발진 방지)
-_LAUNCH_EASE_OUT_KPH   = 30.0   # 이 속도→REVERT까지 S-커브로 부스트 하강(복귀 부드럽게)
+_LAUNCH_EASE_OUT_KPH   = 20.0   # 이 속도→REVERT까지 S-커브로 부스트 하강(복귀 부드럽게)
 
 class XState(Enum):
   lead = 0
@@ -391,7 +391,7 @@ class CarrotPlanner:
       # 속도비례로 살짝 좁혀 catch-up을 민첩하게. 저속(≤30, 이미 충분)·밀착(≤6m)엔 미적용.
       v_kph = getattr(self, "_v_ego_kph", 0.0)
       if lead.vRel > 0.5 and lead.dRel > 6.0:
-        catchup = float(np.interp(v_kph, [30.0, 50.0, 90.0], [0.0, 0.15, 0.30]))
+        catchup = float(np.interp(v_kph, [30.0, 50.0, 90.0], [0.0, 0.10, 0.12]))
         catchup *= float(np.interp(lead.vRel, [0.5, 3.0], [0.0, 1.0]))
         t_follow = max(t_follow - catchup, 0.3)
 
@@ -467,7 +467,8 @@ class CarrotPlanner:
     self.stopSignCount = self.stopSignCount + 1 if stopSign else 0
     self.startSignCount = self.startSignCount + 1 if startSign and not stopSign else 0
 
-    if self.stopSignCount * DT_MDL > 0.0:
+    debounce_threshold = 0.35 if v_ego_kph >= 40.0 else 0.15
+    if self.stopSignCount * DT_MDL >= debounce_threshold:
       self.trafficState = TrafficState.red
     elif self.startSignCount * DT_MDL > 0.2:
       self.trafficState = TrafficState.green
