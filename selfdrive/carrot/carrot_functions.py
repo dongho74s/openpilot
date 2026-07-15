@@ -393,22 +393,30 @@ class CarrotPlanner:
 
     # 일반 lead follow:
     elif lead.status:
+      # 동적 간격축소 하한(속도 연동): 종전 고정 0.3s 하한은 고속에서 목표 시간간격을
+      # 사실상 범퍼거리까지 붕괴시켰다(로그 00000137--27: 59~87km/h 선행차 가속 구간마다
+      # tFollow 0.30s·목표거리 1.3m까지 하락, 복귀는 0.1s/s로 느려 밀착이 장시간 지속).
+      # 이것이 '과한 캐치업 가속'과 '선행차 밀착 주행'의 공통 근원 — MPC가 몇 m짜리
+      # 목표간격을 향해 대역 최대가속으로 돌진하는 구조였다. 선행차 가속 시 잠깐 좁히는
+      # 취지는 살리되, 속도에 비례한 최소 시간간격은 항상 유지한다.
+      v_kph = getattr(self, "_v_ego_kph", 0.0)
+      tf_floor = float(np.interp(v_kph, [0.0, 30.0, 60.0, 90.0], [0.30, 0.50, 0.90, 1.10]))
+
       if self.dynamicTFollow > 0.0:
         # lead.jLead 필터링을 통해 고주파 노이즈 제거
         self.filtered_j_lead = 0.9 * self.filtered_j_lead + 0.1 * lead.jLead
         # lead.jLead < 0 : 앞차가 감속 방향으로 변함 -> 차간거리 증가
         # lead.jLead > 0 : 앞차가 가속 방향으로 변함 -> 차간거리 감소
         t_follow += np.interp(self.filtered_j_lead, [-3.0, -0.5, 0.5, 2.0], [1.0, 0.0, 0.0, -1.0]) * self.dynamicTFollow
-        t_follow = np.clip(t_follow, 0.3, 2.0)
+        t_follow = np.clip(t_follow, tf_floor, 2.0)
 
       # 선행차가 '정속으로 멀어지는'(vRel>0, jLead~0) 경우엔 위 jLead 로직이 반응하지 않아
       # 중고속에서 재가속(catch-up)이 약했다(로그 0101: 40-70 +0.5, 70+ +0.2). 간격목표를
       # 속도비례로 살짝 좁혀 catch-up을 민첩하게. 저속(≤30, 이미 충분)·밀착(≤6m)엔 미적용.
-      v_kph = getattr(self, "_v_ego_kph", 0.0)
       if lead.vRel > 0.5 and lead.dRel > 6.0:
         catchup = float(np.interp(v_kph, [30.0, 50.0, 90.0], [0.0, 0.10, 0.12]))
         catchup *= float(np.interp(lead.vRel, [0.5, 3.0], [0.0, 1.0]))
-        t_follow = max(t_follow - catchup, 0.3)
+        t_follow = max(t_follow - catchup, tf_floor)
 
       # Dynamic Jerk Control for early & gentle braking:
       # If lead deceleration is detected and we are not braking hard, increase jerk penalty (make it smoother/gentler).
