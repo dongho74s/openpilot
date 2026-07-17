@@ -22,6 +22,19 @@ STOP_SOFT_MIN_DECEL = 0.30     # m/s^2 구르는 동안 유지할 최소 감속(
 STOP_SOFT_RELEASE_JERK = 0.7   # m/s^3 소프트랜딩 시 브레이크 풀림(상승) 속도 제한
 STOP_HOLD_FACTOR = 0.45        # 정지 후 stopAccel로 조이는 속도 배율(x stoppingDecelRate)
 
+# ── 소프트 엔게이지(가감속 '시작' 보간 램프) ──────────────────────────
+# 코스팅/무가감속(출력≈0)에서 가감속을 시작할 때 출력이 한 프레임에 점프해
+# (코스트밴드 이탈 스텝 0→±0.7, 끼어들기 대응 +0.3→-1.1 등) EV 토크 물림과 겹치며
+# '살짝 충격'이 발생했다. 주행로그 00000142 기준 감속온셋 peak jerk: 수동 0.9 vs
+# 자동 고속 5~7 m/s^3. 출력이 0 부근일 때만 변화율을 사람 페달 수준으로 보간 제한하고
+# |출력|이 커지면 해제한다. 긴급(짧은 TTC·근접·강한 감속요구)시엔 즉시 통과(안전).
+ENGAGE_ABS_BP   = [0.15, 0.5, 0.9]   # m/s^2 |현재출력| 보간점(0.9 이상 무제한)
+ENGAGE_JERK_V   = [1.2, 2.5, 100.0]  # m/s^3 각 지점의 변화율 한계(1.2=수동 온셋 수준)
+ENGAGE_URGENT_TTC = 4.0              # s    이보다 짧은 TTC면 소프트 스타트 생략
+ENGAGE_URGENT_DREL = 10.0            # m    이보다 가까운 선행차면 생략
+ENGAGE_URGENT_ATARGET = -2.5         # m/s^2 계획이 강한 감속 요구 시 생략
+ENGAGE_LAUNCH_V = 3.0                # m/s  저속 출발 가속은 제한하지 않음(캐치업 유지)
+
 
 def long_control_state_trans(CP, active, long_control_state, v_ego,
                              should_stop, brake_pressed, cruise_standstill, a_ego, stopping_accel, radarState):
@@ -118,6 +131,21 @@ class LongControl:
       return oa + step
     return 0.0
 
+  def _soft_engage(self, output_accel, CS, radarState, a_target_ff):
+    """가감속 '시작'을 보간 램프로 완만화. 긴급 상황·저속 출발 가속은 제한하지 않는다."""
+    if a_target_ff < ENGAGE_URGENT_ATARGET:
+      return output_accel
+    lead = radarState.leadOne
+    if lead.status and lead.vRel < -0.5:
+      ttc = lead.dRel / max(-lead.vRel, 0.1)
+      if ttc < ENGAGE_URGENT_TTC or lead.dRel < ENGAGE_URGENT_DREL:
+        return output_accel
+    if output_accel > self.last_output_accel and CS.vEgo < ENGAGE_LAUNCH_V:
+      return output_accel  # 출발 가속 램프는 그대로(캐치업 응답 유지)
+    max_jerk = float(np.interp(abs(self.last_output_accel), ENGAGE_ABS_BP, ENGAGE_JERK_V))
+    step = max_jerk * DT_CTRL
+    return float(np.clip(output_accel, self.last_output_accel - step, self.last_output_accel + step))
+
   def update(self, active, CS, long_plan, accel_limits, t_since_plan, radarState):
 
     soft_hold_active = CS.softHoldActive > 0
@@ -195,6 +223,9 @@ class LongControl:
       if self.coasting:
         # 코스팅 중에는 출력을 0으로 부드럽게 수렴 → 자연 회생제동/엔진브레이크 활용
         output_accel = self._coast_output()
+      else:
+        # 소프트 엔게이지: 출력 0 부근(코스팅 이탈 직후 포함)의 가감속 시작을 보간 램프로 완만화
+        output_accel = self._soft_engage(output_accel, CS, radarState, a_target_ff)
 
     self.last_output_accel = np.clip(output_accel, accel_limits[0], accel_limits[1])
     return self.last_output_accel, a_target_ff, j_target_now
