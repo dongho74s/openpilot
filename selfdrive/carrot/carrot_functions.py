@@ -37,7 +37,10 @@ _LAUNCH_GAP_REVERT_KPH = 25.0   # 이 속도 이상이면 원래 Gap으로 복�
 # 위해 배수를 S-커브(smoothstep)로 이징: 출발 초반(급발진 방지)·25km/h 복귀(툭 끊김 방지)
 # 양 끝을 완만하게 하고 중속 구간에서 최대. 상한(ceiling)만 키우므로 catch-up이 필요할 때만
 # MPC가 실제로 사용한다(정속·근접 추종에선 미사용).
-_LAUNCH_ACCEL_GAIN     = 1.33   # 부스트 최대 배수(≈HIGH 모드 factor 상당)
+_LAUNCH_ACCEL_GAIN     = 1.45   # 부스트 최대 배수. 1.33→1.45: 정차후 출발 캐치업이 여전히
+                                # 느리다는 피드백(2026-07-16) 반영한 보수적 상향. 중속 과가속은
+                                # 35km/h부터 캐치업 컴포트 캡이 받치므로 재발 없음. 출발 온셋의
+                                # 부드러움은 소프트 엔게이지가 아닌 자체 S-커브 이징이 담당.
 _LAUNCH_EASE_IN_KPH    = 10.0   # 0→이 속도까지 S-커브로 부스트 상승(급발진 방지)
 _LAUNCH_EASE_OUT_KPH   = 20.0   # 이 속도→REVERT까지 S-커브로 부스트 하강(복귀 부드럽게)
 
@@ -365,6 +368,11 @@ class CarrotPlanner:
     # 저속(≤30): t_follow 약간↓(간격 좁힘) / 고속(≥30): ↑(간격 넓힘) → time-gap 역전 정상화.
     v_kph = v_ego * CV.MS_TO_KPH
     tf_final = max(tf_final + float(np.interp(v_kph, _SPDTF_BP, _SPDTF_DELTA)), _SPDTF_MIN)
+    # 중고속 간격 완화: tf 하한 도입(d554701a) 후 고속 목표간격이 과도해짐
+    # (로그 00000142--119~121: 110~123km/h에서 tFollow 1.76~2.22s, 목표거리 ~75m).
+    # 사용자 요청으로 고속 약 20% 축소(중속은 완만히). 속도연동 하한(dynamic_t_follow의
+    # tf_floor 0.9~1.1s)이 안전 하한을 계속 보장한다.
+    tf_final *= float(np.interp(v_kph, [40.0, 70.0, 110.0], [1.0, 0.90, 0.80]))
     self._tf_applied = float(tf_final)
     self._v_ego_kph = float(v_kph)   # dynamic_t_follow catch-up 속도 게이트용
     return self.apply_t_follow(tf_final)
