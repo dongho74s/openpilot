@@ -248,18 +248,26 @@ class CarrotPlanner:
     accel = float(np.interp(v_ego, A_CRUISE_MAX_BP_CARROT, cruiseMaxVals) * factor)
     accel *= self._launch_accel_factor(v_ego)
 
-    # 선행차 캐치업 컴포트 캡: 중속 이상에서 선행차를 따라잡을 때 대역 최대가속을 그대로
-    # 쓰면 가속감이 과하다(로그 00000135--20: 45~58km/h 캐치업에서 aTarget이 상한 1.3에
-    # 붙어 유지, 실측 2.16m/s² 스파이크). 선행차가 가까이 있으면(60m 이내) 상한을 컴포트
-    # 수준으로 제한한다. 저속 출발 부스트(≤25km/h)·자유 순항 가속(선행차 없음)은 영향 없음.
-    # 존재 판정은 0.5s 저역필터로 블렌딩해 레이더 순단 시 상한이 튀지 않게 한다.
+    # 컴포트 캡: 대역 최대가속(저속 1.7~2.0)을 그대로 쓰면 가속감이 과하다는 피드백 반영.
+    #  - 자유순항(선행차 없음): 종전엔 캡이 없어 slew 상한(≈1.39m/s²)까지 허용 → 50~80km/h
+    #    에서 선행차 추종(아래 lead_cap 0.8~1.0)보다 오히려 더 세지는 비대칭이 있었다.
+    #    개방도로 합류·출발 여지를 남기려 저속(≤40)은 캡을 두지 않고(런치 부스트는 선행차
+    #    게이팅이라 여기 미적용) 중고속만 완만히 제한한다.
+    #  - 선행차 추종(60m 이내): 더 완만한 lead_cap으로 블렌드(로그 00000135--20: 45~58km/h
+    #    캐치업에서 실측 2.16m/s² 스파이크). 존재 판정은 0.5s 저역필터로 레이더 순단 방지.
+    v_kph = v_ego * CV.MS_TO_KPH
+    free_cap = float(np.interp(v_kph, [40.0, 60.0, 90.0, 120.0], [1.45, 1.10, 0.95, 0.85]))
+    lead_cap = float(np.interp(v_kph, [35.0, 50.0, 80.0], [1.4, 1.0, 0.8]))
     lead_near = 1.0 if (lead is not None and lead.status and lead.dRel < 60.0) else 0.0
     self.catchup_lead_f += (lead_near - self.catchup_lead_f) * (DT_MDL / (0.5 + DT_MDL))
-    if self.catchup_lead_f > 0.01:
-      cap = float(np.interp(v_ego * CV.MS_TO_KPH, [35.0, 50.0, 80.0], [1.4, 1.0, 0.8]))
-      if self.myDrivingMode == DrivingMode.High:
-        cap *= self.myHighModeFactor
-      accel = min(accel, accel + (cap - accel) * self.catchup_lead_f)
+    cap = free_cap + (lead_cap - free_cap) * self.catchup_lead_f  # 선행차 근접 시 lead_cap로 블렌드
+    if self.myDrivingMode == DrivingMode.High:
+      cap *= self.myHighModeFactor
+    # 캡은 25→40km/h로 완만히 적용(램프-인). 저속 출발(런치, ≤25km/h)에는 캡을 걸지 않아
+    # 정차후 출발 캐치업 부스트가 온전히 발휘된다("출발 캐치업 느림" 해소). 종전엔 선행차
+    # 근접 시 저속에서도 lead_cap(1.4)이 걸려 런치 부스트(≈2.9)를 깎고 있었다.
+    cap_weight = float(np.clip((v_kph - 25.0) / 15.0, 0.0, 1.0))
+    accel = accel + (min(accel, cap) - accel) * cap_weight
     return accel
 
   def _get_base_t_follow(self, personality, v_ego):
