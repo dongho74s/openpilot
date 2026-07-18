@@ -24,6 +24,13 @@ DRIVER_TORQUE_FILTER_TAU = 0.12
 PRE_OVERRIDE_PREDICTION_TIME = 0.15
 PRE_OVERRIDE_START_RATIO = 0.90
 PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
+# 사전-오버라이드(steeringPressed 확정 전) 중 유지할 최소 조향권한 비율.
+# 임계 근처의 '손 얹은' 토크만으로 권한이 최소치(ANGLE_MIN_TORQUE)까지 붕괴하면
+# 커브에서 LKAS가 필요한 횡가속을 못 내 언더스티어→차선이탈이 난다(주행로그
+# 00000147--20: 운전자토크 ~200-274에서 EPS 출력토크가 0으로 떨어지고 명령각
+# -16°를 못 따라 -7°에 고정). 확정 개입 전에는 권한을 이 비율 이상 유지해 차로유지를
+# 보장하고, steeringPressed로 확정되면 그때 ANGLE_MIN_TORQUE까지 완전 양보한다.
+PRE_OVERRIDE_TORQUE_FLOOR_RATIO = 0.5
 
 vibrate_intervals = [
   (0.0, 0.5),
@@ -295,6 +302,12 @@ class CarController(CarControllerBase):
     elif pre_override_yield > 0.0:
       # Start handing off gently before steeringPressed flips to avoid a sharp torque drop.
       torque_delta = PRE_OVERRIDE_MAX_TORQUE_DELTA * pre_override_yield
+      # 확정 개입 전에는 권한을 절반(FLOOR) 아래로 내리지 않는다 → 임계 근처 '손 얹은'
+      # 토크로 커브에서 조향을 포기(언더스티어)하는 것을 방지. 진짜 개입은 steeringPressed로
+      # 확정돼 위 -20 delta 경로로 완전 양보되므로 적법한 오버라이드는 그대로 동작한다.
+      pre_override_floor = self.angle_max_torque * PRE_OVERRIDE_TORQUE_FLOOR_RATIO
+      if self.lkas_max_torque + torque_delta < pre_override_floor:
+        torque_delta = min(0.0, pre_override_floor - self.lkas_max_torque)
     elif self.lkas_max_torque >= self.angle_max_torque:
       # Once fully recovered, hold full authority until the next driver override.
       torque_delta = 0.0
