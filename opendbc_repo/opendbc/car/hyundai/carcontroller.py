@@ -744,13 +744,31 @@ class HyundaiJerk:
       self.jerk_l = jerk_max_l
       self.cb_upper = self.cb_lower = 0.0
     else:
+      # 실행단 적용 jerk(SCC가 aReqValue로 실제 가감속을 램프하는 속도)를 주행(pid) 구간에서
+      # 사람 페달 특성에 맞춘다. off/stopping/starting은 종전과 동일(아래 else).
+      if actuators.longControlState == LongCtrlState.pid:
+        # ── 가속 적용 jerk 하한: 저속(출발/캐치업)에서 상향 ─────────────────────────
+        # 기존 고정 하한 0.5는 정차후 출발·중저속 캐치업에서 실측 가속이 명령을 굼뜨게
+        # 따라가 '캐치업 느림'의 원인이었다(로그 00000152--4: 명령 1.4~1.9인데 실측 aEgo
+        # 1.1대 정체, 적용 jerk≈0.5). jerk_u는 상한(rate limit)이라 명령보다 빨리 밀지
+        # 않으므로(무해), 저속만 사람 launch 수준(≈1.1)으로 올려 응답을 확보하고 중고속은
+        # 완만(0.5)하게 유지 → 고속 가속 온셋 부드러움은 그대로.
+        ju_floor = float(np.interp(CS.out.vEgo, [2.0, 5.5, 12.5], [1.1, 0.8, 0.5]))
+        # ── 브레이크 적용 jerk 상한: 목표 감속 깊이(aTarget)로 게이팅 ────────────────
+        # 기존 -jerk*4.0은 계획의 '순간 jerk' 스파이크를 4~5 m/s³로 증폭해, 목표 감속이
+        # 완만(aTarget -0.8, TTC 16s)해도 브레이크를 급하게 물려 '감속 시작 불편'을 만들었다
+        # (로그 00000153: jerk_l≥3.5의 95%가 비긴급 aTarget>-2.0). 목표 감속이 얕을수록 낮은
+        # 상한으로 부드럽게 물리고, 계획이 강한 감속을 요구할 때(aTarget이 깊음)만 상한을
+        # 최대까지 개방해 긴급 제동 응답을 보존한다(연속 보간이라 cliff 없음).
+        jl_cap = float(np.interp(actuators.aTarget, [-3.0, -2.0, -1.0], [jerk_max_l, 3.2, 2.4]))
+      else:
+        ju_floor = self.jerk_u_min
+        jl_cap = jerk_max_l
+      self.jerk_u = min(max(ju_floor, self.jerk * 2.0), jerk_max_u)
+      self.jerk_l = min(max(1.0, -self.jerk * 4.0), jl_cap)
       if CP.flags & HyundaiFlags.CANFD:
-        self.jerk_u = min(max(self.jerk_u_min, self.jerk * 2.0), jerk_max_u)
-        self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = self.cb_lower = 0.0
       else:
-        self.jerk_u = min(max(self.jerk_u_min, self.jerk * 2.0), jerk_max_u)
-        self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
 
