@@ -30,6 +30,9 @@ class CarState(CarStateBase):
     self.loopback_lka_steering_cmd_ts_nanos = 0
     self.pt_lka_steering_cmd_counter = 0
     self.cam_lka_steering_cmd_counter = 0
+    self.cam_ascm_2cd_counter = 0
+    self.cam_ascm_2cd_counter_updated = False
+    self.cam_ascm_2cd_counter_ts_nanos = 0
     self.is_metric = False
 
     self.buttons_counter = 0
@@ -80,6 +83,17 @@ class CarState(CarStateBase):
     if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.CP.flags & GMFlags.NO_CAMERA.value:
       self.pt_lka_steering_cmd_counter = pt_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
       self.cam_lka_steering_cmd_counter = cam_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
+
+    # The 2021-22 Trailblazer validates the active longitudinal command counter
+    # against ASCM_2CD, which is still forwarded from the stock camera when
+    # openpilot replaces the camera's ACC messages.
+    self.cam_ascm_2cd_counter_updated = False
+    if self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER:
+      counters = cam_cp.vl_all["ASCM_2CD"]["RollingCounter"]
+      self.cam_ascm_2cd_counter_updated = len(counters) > 0
+      if self.cam_ascm_2cd_counter_updated:
+        self.cam_ascm_2cd_counter = int(counters[-1])
+        self.cam_ascm_2cd_counter_ts_nanos = cam_cp.ts_nanos["ASCM_2CD"]["RollingCounter"]
 
     # This is to avoid a fault where you engage while still moving backwards after shifting to D.
     # An Equinox has been seen with an unsupported status (3), so only check if either wheel is in reverse (2)
@@ -207,9 +221,15 @@ class CarState(CarStateBase):
   @staticmethod
   def get_can_parsers(CP):
     pt_messages = []
+    cam_messages = []
     if CP.networkLocation == NetworkLocation.fwdCamera:
       pt_messages += [
         ("ASCMLKASteeringCmd", float('nan')),
+      ]
+    if (CP.openpilotLongitudinalControl and CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
+        CP.networkLocation == NetworkLocation.fwdCamera):
+      cam_messages += [
+        ("ASCM_2CD", 25),
       ]
     if CP.transmissionType == TransmissionType.direct:
       pt_messages += [
@@ -222,7 +242,6 @@ class CarState(CarStateBase):
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, 2),
       Bus.loopback: CANParser(DBC[CP.carFingerprint][Bus.pt], loopback_messages, 128),
     }
-
