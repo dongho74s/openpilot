@@ -169,9 +169,12 @@ class CarController(CarControllerBase):
             self.last_button_frame = self.frame
             can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.DECEL_SET))
         
-      # Gas/regen, brakes, and UI commands - all at 25Hz
-      if self.frame % 4 == 0:
-      # GM: softHold
+      # Gas/regen, brakes, and UI commands - all at 25Hz. The 2021-22
+      # Trailblazer cross-checks these counters against ASCM_2CD, so follow the
+      # stock camera's arrival phase and counter instead of a free-running clock.
+      longitudinal_command_due, idx = gmcan.get_longitudinal_command_timing(self.CP, CS, self.frame)
+      if longitudinal_command_due:
+        # GM: softHold
         stopping = actuators.longControlState == LongCtrlState.stopping or CS.out.softHoldActive > 0
 
         # Pitch compensated acceleration;
@@ -217,8 +220,6 @@ class CarController(CarControllerBase):
           self.apply_brake = 0
           press_regen_paddle = False
           self.apply_gas = self.params.INACTIVE_REGEN
-
-        idx = (self.frame // 4) % 4
 
         if self.CP.flags & GMFlags.CC_LONG.value:
           if CC.longActive and CS.out.vEgo > self.CP.minEnableSpeed:

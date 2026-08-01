@@ -1,7 +1,21 @@
-﻿from opendbc.car import DT_CTRL
+﻿from opendbc.car import DT_CTRL, structs
 from opendbc.car.can_definitions import CanData
 from opendbc.car.gm.values import CAR, CruiseButtons, CanBus
 from opendbc.car.common.conversions import Conversions as CV
+
+NetworkLocation = structs.CarParams.NetworkLocation
+
+
+def get_longitudinal_command_timing(CP, CS, frame):
+  sync_trailblazer_counter = (
+    CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
+    CP.networkLocation == NetworkLocation.fwdCamera and
+    CS.cam_ascm_2cd_counter_ts_nanos != 0
+  )
+  if sync_trailblazer_counter:
+    return CS.cam_ascm_2cd_counter_updated, CS.cam_ascm_2cd_counter
+  return frame % 4 == 0, (frame // 4) % 4
+
 
 # GM: AutoResume: brake signal to CAN
 def create_brake_command(packer, bus, apply_brake, idx):

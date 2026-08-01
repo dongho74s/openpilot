@@ -203,6 +203,7 @@ BO_ 715 ASCMGasRegenCmd: 8 K124_ASCM
  SG_ GasRegenCmd : 10|19@0+ (0.125,-22534) [-22534|43001.875] "Nm"  NEO
 
 BO_ 717 ASCM_2CD: 5 K124_ASCM
+ SG_ RollingCounter : 7|2@0+ (1,0) [0|3] "" NEO
 
 BO_ 761 BRAKE_RELATED_2: 7 XXX
  SG_ UserBrakePressure2 : 47|9@0+ (1,0) [0|511] "" XXX
