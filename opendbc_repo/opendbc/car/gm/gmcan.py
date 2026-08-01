@@ -92,10 +92,11 @@ def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop):
   }
 
   dat = packer.make_can_msg("ASCMGasRegenCmd", bus, values)[1]
-  values["GasRegenChecksum"] = ((1 - enabled) << 24) | \
-                               (((0xff - dat[1]) & 0xff) << 16) | \
-                               (((0xff - dat[2]) & 0xff) << 8) | \
-                               ((0x100 - dat[3] - idx) & 0xff)
+  # The stock ASCM calculates the lower checksum as one 24-bit subtraction.
+  # Keep the carry/borrow across bytes; byte-wise complements are wrong at
+  # boundaries such as dat[3] == 0 with counter 0.
+  checksum = (0x1000000 - int.from_bytes(dat[1:4], "big") - idx) & 0xFFFFFF
+  values["GasRegenChecksum"] = ((1 - enabled) << 24) | checksum
 
   return packer.make_can_msg("ASCMGasRegenCmd", bus, values)
 

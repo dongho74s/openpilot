@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 from parameterized import parameterized
 
-from opendbc.can import CANParser
+from opendbc.can import CANPacker, CANParser
 from opendbc.car import structs
 from opendbc.car.gm.fingerprints import FINGERPRINTS
-from opendbc.car.gm.gmcan import get_longitudinal_command_timing
+from opendbc.car.gm.gmcan import create_gas_regen_command, get_longitudinal_command_timing
 from opendbc.car.gm.values import CAR, CAMERA_ACC_CAR, GM_RX_OFFSET
 
 CAMERA_DIAGNOSTIC_ADDRESS = 0x24B
@@ -26,7 +26,22 @@ class TestGMFingerprint:
           assert finger.get(required_addr) == 8, required_addr
 
 
-class TestTrailblazerLongitudinalCounterSync:
+class TestTrailblazerLongitudinalIntegrity:
+  @parameterized.expand(
+    [
+      # Captured stock Trailblazer frames. The first two exercise the lower
+      # and upper 24-bit carry/borrow boundaries missed by the old byte-wise
+      # checksum implementation.
+      ("counter_0_low_byte_zero", 346, 0, True, "0142cb0000bd3500"),
+      ("counter_3_low_byte_overflow", 249.75, 3, True, "c142c7fe00bd37ff"),
+      ("inactive_checksum_bit", -500, 2, False, "8042b09001bd4f6e"),
+    ]
+  )
+  def test_gas_regen_checksum_matches_stock(self, _, throttle, counter, enabled, expected_payload):
+    packer = CANPacker("gm_global_a_powertrain_volt")
+    msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False)
+    assert msg[1].hex() == expected_payload
+
   @parameterized.expand(
     [
       ("counter_0", "002c03d3fd", 0),
