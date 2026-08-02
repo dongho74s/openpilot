@@ -447,6 +447,10 @@ HEV 차량의 EV 모드 개입을 목적으로 만든 목표 속도 보정입니
 
 [7개 세부 구역으로 돌아가기](#7개-세부-구역)
 
+## 차종별 운전자 가속 오버라이드
+
+openpilot 종방향 제어를 사용하는 2021~22 쉐보레 트레일블레이저에서는 운전자가 가속페달을 밟으면 가스·리젠과 마찰제동 명령을 같은 CAN 주기부터 즉시 비활성 값으로 전환합니다. ACC 상태와 순정 롤링 카운터는 연속해서 보내므로 운전자 오버라이드 전환 중에도 종방향 CAN 메시지가 빠지지 않습니다. 이 동작은 안전 제한을 완화하지 않으며 다른 GM 차종의 명령값은 변경하지 않습니다.
+
 ## 문제를 구분하는 빠른 순서
 
 1. openpilot이 실제 가감속을 제어하는 차량인지 확인합니다.
@@ -467,3 +471,4 @@ HEV 차량의 EV 모드 개입을 목적으로 만든 목표 속도 보정입니
 - `openpilot/selfdrive/controls/lib/longcontrol.py`
 - `openpilot/selfdrive/controls/radard.py`
 - `opendbc_repo/opendbc/car/hyundai/carcontroller.py`
+- `opendbc_repo/opendbc/car/gm/carcontroller.py`

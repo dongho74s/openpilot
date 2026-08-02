@@ -287,6 +287,10 @@ For base 50 and ATC 100, the turn section uses about -1.00 m/s². For base 100 a
 
 ATC distance is carried by the internal `carrotMan` service message. That is an internal service name and does not indicate support for the former CarrotMan app or CarrotLink; neither is currently supported.
 
+## Vehicle-specific driver accelerator override
+
+On 2021–22 Chevrolet Trailblazers using openpilot longitudinal control, pressing the accelerator changes the gas/regen and friction-brake commands to their inactive values in the same CAN cycle. ACC state and the stock rolling counter remain continuous, so the longitudinal message group is not skipped during the driver-override transition. This does not relax the safety limits or change command values on other GM platforms.
+
 ## Quick diagnostic order
 
 1. Confirm that openpilot actually controls acceleration and braking on the vehicle.
@@ -307,3 +311,4 @@ Related: [Understanding Settings](settings.md) · [Tuning introduction](https://
 - `openpilot/selfdrive/controls/lib/longcontrol.py`
 - `openpilot/selfdrive/controls/radard.py`
 - `opendbc_repo/opendbc/car/hyundai/carcontroller.py`
+- `opendbc_repo/opendbc/car/gm/carcontroller.py`

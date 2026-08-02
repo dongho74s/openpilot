@@ -250,6 +250,11 @@ class CarController(CarControllerBase):
           else:
             acc_engaged = CC.enabled
 
+          self.apply_gas, self.apply_brake, at_full_stop, near_stop = gmcan.apply_driver_gas_override(
+            self.CP.carFingerprint, CS.out.gasPressed, self.params.INACTIVE_REGEN,
+            self.apply_gas, self.apply_brake, at_full_stop, near_stop,
+          )
+
           if actuators.longControlState in [LongCtrlState.stopping, LongCtrlState.starting]:
             if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
               self.last_button_frame = self.frame
