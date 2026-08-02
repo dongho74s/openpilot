@@ -5,7 +5,8 @@ from parameterized import parameterized
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import structs
 from opendbc.car.gm.fingerprints import FINGERPRINTS
-from opendbc.car.gm.gmcan import create_acc_dashboard_command, create_gas_regen_command, get_longitudinal_command_timing
+from opendbc.car.gm.gmcan import (apply_driver_gas_override, create_acc_dashboard_command, create_friction_brake_command,
+                                 create_gas_regen_command, get_longitudinal_command_timing)
 from opendbc.car.gm.values import CAR, CAMERA_ACC_CAR, GM_RX_OFFSET
 
 CAMERA_DIAGNOSTIC_ADDRESS = 0x24B
@@ -27,6 +28,28 @@ class TestGMFingerprint:
 
 
 class TestTrailblazerLongitudinalIntegrity:
+  @parameterized.expand([
+    ("trailblazer_gas", CAR.CHEVROLET_TRAILBLAZER, True, (-500, 0, False, False)),
+    ("trailblazer_released", CAR.CHEVROLET_TRAILBLAZER, False, (-540, 143, True, True)),
+    ("other_gm_gas", CAR.CHEVROLET_EQUINOX, True, (-540, 143, True, True)),
+  ])
+  def test_driver_gas_override_values(self, _, car_fingerprint, gas_pressed, expected):
+    result = apply_driver_gas_override(car_fingerprint, gas_pressed, -500, -540, 143, True, True)
+    assert result == expected
+
+  def test_driver_gas_override_keeps_counter_group_transmittable(self):
+    packer = CANPacker("gm_global_a_powertrain_volt")
+    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER)
+    apply_gas, apply_brake, at_full_stop, near_stop = apply_driver_gas_override(
+      CP.carFingerprint, True, -500, -540, 143, False, True,
+    )
+
+    gas_msg = create_gas_regen_command(packer, 0, apply_gas, 3, True, at_full_stop)
+    brake_msg = create_friction_brake_command(packer, 0, apply_brake, 3, True, near_stop, at_full_stop, CP)
+
+    assert gas_msg[1].hex() == "c142b09000bd4f6d"
+    assert brake_msg[1].hex() == "1000effd03"
+
   @parameterized.expand(
     [
       # Captured stock Trailblazer frames. The first two exercise the lower

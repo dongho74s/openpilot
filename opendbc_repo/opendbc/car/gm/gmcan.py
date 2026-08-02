@@ -17,6 +17,16 @@ def get_longitudinal_command_timing(CP, CS, frame):
   return frame % 4 == 0, (frame // 4) % 4
 
 
+def apply_driver_gas_override(car_fingerprint, gas_pressed, inactive_regen, apply_gas, apply_brake,
+                              at_full_stop, near_stop):
+  # The 2021-22 Trailblazer can sample the accelerator before controls has
+  # cleared longActive. Emit a complete inactive command set during that
+  # transition so Panda does not drop a counter-matched 0x2CB/0x315 pair.
+  if car_fingerprint == CAR.CHEVROLET_TRAILBLAZER and gas_pressed:
+    return inactive_regen, 0, False, False
+  return apply_gas, apply_brake, at_full_stop, near_stop
+
+
 # GM: AutoResume: brake signal to CAN
 def create_brake_command(packer, bus, apply_brake, idx):
   mode = 0xA if apply_brake > 0 else 0x1
