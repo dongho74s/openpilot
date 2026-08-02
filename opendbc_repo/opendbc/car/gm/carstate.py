@@ -33,6 +33,7 @@ class CarState(CarStateBase):
     self.cam_ascm_2cd_counter = 0
     self.cam_ascm_2cd_counter_updated = False
     self.cam_ascm_2cd_counter_ts_nanos = 0
+    self.cam_acc_status = None
     self.is_metric = False
 
     self.buttons_counter = 0
@@ -94,6 +95,12 @@ class CarState(CarStateBase):
       if self.cam_ascm_2cd_counter_updated:
         self.cam_ascm_2cd_counter = int(counters[-1])
         self.cam_ascm_2cd_counter_ts_nanos = cam_cp.ts_nanos["ASCM_2CD"]["RollingCounter"]
+
+      # Keep the camera's complete ACC state as the template for the replacement
+      # 0x370. This Trailblazer generation expects ACCCruiseState and the two
+      # constant bits to retain the stock values (2, 0, 0).
+      if len(cam_cp.vl_all["ASCMActiveCruiseControlStatus"]["ACCCruiseState"]) > 0:
+        self.cam_acc_status = copy.copy(cam_cp.vl["ASCMActiveCruiseControlStatus"])
 
     # This is to avoid a fault where you engage while still moving backwards after shifting to D.
     # An Equinox has been seen with an unsupported status (3), so only check if either wheel is in reverse (2)
@@ -230,6 +237,7 @@ class CarState(CarStateBase):
         CP.networkLocation == NetworkLocation.fwdCamera):
       cam_messages += [
         ("ASCM_2CD", 25),
+        ("ASCMActiveCruiseControlStatus", 25),
       ]
     if CP.transmissionType == TransmissionType.direct:
       pt_messages += [
