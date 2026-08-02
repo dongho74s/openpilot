@@ -15,6 +15,7 @@ from openpilot.selfdrive.car.cruise import VCruiseCarrot
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 NetworkLocation = structs.CarParams.NetworkLocation
 LongCtrlState = structs.CarControl.Actuators.LongControlState
+GearShifter = structs.CarState.GearShifter
 
 # Camera cancels up to 0.1s after brake is pressed, ECM allows 0.5s
 CAMERA_CANCEL_DELAY_FRAMES = 10
@@ -260,8 +261,19 @@ class CarController(CarControllerBase):
 
           # Send dashboard UI commands (ACC status)
           send_fcw = hud_alert == VisualAlert.fcw
-          can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
+          dashboard_enabled = CC.enabled
+          stock_acc_status = None
+          if self.CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER:
+            # Reverse/park must retain the camera's inactive 0x370 unchanged.
+            dashboard_enabled = CC.enabled and CS.out.gearShifter == GearShifter.drive
+            stock_acc_status = CS.cam_acc_status
+
+          # Do not emit the generic invalid Trailblazer state during startup;
+          # wait at most one camera cycle for a stock 0x370 template.
+          if self.CP.carFingerprint != CAR.CHEVROLET_TRAILBLAZER or stock_acc_status is not None:
+            can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, dashboard_enabled,
+                                                                hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw,
+                                                                stock_acc_status))
       else:
         # to keep accel steady for logs when not sending gas
         accel += self.accel_g

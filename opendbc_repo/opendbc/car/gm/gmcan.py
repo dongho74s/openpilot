@@ -132,19 +132,33 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   return packer.make_can_msg("EBCMFrictionBrakeCmd", bus, values)
 
 
-def create_acc_dashboard_command(packer, bus, enabled, target_speed_kph, hud_control, fcw):
+def create_acc_dashboard_command(packer, bus, enabled, target_speed_kph, hud_control, fcw, stock_acc_status=None):
   target_speed = min(target_speed_kph, 255)
 
-  values = {
-    "ACCAlwaysOne": 1,
-    "ACCResumeButton": 0,
+  if stock_acc_status is not None:
+    values = dict(stock_acc_status)
+
+    # When longitudinal control is inactive, forward the exact stock state.
+    # In particular, do not replace the Trailblazer's valid (2, 0, 0)
+    # ACCCruiseState/constant-bit tuple with openpilot's generic (0, 1, 1).
+    if not enabled:
+      return packer.make_can_msg("ASCMActiveCruiseControlStatus", bus, values)
+  else:
+    values = {
+      "ACCAlwaysOne": 1,
+      "ACCResumeButton": 0,
+      "ACCAlwaysOne2": 1,
+    }
+
+  # Preserve the stock protocol state while replacing only the fields needed
+  # for openpilot's active longitudinal-control display.
+  values.update({
     "ACCSpeedSetpoint": target_speed,
     "ACCGapLevel": hud_control.leadDistanceBars * enabled,  # 3 "far", 0 "inactive"
     "ACCCmdActive": enabled,
-    "ACCAlwaysOne2": 1,
     "ACCLeadCar": hud_control.leadVisible,
-    "FCWAlert": 0x3 if fcw else 0
-  }
+    "FCWAlert": 0x3 if fcw else 0,
+  })
 
   return packer.make_can_msg("ASCMActiveCruiseControlStatus", bus, values)
 
