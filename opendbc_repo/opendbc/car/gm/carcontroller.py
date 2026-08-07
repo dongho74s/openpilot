@@ -171,8 +171,8 @@ class CarController(CarControllerBase):
             can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.DECEL_SET))
         
       # Gas/regen, brakes, and UI commands - all at 25Hz. The 2021-22
-      # Trailblazer cross-checks these counters against ASCM_2CD, so follow the
-      # stock camera's arrival phase and counter instead of a free-running clock.
+      # Trailblazer changes the 0x2CB counter phase between cold/inactive and
+      # active ACC states, so follow that stock command rather than ASCM_2CD.
       longitudinal_command_due, idx = gmcan.get_longitudinal_command_timing(self.CP, CS, self.frame)
       if longitudinal_command_due:
         # GM: softHold
@@ -254,6 +254,10 @@ class CarController(CarControllerBase):
             self.CP.carFingerprint, CS.out.gasPressed, self.params.INACTIVE_REGEN,
             self.apply_gas, self.apply_brake, at_full_stop, near_stop,
           )
+          self.apply_gas, self.apply_brake, at_full_stop, near_stop, acc_engaged = gmcan.apply_stock_longitudinal_gate(
+            self.CP.carFingerprint, CS.cam_stock_long_active, self.params.INACTIVE_REGEN,
+            self.apply_gas, self.apply_brake, at_full_stop, near_stop, acc_engaged,
+          )
 
           if actuators.longControlState in [LongCtrlState.stopping, LongCtrlState.starting]:
             if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
@@ -269,9 +273,13 @@ class CarController(CarControllerBase):
           dashboard_enabled = CC.enabled
           stock_acc_status = None
           if self.CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER:
-            # Reverse/park must retain the camera's inactive 0x370 unchanged.
-            dashboard_enabled = CC.enabled and CS.out.gearShifter == GearShifter.drive
             stock_acc_status = CS.cam_acc_status
+            # Reverse/park and a stock ACC veto must retain the camera state
+            # unchanged instead of reasserting ACCCmdActive from CC.enabled.
+          dashboard_enabled = gmcan.get_acc_dashboard_enabled(
+            self.CP.carFingerprint, CC.enabled, CS.out.gearShifter == GearShifter.drive,
+            CS.cam_stock_long_active, stock_acc_status,
+          )
 
           # Do not emit the generic invalid Trailblazer state during startup;
           # wait at most one camera cycle for a stock 0x370 template.

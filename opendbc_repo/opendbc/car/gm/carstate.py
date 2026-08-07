@@ -5,8 +5,9 @@ from openpilot.common.params import Params #kans
 import numpy as np
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.interfaces import CarStateBase
+from opendbc.car.gm import gmcan
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CC_ONLY_CAR, CAMERA_ACC_CAR
+from opendbc.car.interfaces import CarStateBase
 
 ButtonType = structs.CarState.ButtonEvent.Type
 TransmissionType = structs.CarParams.TransmissionType
@@ -30,9 +31,11 @@ class CarState(CarStateBase):
     self.loopback_lka_steering_cmd_ts_nanos = 0
     self.pt_lka_steering_cmd_counter = 0
     self.cam_lka_steering_cmd_counter = 0
-    self.cam_ascm_2cd_counter = 0
-    self.cam_ascm_2cd_counter_updated = False
-    self.cam_ascm_2cd_counter_ts_nanos = 0
+    self.cam_ascm_2cb_counter = 0
+    self.cam_ascm_2cb_counter_updated = False
+    self.cam_ascm_2cb_counter_ts_nanos = 0
+    self.cam_stock_long_active = None
+    self.cam_stock_long_cancel = False
     self.cam_acc_status = None
     self.is_metric = False
 
@@ -85,16 +88,20 @@ class CarState(CarStateBase):
       self.pt_lka_steering_cmd_counter = pt_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
       self.cam_lka_steering_cmd_counter = cam_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
 
-    # The 2021-22 Trailblazer validates the active longitudinal command counter
-    # against ASCM_2CD, which is still forwarded from the stock camera when
-    # openpilot replaces the camera's ACC messages.
-    self.cam_ascm_2cd_counter_updated = False
+    # The stock 0x2CB counter lags ASCM_2CD by one cycle during some cold starts
+    # and aligns with it after ACC activates. Follow 0x2CB itself instead.
+    self.cam_ascm_2cb_counter_updated = False
+    self.cam_stock_long_cancel = False
     if self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER:
-      counters = cam_cp.vl_all["ASCM_2CD"]["RollingCounter"]
-      self.cam_ascm_2cd_counter_updated = len(counters) > 0
-      if self.cam_ascm_2cd_counter_updated:
-        self.cam_ascm_2cd_counter = int(counters[-1])
-        self.cam_ascm_2cd_counter_ts_nanos = cam_cp.ts_nanos["ASCM_2CD"]["RollingCounter"]
+      counters = cam_cp.vl_all["ASCMGasRegenCmd"]["RollingCounter"]
+      active_states = cam_cp.vl_all["ASCMGasRegenCmd"]["GasRegenCmdActive"]
+      self.cam_ascm_2cb_counter_updated = len(counters) > 0 and len(active_states) > 0
+      if self.cam_ascm_2cb_counter_updated:
+        previous_stock_long_active = self.cam_stock_long_active
+        self.cam_ascm_2cb_counter = int(counters[-1])
+        self.cam_ascm_2cb_counter_ts_nanos = cam_cp.ts_nanos["ASCMGasRegenCmd"]["RollingCounter"]
+        self.cam_stock_long_active = bool(active_states[-1])
+        self.cam_stock_long_cancel = previous_stock_long_active is True and not self.cam_stock_long_active
 
       # Keep the camera's complete ACC state as the template for the replacement
       # 0x370. This Trailblazer generation expects ACCCruiseState and the two
@@ -222,6 +229,11 @@ class CarState(CarStateBase):
         *create_button_events(self.lkas_enabled, prev_lkas_enabled,
                               {1: ButtonType.lkas})
       ]
+    if self.cam_stock_long_cancel:
+      # Treat the camera's active-to-inactive edge like a cancel button. The
+      # controller has already neutralized this cycle's actuation; this edge
+      # also prevents openpilot from remaining visually engaged with no ACC.
+      ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
 
     return ret
 
@@ -233,12 +245,7 @@ class CarState(CarStateBase):
       pt_messages += [
         ("ASCMLKASteeringCmd", float('nan')),
       ]
-    if (CP.openpilotLongitudinalControl and CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
-        CP.networkLocation == NetworkLocation.fwdCamera):
-      cam_messages += [
-        ("ASCM_2CD", 25),
-        ("ASCMActiveCruiseControlStatus", 25),
-      ]
+    cam_messages += gmcan.get_longitudinal_sync_messages(CP)
     if CP.transmissionType == TransmissionType.direct:
       pt_messages += [
         ("EBCMRegenPaddle", 50),

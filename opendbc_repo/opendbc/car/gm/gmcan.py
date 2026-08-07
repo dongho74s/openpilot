@@ -6,14 +6,32 @@ from opendbc.car.common.conversions import Conversions as CV
 NetworkLocation = structs.CarParams.NetworkLocation
 
 
+def get_longitudinal_sync_messages(CP):
+  if (CP.openpilotLongitudinalControl and CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
+      CP.networkLocation == NetworkLocation.fwdCamera):
+    # These are synchronization references, not platform-wide CAN validity
+    # requirements. A slow camera startup must not invalidate the whole car.
+    return [("ASCMGasRegenCmd", float('nan')), ("ASCMActiveCruiseControlStatus", float('nan'))]
+  return []
+
+
 def get_longitudinal_command_timing(CP, CS, frame):
   sync_trailblazer_counter = (
     CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
-    CP.networkLocation == NetworkLocation.fwdCamera and
-    CS.cam_ascm_2cd_counter_ts_nanos != 0
+    CP.networkLocation == NetworkLocation.fwdCamera
   )
   if sync_trailblazer_counter:
-    return CS.cam_ascm_2cd_counter_updated, CS.cam_ascm_2cd_counter
+    # The stock command counter can lag ASCM_2CD by one cycle during a cold
+    # start, then align with it after ACC becomes active. Follow the actual
+    # stock 0x2CB command so both phases are handled without guessing.
+    stock_references_ready = (
+      CS.cam_ascm_2cb_counter_ts_nanos != 0 and
+      CS.cam_stock_long_active is not None and
+      CS.cam_acc_status is not None
+    )
+    if not stock_references_ready:
+      return False, 0
+    return CS.cam_ascm_2cb_counter_updated, CS.cam_ascm_2cb_counter
   return frame % 4 == 0, (frame // 4) % 4
 
 
@@ -25,6 +43,23 @@ def apply_driver_gas_override(car_fingerprint, gas_pressed, inactive_regen, appl
   if car_fingerprint == CAR.CHEVROLET_TRAILBLAZER and gas_pressed:
     return inactive_regen, 0, False, False
   return apply_gas, apply_brake, at_full_stop, near_stop
+
+
+def apply_stock_longitudinal_gate(car_fingerprint, stock_long_active, inactive_regen, apply_gas, apply_brake,
+                                  at_full_stop, near_stop, acc_engaged):
+  # The Trailblazer's camera can revoke longitudinal authority before the ECM
+  # cruise state changes. Stop actuation on that same stock command cycle so
+  # the EBCM never sees an active replacement after the camera has gone idle.
+  if car_fingerprint == CAR.CHEVROLET_TRAILBLAZER and stock_long_active is not True:
+    return inactive_regen, 0, False, False, False
+  return apply_gas, apply_brake, at_full_stop, near_stop, acc_engaged
+
+
+def get_acc_dashboard_enabled(car_fingerprint, enabled, in_drive, stock_long_active, stock_acc_status):
+  if car_fingerprint == CAR.CHEVROLET_TRAILBLAZER:
+    return (enabled and in_drive and stock_long_active is True and stock_acc_status is not None and
+            bool(stock_acc_status["ACCCmdActive"]))
+  return enabled
 
 
 # GM: AutoResume: brake signal to CAN

@@ -1,3 +1,4 @@
+import math
 from types import SimpleNamespace
 
 from parameterized import parameterized
@@ -5,8 +6,9 @@ from parameterized import parameterized
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import structs
 from opendbc.car.gm.fingerprints import FINGERPRINTS
-from opendbc.car.gm.gmcan import (apply_driver_gas_override, create_acc_dashboard_command, create_friction_brake_command,
-                                 create_gas_regen_command, get_longitudinal_command_timing)
+from opendbc.car.gm.gmcan import (apply_driver_gas_override, apply_stock_longitudinal_gate, create_acc_dashboard_command,
+                                 create_friction_brake_command, create_gas_regen_command, get_acc_dashboard_enabled,
+                                 get_longitudinal_command_timing, get_longitudinal_sync_messages)
 from opendbc.car.gm.values import CAR, CAMERA_ACC_CAR, GM_RX_OFFSET
 
 CAMERA_DIAGNOSTIC_ADDRESS = 0x24B
@@ -65,32 +67,96 @@ class TestTrailblazerLongitudinalIntegrity:
     msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False)
     assert msg[1].hex() == expected_payload
 
-  @parameterized.expand(
-    [
-      ("counter_0", "002c03d3fd", 0),
-      ("counter_1", "402c03d3fc", 1),
-      ("counter_2", "802c03d3fb", 2),
-      ("counter_3", "c02c03d3fa", 3),
-    ]
-  )
-  def test_ascm_2cd_counter_decode(self, _, payload, expected_counter):
-    parser = CANParser("gm_global_a_powertrain_volt", [("ASCM_2CD", 25)], 2)
-    parser.update([(1_000_000_000, [(0x2CD, bytes.fromhex(payload), 2)])])
-    assert parser.vl["ASCM_2CD"]["RollingCounter"] == expected_counter
+  @parameterized.expand([
+    ("inactive_counter_0", "0042b09001bd4f70", 0, 0),
+    ("inactive_counter_1", "4042b09001bd4f6f", 1, 0),
+    ("inactive_counter_2", "8042b09001bd4f6e", 2, 0),
+    ("inactive_counter_3", "c042b09001bd4f6d", 3, 0),
+    ("active_counter_0", "0142cb0000bd3500", 0, 1),
+  ])
+  def test_stock_gas_regen_counter_and_active_decode(self, _, payload, expected_counter, expected_active):
+    parser = CANParser("gm_global_a_powertrain_volt", [("ASCMGasRegenCmd", float('nan'))], 2)
+    parser.update([(1_000_000_000, [(0x2CB, bytes.fromhex(payload), 2)])])
+    assert parser.vl["ASCMGasRegenCmd"]["RollingCounter"] == expected_counter
+    assert parser.vl["ASCMGasRegenCmd"]["GasRegenCmdActive"] == expected_active
 
-  def test_uses_stock_counter_after_first_ascm_2cd(self):
+  @parameterized.expand([
+    ("active", True),
+    ("inactive", False),
+  ])
+  def test_uses_actual_stock_gas_regen_counter(self, _, stock_active):
     CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=NetworkLocation.fwdCamera)
-    CS = SimpleNamespace(cam_ascm_2cd_counter_ts_nanos=1, cam_ascm_2cd_counter_updated=True, cam_ascm_2cd_counter=3)
+    CS = SimpleNamespace(cam_ascm_2cb_counter_ts_nanos=1, cam_ascm_2cb_counter_updated=True,
+                         cam_ascm_2cb_counter=3, cam_stock_long_active=stock_active, cam_acc_status={})
     assert get_longitudinal_command_timing(CP, CS, frame=41) == (True, 3)
 
-    CS.cam_ascm_2cd_counter_updated = False
+    CS.cam_ascm_2cb_counter_updated = False
     assert get_longitudinal_command_timing(CP, CS, frame=44) == (False, 3)
 
-  def test_uses_original_clock_before_first_ascm_2cd(self):
+  @parameterized.expand([
+    ("neither_reference", 0, None, None),
+    ("no_stock_active", 1, None, {}),
+    ("no_acc_status", 1, False, None),
+  ])
+  def test_waits_for_both_stock_references(self, _, counter_ts, stock_active, acc_status):
     CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=NetworkLocation.fwdCamera)
-    CS = SimpleNamespace(cam_ascm_2cd_counter_ts_nanos=0)
-    assert get_longitudinal_command_timing(CP, CS, frame=4) == (True, 1)
-    assert get_longitudinal_command_timing(CP, CS, frame=5) == (False, 1)
+    CS = SimpleNamespace(cam_ascm_2cb_counter_ts_nanos=counter_ts, cam_stock_long_active=stock_active,
+                         cam_acc_status=acc_status)
+    assert get_longitudinal_command_timing(CP, CS, frame=4) == (False, 0)
+
+  def test_other_gm_uses_original_clock(self):
+    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_EQUINOX, networkLocation=NetworkLocation.fwdCamera)
+    assert get_longitudinal_command_timing(CP, SimpleNamespace(), frame=4) == (True, 1)
+    assert get_longitudinal_command_timing(CP, SimpleNamespace(), frame=5) == (False, 1)
+
+  def test_sync_messages_do_not_require_alive_frequency(self):
+    CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
+                         networkLocation=NetworkLocation.fwdCamera)
+    messages = get_longitudinal_sync_messages(CP)
+    assert [name for name, _ in messages] == ["ASCMGasRegenCmd", "ASCMActiveCruiseControlStatus"]
+    assert all(math.isnan(frequency) for _, frequency in messages)
+
+    parser = CANParser("gm_global_a_powertrain_volt", messages, 2)
+    assert parser.message_states[0x2CB].ignore_alive
+    assert parser.message_states[0x370].ignore_alive
+
+  @parameterized.expand([
+    ("trailblazer_stock_inactive", CAR.CHEVROLET_TRAILBLAZER, False, (-500, 0, False, False, False)),
+    ("trailblazer_stock_missing", CAR.CHEVROLET_TRAILBLAZER, None, (-500, 0, False, False, False)),
+    ("trailblazer_stock_active", CAR.CHEVROLET_TRAILBLAZER, True, (-540, 143, True, True, True)),
+    ("other_gm", CAR.CHEVROLET_EQUINOX, False, (-540, 143, True, True, True)),
+  ])
+  def test_stock_longitudinal_gate(self, _, car_fingerprint, stock_active, expected):
+    result = apply_stock_longitudinal_gate(car_fingerprint, stock_active, -500, -540, 143, True, True, True)
+    assert result == expected
+
+  def test_stock_veto_creates_inactive_command_group(self):
+    packer = CANPacker("gm_global_a_powertrain_volt")
+    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER)
+    values = apply_stock_longitudinal_gate(CP.carFingerprint, False, -500, -540, 143, True, True, True)
+    apply_gas, apply_brake, at_full_stop, near_stop, acc_engaged = values
+
+    gas_msg = create_gas_regen_command(packer, 0, apply_gas, 1, acc_engaged, at_full_stop)
+    brake_msg = create_friction_brake_command(packer, 0, apply_brake, 1, acc_engaged, near_stop, at_full_stop, CP)
+
+    assert gas_msg[1].hex() == "4042b09001bd4f6f"
+    assert brake_msg[1].hex() == "1000efff01"
+
+  @parameterized.expand([
+    ("all_active", True, True, True, {"ACCCmdActive": 1}, True),
+    ("not_in_drive", True, False, True, {"ACCCmdActive": 1}, False),
+    ("stock_long_veto", True, True, False, {"ACCCmdActive": 1}, False),
+    ("stock_status_veto", True, True, True, {"ACCCmdActive": 0}, False),
+    ("missing_stock_status", True, True, True, None, False),
+    ("openpilot_disabled", False, True, True, {"ACCCmdActive": 1}, False),
+  ])
+  def test_trailblazer_dashboard_gate(self, _, enabled, in_drive, stock_active, stock_status, expected):
+    assert get_acc_dashboard_enabled(
+      CAR.CHEVROLET_TRAILBLAZER, enabled, in_drive, stock_active, stock_status,
+    ) == expected
+
+  def test_other_gm_dashboard_state_is_unchanged(self):
+    assert get_acc_dashboard_enabled(CAR.CHEVROLET_EQUINOX, True, False, False, None)
 
   @parameterized.expand([
     ("inactive", "000231790000"),
