@@ -291,6 +291,10 @@ ATC distance is carried by the internal `carrotMan` service message. That is an 
 
 On 2021–22 Chevrolet Trailblazers using openpilot longitudinal control, pressing the accelerator changes the gas/regen and friction-brake commands to their inactive values in the same CAN cycle. ACC state and the stock rolling counter remain continuous, so the longitudinal message group is not skipped during the driver-override transition. This does not relax the safety limits or change command values on other GM platforms.
 
+On this generation, the stock `0x2CB` gas/regen counter can lag the auxiliary `0x2CD` counter by one cycle immediately after a cold start. openpilot now follows the arrival cycle and counter of the actual stock `0x2CB` command instead of estimating its phase. If the stock `0x2CB` and `0x370` references have not arrived during startup, openpilot waits rather than synthesizing a longitudinal command. Delayed synchronization references alone do not invalidate the vehicle's complete camera CAN parser.
+
+If the stock camera revokes longitudinal authority while driving by setting `GasRegenCmdActive=0` or `ACCCmdActive=0`, openpilot neutralizes its command in the same cycle: gas/regen `-500`, friction brake `0`, and the stop-state bits cleared, followed by disengagement. In simple terms, it prevents openpilot from sending one or two more command envelopes after stock ACC has already said it will no longer accept them. This gate applies only to the 2021–22 Trailblazer openpilot-longitudinal path.
+
 ## Quick diagnostic order
 
 1. Confirm that openpilot actually controls acceleration and braking on the vehicle.
