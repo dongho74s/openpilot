@@ -10,6 +10,7 @@ import threading
 import time
 import numpy as np
 import zmq
+from collections import deque
 from datetime import datetime
 import traceback
 from typing import Any, Dict, List, Optional
@@ -28,7 +29,6 @@ import ipaddress
 import cereal.messaging as messaging
 from openpilot.common.realtime import Ratekeeper, set_core_affinity
 from openpilot.common.params import Params, ParamKeyType
-from openpilot.common.filter_simple import MyMovingAverage
 from openpilot.system.hardware import PC, TICI
 from openpilot.selfdrive.navd.helpers import Coordinate
 from opendbc.car.common.conversions import Conversions as CV
@@ -279,8 +279,9 @@ class CarrotMan:
     self.ip_address = "0.0.0.0"
     self.remote_addr = None
 
-    self.turn_speed_last = 250
-    self.curvatureFilter = MyMovingAverage(20)
+    # vturn 시간축 필터 상태: 중앙값(스파이크 제거) + 비대칭 슬루(하강 40/상승 20 kph/s)
+    self.vturn_hist = deque(maxlen=5)
+    self.vturn_state = 250.0
     self.carrot_curve_speed_params()
 
     self.carrot_zmq_thread = threading.Thread(target=self.carrot_cmd_zmq, args=[])
@@ -1163,56 +1164,114 @@ class CarrotMan:
   def carrot_curve_speed(self, sm):
     self.carrot_curve_speed_params()
     if not sm.alive['carState'] and not sm.alive['modelV2']:
-        return 250
+        return self._vturn_filter(250.0, 1.0)
     #print(len(sm['modelV2'].orientationRate.z))
     if len(sm['modelV2'].orientationRate.z) == 0:
-        return 250
+        return self._vturn_filter(250.0, 1.0)
 
     return self.vturn_speed(sm['carState'], sm)
 
   def vturn_speed(self, CS, sm):
-    # 거리 인지 곡률-추종 가변 속도 제어
-    #  - 예측경로의 '최대 곡률 1점'만 보던 방식(단일 목표)에서,
-    #    각 예측점의 곡률로 안전속도를 구하고 거리·편안한 감속도를 반영해
-    #    '지금 허용 가능한 속도'의 최소값을 목표로 삼는 방식으로 변경.
+    # 거리·곡률 인지 가변 커브속도 제어 (물리 모델)
+    #  곡률은 예측경로의 '기하학적 형상(x,y 위치)'에서 직접 계산한다.
+    #    κ = |x'·y'' - y'·x''| / (x'^2 + y'^2)^1.5   (경로의 순수 기하 곡률, 속도 무관)
+    #  이전 방식(|yawRate|/velocity)은 예측속도로 나누기 때문에, 커브 진입으로
+    #  감속이 시작되면  예측속도↓ → 곡률↑ → 목표속도↓ → 감속↑  의 양성피드백이
+    #  생겨 완만한 커브에서도 하한까지 과도하게 감속하는 문제가 있었다.
     #  - 효과: 멀리 있는 급커브엔 일찍 완만히 감속을 시작하고(사전 감속),
     #          정점 통과 후 곡률이 풀리면 자동으로 증속(램프 초입>중반>후반 가변).
-    TARGET_LAT_A = 1.9   # m/s^2  커브에서 허용할 횡가속도(높을수록 빠른 커브주행)
-    A_DECEL = 0.85       # m/s^2  커브 접근 시 가정하는 편안한 감속도(낮을수록 더 일찍 감속)
-                         #        1.2→0.85: 감속을 더 일찍 시작해 정점 전에 완료(정점 이후 가속)
+    #
+    #  노이즈 대책(주행로그 검증: 프레임간 목표 요동 std 3~7kph → 1kph 이하):
+    #  1) 경로를 호길이 3m 간격으로 균등 재샘플링 후 미분.
+    #     모델 경로점은 시간^2 간격이라 근거리 점간격이 0.1~0.5m에 불과해,
+    #     mm급 y 노이즈가 κ_err ≈ ε/h² 로 폭증(간격 h 제곱 반비례)했다.
+    #  2) 시간축 필터: 중앙값(5프레임, 0.25s)으로 스파이크 제거 + 비대칭 슬루.
+    #     하강 40kph/s(정상 접근 감속률 3~6kph/s의 7배 이상 → 안전 반응 지연 없음),
+    #     상승 20kph/s(auto 램프 15kph/s보다 빠름 → 탈출 재가속 병목 없음).
+    LAT_ACC_MAX  = 2.0        # m/s^2  커브 횡가속 comfort 한계(높을수록 빠른 커브주행)
+    LON_DECEL    = 0.9        # m/s^2  접근 시 가정 감속(낮을수록 더 일찍·완만히 감속)
+    CURV_DEADBAND = 1.0 / 800.0  # 1/m. 반경 800m 이상(≈직선)은 감속 대상에서 제외
+    RESAMPLE_DS  = 3.0        # m     호길이 균등 재샘플 간격
+    FALL_KPH_S   = 40.0       # kph/s 목표 하강 슬루(노이즈 하향 스파이크 차단)
+    RISE_KPH_S   = 20.0       # kph/s 목표 상승 슬루(노이즈 상향 스파이크 차단)
 
     modelData = sm['modelV2']
 
+    x = np.array(modelData.position.x, dtype=np.float64)
+    y = np.array(modelData.position.y, dtype=np.float64)
+    n = min(len(x), len(y))
+    if n < 5:  # 2차 미분에 필요한 최소 표본
+      return self._vturn_filter(250.0, 1.0)
+
+    x = x[:n]
+    y = y[:n]
+    # 모델 이상 프레임(NaN/Inf) 차단: 아래 int(total/DS)가 ValueError/OverflowError로
+    # carrot_man 스레드를 죽여 Auto속도 고정·카메라/커브 감속 전멸을 재발시킨다(런타임 재현 확인).
+    if not (np.isfinite(x).all() and np.isfinite(y).all()):
+      return self._vturn_filter(250.0, 1.0)
+
+    # 진행방향(좌/우) 부호: yawRate 부호가 견고하므로 방향 판정에만 사용(UI 표시용)
     orientation_rate = np.array(modelData.orientationRate.z)
-    velocity = np.array(modelData.velocity.x)
-    distances = np.array(modelData.position.x)
+    if len(orientation_rate) >= n:
+      mi = int(np.argmax(np.abs(orientation_rate[:n])))
+      curv_direction = np.sign(orientation_rate[mi]) or 1.0
+    else:
+      curv_direction = 1.0
 
-    n = int(min(len(orientation_rate), len(velocity), len(distances)))
-    if n == 0:
-      return 250.0
+    # 호길이 균등 재샘플링(3m): 점간격 불균등에 의한 근거리 곡률 노이즈 증폭 제거
+    seg = np.hypot(np.diff(x), np.diff(y))
+    s = np.concatenate(([0.0], np.cumsum(seg)))
+    total = s[-1]
+    if total < 4.0 * RESAMPLE_DS:  # 경로가 너무 짧으면(극저속) 커브 제어 무의미
+      return self._vturn_filter(250.0, curv_direction)
+    m = int(total / RESAMPLE_DS) + 1
+    su = np.linspace(0.0, total, m)
+    xu = np.interp(su, s, x)
+    yu = np.interp(su, s, y)
 
-    orientation_rate = orientation_rate[:n]
-    velocity = np.maximum(velocity[:n], 0.1)
-    distances = np.maximum(distances[:n], 0.0)
+    # 경로 형상 곡률(속도 무관). 2차 미분은 노이즈에 민감하므로 3점 이동평균으로 완화.
+    dx = np.gradient(xu, RESAMPLE_DS)
+    dy = np.gradient(yu, RESAMPLE_DS)
+    ddx = np.gradient(dx, RESAMPLE_DS)
+    ddy = np.gradient(dy, RESAMPLE_DS)
+    denom = np.power(dx * dx + dy * dy, 1.5) + 1e-9
+    curvature = np.abs(dx * ddy - dy * ddx) / denom
+    if m >= 3:
+      curvature = np.convolve(curvature, np.ones(3) / 3.0, mode='same')
+    curvature *= self.autoCurveSpeedFactor  # 민감도 스케일(기본 1.2)
 
-    # 진행방향(좌/우) 부호는 가장 굽은 지점 기준
-    max_index = int(np.argmax(np.abs(orientation_rate)))
-    curv_direction = np.sign(orientation_rate[max_index]) or 1.0
+    # 완만(사실상 직선) 구간 제외 → 완만한 커브의 과감속 방지
+    active = curvature >= CURV_DEADBAND
+    if not np.any(active):
+      return self._vturn_filter(250.0, curv_direction)
 
-    # 각 예측점의 곡률(1/m) = |yawRate|/v, AutoCurveSpeedFactor로 민감도 스케일
-    curvature = (np.abs(orientation_rate) / velocity) * self.autoCurveSpeedFactor
-    curvature = np.maximum(curvature, 1e-5)
+    kv = np.maximum(curvature[active], 1e-5)
+    dv = su[active]  # 호길이 = 그 점까지의 실제 주행거리
 
-    # 각 점에서 허용 가능한 안전속도(횡가속도 한계 기준)
-    v_safe = np.sqrt(TARGET_LAT_A / curvature)  # m/s
-
-    # 그 점까지 편안히 감속해 도달하려면 '지금' 낼 수 있는 최대 속도
+    # 각 점의 물리 안전속도(횡가속 한계): a_lat = v^2 * κ  →  v_safe = sqrt(a_lat_max / κ)
+    # 곡률이 완만하면(R >= 800m, kv=0.00125) 1.15배 상향, 급커브일 때(R <= 166m, kv=0.006) 1.0배 수렴
+    scale_factor = np.interp(kv, [0.00125, 0.006], [1.15, 1.0])
+    v_safe = np.sqrt(LAT_ACC_MAX / kv) * scale_factor  # m/s
+    # 그 점까지 편안히 감속해 도달하려면 '지금' 낼 수 있는 최대속도
     #   v_now^2 = v_safe^2 + 2*a*d  (거리 d가 멀수록 더 높은 현재속도 허용 → 일찍 완만히 감속)
-    v_allow = np.sqrt(v_safe**2 + 2.0 * A_DECEL * distances)
+    v_allow = np.sqrt(v_safe * v_safe + 2.0 * LON_DECEL * dv)
 
     turnSpeed = float(np.min(v_allow)) * 3.6  # km/h
-    turnSpeed = min(max(turnSpeed, 5.0), 250.0)
-    return turnSpeed * curv_direction
+    return self._vturn_filter(turnSpeed, curv_direction, fall=FALL_KPH_S, rise=RISE_KPH_S)
+
+  def _vturn_filter(self, raw_kph, direction, fall=40.0, rise=20.0, dt=0.05):
+    # 시간축 필터: 프레임간 모델 경로 변동으로 목표가 요동(최대 50kph/프레임 관측)하는 것을
+    # 중앙값+슬루로 평탄화. desiredSpeed의 '즉시 하강' 규칙이 노이즈 하한 포락선을 타며
+    # 과감속·톱니파 가감속을 만들던 문제의 근본 대책.
+    if not np.isfinite(raw_kph):
+      raw_kph = 250.0  # NaN/Inf가 min/max·median을 통과해 필터 상태를 영구 오염시키는 것 방지
+    self.vturn_hist.append(min(max(raw_kph, 5.0), 250.0))
+    med = float(np.median(self.vturn_hist))
+    if med >= self.vturn_state:
+      self.vturn_state = min(med, self.vturn_state + rise * dt)
+    else:
+      self.vturn_state = max(med, self.vturn_state - fall * dt)
+    return self.vturn_state * direction
 
   def carrot_navi_thread(self):
     self.carrot_navi_tcp_server(7712)

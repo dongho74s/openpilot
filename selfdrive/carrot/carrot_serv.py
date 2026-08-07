@@ -93,6 +93,23 @@ AUTO_DT = 0.05  # update_navi 주기(20Hz)
 # 보다 낮아, desiredSpeed가 못 따라오면 순항목표가 현재속도에 붙어 가속을 되레 1.39로 제한한다.
 # 캐치업 구간에선 상승률을 높여(부스트가 실제로 쓰이도록) 병목을 제거. 평시 완만함은 기본값 유지.
 AUTO_RISE_LEAD_KPH_S = 15.0
+# 커브 탈출 재가속: 커브 감속 소스(vturn/model)가 여전히 바인딩이지만 곡률이 풀려 목표가 상승 중이면,
+# 공통 램프(5kph/s)가 재가속을 병목시켜 '커브가 끝났는데도 저속 유지'되는 답답함을 유발한다.
+# vturn_speed는 정점 통과 후 즉시 오르는데 slew가 이를 눌러버리는 것. 상승률·헤드룸을 확장해 병목 제거.
+# (실제 가속도는 downstream 종방향 MPC/가속한계/jerk-ease가 관리하므로 안전.)
+AUTO_RISE_CURVE_KPH_S = 15.0
+AUTO_MAX_HEAD_CURVE_KPH = 20.0
+# 선행차 캐치업 연속 블렌딩: (선행차속도-내속도)가 LO→HI kph 구간에서 헤드룸/상승률을 0→100% 보간.
+# 종전 '+3kph 초과' 이진 토글은 경계에서 head 10↔18이 스냅해 desiredSpeed가 ±8kph 톱니를 그리고,
+# MPC 가속이 서지→차핑을 반복하는 "움찔" 캐치업의 원인이었다(주행로그 00000124--21/22 확인).
+# 1차 저역필터(τ)로 부스트가 수 초에 걸쳐 차오르고 빠져, 가속 시작과 종료가 모두 완만해진다.
+AUTO_LEAD_BLEND_LO_KPH = 2.5
+AUTO_LEAD_BLEND_HI_KPH = 8.5
+AUTO_LEAD_TAU_S = 1.8
+# 안티와인드업 cap(현재속도+헤드룸) '축소'는 즉시 반영하지 않고 이 속도로 완만히 하강시킨다.
+# cap 스냅다운은 가속 도중 목표를 즉시 쳐내 가속 차핑을 만들었다. 실제 감속 목표의 하강
+# (auto_target ↓, 카메라/커브/설정속도)은 여전히 즉시 반영되므로 안전 반응 지연은 없다.
+AUTO_CAP_FALL_KPH_S = 15.0
 
 class CarrotServ:
   def __init__(self):
@@ -205,6 +222,8 @@ class CarrotServ:
     self.gas_pressed_state = False
     self.source_last = "none"
     self.auto_speed = 0.0  # 재가속 auto slew 상태(kph)
+    self.lead_catchup_f = 0.0     # 선행차 캐치업 블렌드(0~1, 저역필터 상태)
+    self.curve_exit_latch = False  # 커브가 목표를 누른 뒤 탈출 재가속 부스트 유지 래치
 
     self.debugText = ""
 
@@ -1019,27 +1038,50 @@ class CarrotServ:
       v_max = CS.vCruise if 0.0 < CS.vCruise < 200.0 else 250.0
       auto_target = min(desired_speed, v_max)  # 실제 도달목표(설정속도 이하)
 
-      max_head = AUTO_MAX_HEAD_KPH
-      rise = AUTO_RISE_KPH_S
+      # 선행차 캐치업: 속도차에 비례한 연속 블렌드(+저역필터). 이진 토글의 head 스냅 제거.
+      lead_f_target = 0.0
       if sm.alive['radarState']:
         lead = sm['radarState'].leadOne
-        if lead.status and lead.vLeadK * CV.MS_TO_KPH > v_ego_kph + 3.0:
-          max_head = AUTO_MAX_HEAD_LEAD_KPH  # 선행차 캐치업: 헤드룸 확장
-          rise = AUTO_RISE_LEAD_KPH_S        # + 상승률↑ → 가속부스트/Gap1 병목 제거
+        if lead.status:
+          delta_kph = lead.vLeadK * CV.MS_TO_KPH - v_ego_kph
+          lead_f_target = min(max((delta_kph - AUTO_LEAD_BLEND_LO_KPH) /
+                                  (AUTO_LEAD_BLEND_HI_KPH - AUTO_LEAD_BLEND_LO_KPH), 0.0), 1.0)
+      alpha = AUTO_DT / (AUTO_LEAD_TAU_S + AUTO_DT)
+      self.lead_catchup_f += (lead_f_target - self.lead_catchup_f) * alpha
+      max_head = AUTO_MAX_HEAD_KPH + (AUTO_MAX_HEAD_LEAD_KPH - AUTO_MAX_HEAD_KPH) * self.lead_catchup_f
+      rise = AUTO_RISE_KPH_S + (AUTO_RISE_LEAD_KPH_S - AUTO_RISE_KPH_S) * self.lead_catchup_f
+
+      # 커브 탈출 재가속: 커브 소스가 목표를 누르는 동안 래치를 세우고, 곡률이 풀려 목표가
+      # 오르는 동안(도달 전까지) 부스트를 유지한다. 종전 'source가 여전히 vturn/model'
+      # 조건은 vturn이 250으로 튀거나 도로제한 소스로 바뀌는 순간 부스트가 풀려 5kph/s
+      # 병목이 재발, 탈출 가속 중 사용자가 가속페달을 밟게 했다(주행로그 00000124--17 t=25~42s).
+      if source in ("vturn", "model") and auto_target <= self.auto_speed + 1.0:
+        self.curve_exit_latch = True
+      if self.curve_exit_latch and auto_target > self.auto_speed:
+        rise = max(rise, AUTO_RISE_CURVE_KPH_S)
+        max_head = max(max_head, AUTO_MAX_HEAD_CURVE_KPH)
 
       engaged = sm.alive['selfdriveState'] and sm['selfdriveState'].enabled
       if not engaged:
         self.auto_speed = v_ego_kph  # 미인게이지: 현재속도에서 재시작
+        self.curve_exit_latch = False
       elif auto_target <= self.auto_speed:
         self.auto_speed = auto_target  # 감속: 즉시 하강
+        if source not in ("vturn", "model"):
+          self.curve_exit_latch = False  # 커브 외 감속 소스 등장 → 탈출 부스트 종료
       else:
         # 완만 상승. 정지 상태(v_ego≈0)에서도 상승시켜야 출발이 가능하다(현재속도+헤드룸까지).
         # 목표를 0에 못박으면 desiredSpeed=0이 되어 선행차 출발/신호 출발 시 가속 데드락 발생.
         self.auto_speed = min(auto_target, self.auto_speed + rise * AUTO_DT)
+        if self.auto_speed >= auto_target - 0.1:
+          self.curve_exit_latch = False  # 목표 도달 → 탈출 부스트 종료
       # 안티와인드업: 목표가 현재속도+헤드룸 이상 앞서지 않게(급가속 방지). 감속목표(<현재)엔 영향 없음.
       # 정지 시엔 현재속도+헤드룸(=헤드룸)까지만 목표가 오르며, 실제 정지 유지는 downstream
       # MPC(선행차 추종/e2e stop, v_cruise=0)가 담당하므로 크리프 없이 안전하게 출발 대기한다.
-      self.auto_speed = min(self.auto_speed, v_ego_kph + max_head)
+      # cap '축소'(헤드룸 감소·현재속도 하락)는 완만히 내려 가속 차핑을 방지한다.
+      cap = v_ego_kph + max_head
+      if self.auto_speed > cap:
+        self.auto_speed = max(cap, self.auto_speed - AUTO_CAP_FALL_KPH_S * AUTO_DT)
       self.auto_speed = max(self.auto_speed, min(auto_target, v_ego_kph))  # 현재속도 이하로 불필요 하강 방지
 
       if self.auto_speed < desired_speed:

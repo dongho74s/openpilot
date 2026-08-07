@@ -10,6 +10,31 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
+# ── 정차 마무리(소프트랜딩) ─────────────────────────────────────────
+# 계획(aTarget)은 정지 직전 감속을 0 부근까지 풀어 부드럽게 안착하도록 수렴하는데,
+# 종전 stopping 로직은 이를 무시하고 PID의 깊은 명령을 이어받아 stopAccel 방향으로
+# 계속 조이기만 했다(하강 전용 램프). 결과: 정지 직전 감속이 되레 심화되는 '울컥' 정차
+# (로그 00000135--6: 계획 -0.73→-0.02로 풀림, 명령 -0.90→-1.10 조임, 실측 -1.05 심화).
+# → 2단계로 분리: 바퀴가 멈추기 전(v>SETTLE)에는 계획 수준까지 브레이크를 완만히 풀어
+#   소프트랜딩하고, 정지 후에만 홀드 압력(stopAccel)으로 조인다(정지 상태라 체감 없음).
+STOP_SETTLE_SPEED = 0.15       # m/s   이 속도 미만이면 '바퀴 정지'로 보고 홀드 단계 전환
+STOP_SOFT_MIN_DECEL = 0.30     # m/s^2 구르는 동안 유지할 최소 감속(크리프/경사 밀림 방지)
+STOP_SOFT_RELEASE_JERK = 0.7   # m/s^3 소프트랜딩 시 브레이크 풀림(상승) 속도 제한
+STOP_HOLD_FACTOR = 0.45        # 정지 후 stopAccel로 조이는 속도 배율(x stoppingDecelRate)
+
+# ── 소프트 엔게이지(가감속 '시작' 보간 램프) ──────────────────────────
+# 코스팅/무가감속(출력≈0)에서 가감속을 시작할 때 출력이 한 프레임에 점프해
+# (코스트밴드 이탈 스텝 0→±0.7, 끼어들기 대응 +0.3→-1.1 등) EV 토크 물림과 겹치며
+# '살짝 충격'이 발생했다. 주행로그 00000142 기준 감속온셋 peak jerk: 수동 0.9 vs
+# 자동 고속 5~7 m/s^3. 출력이 0 부근일 때만 변화율을 사람 페달 수준으로 보간 제한하고
+# |출력|이 커지면 해제한다. 긴급(짧은 TTC·근접·강한 감속요구)시엔 즉시 통과(안전).
+ENGAGE_ABS_BP   = [0.15, 0.5, 0.9]   # m/s^2 |현재출력| 보간점(0.9 이상 무제한)
+ENGAGE_JERK_V   = [1.2, 2.5, 100.0]  # m/s^3 각 지점의 변화율 한계(1.2=수동 온셋 수준)
+ENGAGE_URGENT_TTC = 4.0              # s    이보다 짧은 TTC면 소프트 스타트 생략
+ENGAGE_URGENT_DREL = 10.0            # m    이보다 가까운 선행차면 생략
+ENGAGE_URGENT_ATARGET = -2.5         # m/s^2 계획이 강한 감속 요구 시 생략
+ENGAGE_LAUNCH_V = 3.0                # m/s  저속 출발 가속은 제한하지 않음(캐치업 유지)
+
 
 def long_control_state_trans(CP, active, long_control_state, v_ego,
                              should_stop, brake_pressed, cruise_standstill, a_ego, stopping_accel, radarState):
@@ -106,6 +131,21 @@ class LongControl:
       return oa + step
     return 0.0
 
+  def _soft_engage(self, output_accel, CS, radarState, a_target_ff):
+    """가감속 '시작'을 보간 램프로 완만화. 긴급 상황·저속 출발 가속은 제한하지 않는다."""
+    if a_target_ff < ENGAGE_URGENT_ATARGET:
+      return output_accel
+    lead = radarState.leadOne
+    if lead.status and lead.vRel < -0.5:
+      ttc = lead.dRel / max(-lead.vRel, 0.1)
+      if ttc < ENGAGE_URGENT_TTC or lead.dRel < ENGAGE_URGENT_DREL:
+        return output_accel
+    if output_accel > self.last_output_accel and CS.vEgo < ENGAGE_LAUNCH_V:
+      return output_accel  # 출발 가속 램프는 그대로(캐치업 응답 유지)
+    max_jerk = float(np.interp(abs(self.last_output_accel), ENGAGE_ABS_BP, ENGAGE_JERK_V))
+    step = max_jerk * DT_CTRL
+    return float(np.clip(output_accel, self.last_output_accel - step, self.last_output_accel + step))
+
   def update(self, active, CS, long_plan, accel_limits, t_since_plan, radarState):
 
     soft_hold_active = CS.softHoldActive > 0
@@ -147,16 +187,23 @@ class LongControl:
 
       if soft_hold_active:
         output_accel = self.CP.stopAccel
-
-      stopAccel = self.stopping_accel if self.stopping_accel < 0.0 else self.CP.stopAccel
-      if output_accel > stopAccel:
-        # 저속일수록 감속 rate를 줄여서 정차 직전 꿀렁임 방지 (속도 비례 감속 한계 조절)
-        speed_factor = float(np.interp(CS.vEgo, [0.0, 0.2, 0.5, 1.5], [0.05, 0.1, 0.3, 1.0]))
-        # Brake Cushion: stopAccel에 가까워질수록 감속 rate를 더 줄여서 부드럽게 안착
-        accel_margin = max(output_accel - stopAccel, 0.01)
-        cushion_factor = float(np.interp(accel_margin, [0.0, 0.3, 1.0], [0.15, 0.5, 1.0]))
-        output_accel = min(output_accel, 0.0)
-        output_accel -= self.CP.stoppingDecelRate * speed_factor * cushion_factor * DT_CTRL
+      else:
+        stopAccel = self.stopping_accel if self.stopping_accel < 0.0 else self.CP.stopAccel
+        if CS.vEgo > STOP_SETTLE_SPEED:
+          # 소프트랜딩: 계획이 풀라는 만큼(단, 최소 감속은 유지) 브레이크를 완만히 풀어 안착.
+          # 계획이 더 깊은 감속을 요구하면(경사/정지점 초과 등) 그쪽으로 조여 따라간다.
+          soft_target = float(np.clip(a_target_ff, stopAccel, -STOP_SOFT_MIN_DECEL))
+          if output_accel < soft_target:
+            output_accel = min(soft_target, output_accel + STOP_SOFT_RELEASE_JERK * DT_CTRL)
+          else:
+            output_accel = max(soft_target, output_accel - self.CP.stoppingDecelRate * DT_CTRL)
+        elif output_accel > stopAccel:
+          # 정지 완료: 홀드 압력(stopAccel)까지 조임(차량이 멈춰 있어 모션 체감 없음).
+          # Brake Cushion: stopAccel에 가까워질수록 rate를 줄여 부드럽게 안착.
+          accel_margin = max(output_accel - stopAccel, 0.01)
+          cushion_factor = float(np.interp(accel_margin, [0.0, 0.3, 1.0], [0.15, 0.5, 1.0]))
+          output_accel = min(output_accel, 0.0)
+          output_accel -= self.CP.stoppingDecelRate * STOP_HOLD_FACTOR * cushion_factor * DT_CTRL
       self.reset()
 
     elif self.long_control_state == LongCtrlState.starting:
@@ -176,6 +223,9 @@ class LongControl:
       if self.coasting:
         # 코스팅 중에는 출력을 0으로 부드럽게 수렴 → 자연 회생제동/엔진브레이크 활용
         output_accel = self._coast_output()
+      else:
+        # 소프트 엔게이지: 출력 0 부근(코스팅 이탈 직후 포함)의 가감속 시작을 보간 램프로 완만화
+        output_accel = self._soft_engage(output_accel, CS, radarState, a_target_ff)
 
     self.last_output_accel = np.clip(output_accel, accel_limits[0], accel_limits[1])
     return self.last_output_accel, a_target_ff, j_target_now

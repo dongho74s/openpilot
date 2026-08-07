@@ -24,6 +24,13 @@ DRIVER_TORQUE_FILTER_TAU = 0.12
 PRE_OVERRIDE_PREDICTION_TIME = 0.15
 PRE_OVERRIDE_START_RATIO = 0.90
 PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
+# 사전-오버라이드(steeringPressed 확정 전) 중 유지할 최소 조향권한 비율.
+# 임계 근처의 '손 얹은' 토크만으로 권한이 최소치(ANGLE_MIN_TORQUE)까지 붕괴하면
+# 커브에서 LKAS가 필요한 횡가속을 못 내 언더스티어→차선이탈이 난다(주행로그
+# 00000147--20: 운전자토크 ~200-274에서 EPS 출력토크가 0으로 떨어지고 명령각
+# -16°를 못 따라 -7°에 고정). 확정 개입 전에는 권한을 이 비율 이상 유지해 차로유지를
+# 보장하고, steeringPressed로 확정되면 그때 ANGLE_MIN_TORQUE까지 완전 양보한다.
+PRE_OVERRIDE_TORQUE_FLOOR_RATIO = 0.5
 
 vibrate_intervals = [
   (0.0, 0.5),
@@ -295,6 +302,12 @@ class CarController(CarControllerBase):
     elif pre_override_yield > 0.0:
       # Start handing off gently before steeringPressed flips to avoid a sharp torque drop.
       torque_delta = PRE_OVERRIDE_MAX_TORQUE_DELTA * pre_override_yield
+      # 확정 개입 전에는 권한을 절반(FLOOR) 아래로 내리지 않는다 → 임계 근처 '손 얹은'
+      # 토크로 커브에서 조향을 포기(언더스티어)하는 것을 방지. 진짜 개입은 steeringPressed로
+      # 확정돼 위 -20 delta 경로로 완전 양보되므로 적법한 오버라이드는 그대로 동작한다.
+      pre_override_floor = self.angle_max_torque * PRE_OVERRIDE_TORQUE_FLOOR_RATIO
+      if self.lkas_max_torque + torque_delta < pre_override_floor:
+        torque_delta = min(0.0, pre_override_floor - self.lkas_max_torque)
     elif self.lkas_max_torque >= self.angle_max_torque:
       # Once fully recovered, hold full authority until the next driver override.
       torque_delta = 0.0
@@ -731,13 +744,31 @@ class HyundaiJerk:
       self.jerk_l = jerk_max_l
       self.cb_upper = self.cb_lower = 0.0
     else:
+      # 실행단 적용 jerk(SCC가 aReqValue로 실제 가감속을 램프하는 속도)를 주행(pid) 구간에서
+      # 사람 페달 특성에 맞춘다. off/stopping/starting은 종전과 동일(아래 else).
+      if actuators.longControlState == LongCtrlState.pid:
+        # ── 가속 적용 jerk 하한: 저속(출발/캐치업)에서 상향 ─────────────────────────
+        # 기존 고정 하한 0.5는 정차후 출발·중저속 캐치업에서 실측 가속이 명령을 굼뜨게
+        # 따라가 '캐치업 느림'의 원인이었다(로그 00000152--4: 명령 1.4~1.9인데 실측 aEgo
+        # 1.1대 정체, 적용 jerk≈0.5). jerk_u는 상한(rate limit)이라 명령보다 빨리 밀지
+        # 않으므로(무해), 저속만 사람 launch 수준(≈1.1)으로 올려 응답을 확보하고 중고속은
+        # 완만(0.5)하게 유지 → 고속 가속 온셋 부드러움은 그대로.
+        ju_floor = float(np.interp(CS.out.vEgo, [2.0, 5.5, 12.5], [1.1, 0.8, 0.5]))
+        # ── 브레이크 적용 jerk 상한: 목표 감속 깊이(aTarget)로 게이팅 ────────────────
+        # 기존 -jerk*4.0은 계획의 '순간 jerk' 스파이크를 4~5 m/s³로 증폭해, 목표 감속이
+        # 완만(aTarget -0.8, TTC 16s)해도 브레이크를 급하게 물려 '감속 시작 불편'을 만들었다
+        # (로그 00000153: jerk_l≥3.5의 95%가 비긴급 aTarget>-2.0). 목표 감속이 얕을수록 낮은
+        # 상한으로 부드럽게 물리고, 계획이 강한 감속을 요구할 때(aTarget이 깊음)만 상한을
+        # 최대까지 개방해 긴급 제동 응답을 보존한다(연속 보간이라 cliff 없음).
+        jl_cap = float(np.interp(actuators.aTarget, [-3.0, -2.0, -1.0], [jerk_max_l, 3.2, 2.4]))
+      else:
+        ju_floor = self.jerk_u_min
+        jl_cap = jerk_max_l
+      self.jerk_u = min(max(ju_floor, self.jerk * 2.0), jerk_max_u)
+      self.jerk_l = min(max(1.0, -self.jerk * 4.0), jl_cap)
       if CP.flags & HyundaiFlags.CANFD:
-        self.jerk_u = min(max(self.jerk_u_min, self.jerk * 2.0), jerk_max_u)
-        self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = self.cb_lower = 0.0
       else:
-        self.jerk_u = min(max(self.jerk_u_min, self.jerk * 2.0), jerk_max_u)
-        self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
 

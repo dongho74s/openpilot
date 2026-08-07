@@ -415,14 +415,14 @@ class LongitudinalMpc:
 
     if lead_one.status:
       j_lead = lead_one.jLead
-      self.j_lead = j_lead * 0.1 + self.j_lead * 0.9
+      self.j_lead = j_lead * 0.05 + self.j_lead * 0.95
     else:
       self.j_lead = 0.0
 
     # Lever C: 고속에서 선행차 감속 예측(JLeadFactor3=j_lead_factor)을 증폭 → 제동을 앞당김.
     #          (선행차가 '감속 중'일 때 효과. 정속 선행차는 Lever A가 담당)
     jlf = carrot.j_lead_factor * float(np.interp(v_ego * 3.6, HIGH_SPEED_JLF_GAIN_BP, HIGH_SPEED_JLF_GAIN_V))
-    lead_xv_0, lead_v_0 = self.process_lead(lead_one, np.clip(self.j_lead * jlf, -1.0, 1.0))
+    lead_xv_0, lead_v_0 = self.process_lead(lead_one, np.clip(self.j_lead * jlf, -0.65, 0.65))
     lead_xv_1, _ = self.process_lead(radarstate.leadTwo, 0.0)
 
     mode = self.mode
