@@ -295,6 +295,8 @@ On this generation, the stock `0x2CB` gas/regen counter can lag the auxiliary `0
 
 If the stock camera revokes longitudinal authority while driving by setting `GasRegenCmdActive=0` or `ACCCmdActive=0`, openpilot neutralizes its command in the same cycle: gas/regen `-500`, friction brake `0`, and the stop-state bits cleared, followed by disengagement. In simple terms, it prevents openpilot from sending one or two more command envelopes after stock ACC has already said it will no longer accept them. This gate applies only to the 2021–22 Trailblazer openpilot-longitudinal path.
 
+This authority loss is represented internally as a momentary cancel-button click. The synthetic press and release travel together in the same vehicle-state update, so the cruise-button tracker cannot mistake the event for a cancel button that remains held. A later `SET/-` or `RES/+` engagement can therefore restore normal set-speed button processing and lateral permission.
+
 ## Quick diagnostic order
 
 1. Confirm that openpilot actually controls acceleration and braking on the vehicle.

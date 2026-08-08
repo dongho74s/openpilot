@@ -5,6 +5,7 @@ from parameterized import parameterized
 
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import structs
+from opendbc.car.gm.carstate import create_stock_long_cancel_button_events
 from opendbc.car.gm.fingerprints import FINGERPRINTS
 from opendbc.car.gm.gmcan import (apply_driver_gas_override, apply_stock_longitudinal_gate, create_acc_dashboard_command,
                                  create_friction_brake_command, create_gas_regen_command, get_acc_dashboard_enabled,
@@ -30,6 +31,14 @@ class TestGMFingerprint:
 
 
 class TestTrailblazerLongitudinalIntegrity:
+  def test_stock_long_cancel_is_a_complete_momentary_button_event(self):
+    events = create_stock_long_cancel_button_events()
+
+    assert [(event.type, event.pressed) for event in events] == [
+      (structs.CarState.ButtonEvent.Type.cancel, True),
+      (structs.CarState.ButtonEvent.Type.cancel, False),
+    ]
+
   @parameterized.expand([
     ("trailblazer_gas", CAR.CHEVROLET_TRAILBLAZER, True, (-500, 0, False, False)),
     ("trailblazer_released", CAR.CHEVROLET_TRAILBLAZER, False, (-540, 143, True, True)),
