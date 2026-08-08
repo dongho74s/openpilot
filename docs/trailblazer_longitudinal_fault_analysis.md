@@ -256,7 +256,7 @@ accFaulted=true + canValid=false → 카메라 CAN까지 실제로 끊어진 상
 | 3차 수정 | `d8ebe59` | `L15`, `L16` | 체크섬·카운터·상태 정상. 가속페달 순간 차단만 남음 | 가속 시 `-500`/`0` 즉시 송신 |
 | 4차 수정 | `8802d35` 이후 `46bddc25` | `L17`~`L23` | 오류 시점 Panda 차단 없음. 냉간 카운터 선행과 순정 권한 해제 지연을 새로 확인 | 실제 순정 `0x2CB` 추종과 권한 gate |
 | 5차 수정 | `fa2b434` 포함 `95844678` | `L24`, `L25` | 순정 카운터 3,000/3,000회 일치, 체크섬·ACC·CAN 오류 없음. 그러나 press-only 합성 cancel 뒤 버튼 추적기가 잠겨 +/-와 조향 허용이 먹통 | 합성 cancel 누름/해제 원자적 전달 |
-| 현재 코드 | `CANCEL_FIX_COMMIT` | 아직 실차 로그 없음 | 합성 cancel이 같은 상태 업데이트 안에서 press→release로 끝나며 다음 +/- 입력을 정상 처리하는 집중 테스트 47개 통과 | 약한 제동→재인게이지→버튼·조향 실차 검증 대기 |
+| 현재 코드 | `c44f887` | 아직 실차 로그 없음 | 합성 cancel이 같은 상태 업데이트 안에서 press→release로 끝나며 다음 +/- 입력을 정상 처리하는 집중 테스트 47개 통과 | 약한 제동→재인게이지→버튼·조향 실차 검증 대기 |
 
 ### 6.2 `L05` 수정 전 반복 크루즈 오류
 
@@ -664,7 +664,7 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 | [`d8ebe59`](https://github.com/leehyuk1108/carrotpilot/commit/d8ebe597) | 순정 `0x370` 상태 보존, 비-D 기어에서 순정 inactive 유지 | 지속적인 ACC 상태 불일치, 후진 상태 보호 | 최신 로그 검증 완료 |
 | [`8802d35`](https://github.com/leehyuk1108/carrotpilot/commit/8802d35b53e73cf396a71d336184691f41a6a520) | 가속페달 입력 즉시 `-500`/`0` 명령 그룹 송신 | Panda 차단 및 그 뒤의 간헐적 CAN 붕괴 | 단위/safety 테스트 완료; 후속 오류 시점 차단 없음 |
 | [`fa2b434`](https://github.com/leehyuk1108/carrotpilot/commit/fa2b434050c38b1344de5ce0f275c8b89d76f2a7) | 실제 순정 `0x2CB` 카운터 추종, 느린 부팅 기준 메시지 대기, 순정 active 해제 즉시 명령 중립화·cancel | 냉간 EBCM unavailable/ESC·파워스티어링 경고, 약한 제동 시 크루즈 오류 | `L24`·`L25`에서 종방향 프로토콜 정상화 확인; press-only cancel 회귀 발견 |
-| `CANCEL_FIX_COMMIT` | 합성 cancel의 press/release를 같은 상태 업데이트에 원자적으로 전달 | 권한 해제 뒤 +/- 설정속도와 조향 허용 상태가 계속 잠기는 문제 | 집중 테스트 완료, 실차 재검증 대기 |
+| [`c44f887`](https://github.com/leehyuk1108/carrotpilot/commit/c44f887a57091d2c220d8e7e598c2e3f3e0ba707) | 합성 cancel의 press/release를 같은 상태 업데이트에 원자적으로 전달 | 권한 해제 뒤 +/- 설정속도와 조향 허용 상태가 계속 잠기는 문제 | 집중 테스트 완료, 실차 재검증 대기 |
 
 ### 9.1 다른 GM 차량에 미치는 영향
 
@@ -740,7 +740,7 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 | 가속페달 전환의 관찰된 Panda 차단 | 해결·관찰 지속 | 캡처된 두 차단 payload가 `8802d35`의 inactive 그룹으로 대체됐고 후속 `46bddc25` 오류 시각에는 Panda 차단 없음 |
 | 순정 ACC 권한 해제 뒤 active 제동 지속 | 종방향 해결 | `L20`에서 약 170 ms 불일치 확인; `L24`·`L25`에서 ACC fault 없이 중립화됨 |
 | 부팅 기준 메시지 지연으로 인한 openpilot CAN invalid 가능성 | 부분 검증 | `0x2CB`·`0x370`을 동기화 참고값으로 전환; 최신 두 주행 segment에서 CAN valid 유지, 추가 냉간 반복 필요 |
-| press-only 합성 cancel 뒤 +/-와 조향 먹통 | 코드상 해결 | `L24`·`L25`에서 물리 버튼은 정상인데 내부 상태가 잠긴 증거 확인; `CANCEL_FIX_COMMIT`에서 press/release 한 쌍과 상태 머신 회귀 테스트 추가, 실차 대기 |
+| press-only 합성 cancel 뒤 +/-와 조향 먹통 | 코드상 해결 | `L24`·`L25`에서 물리 버튼은 정상인데 내부 상태가 잠긴 증거 확인; `c44f887`에서 press/release 한 쌍과 상태 머신 회귀 테스트 추가, 실차 대기 |
 | `0x370 ACCResumeButton` 한 주기 지연 | 관찰 필요 | 최신 로그 2회, 오류와 시간적 연관 없음 |
 | ECU 내부에서 CAN 통신을 재시작하는 정확한 조건 | 미확정 | 정비 DTC와 ECU 내부 진단 정보가 없어 로그 기반 추론만 가능 |
 | `L14` 이미 붕괴한 후속 구간의 최초 트리거 | 미확정 | 제공 구간 시작 전 이미 CAN이 붕괴함; 직전 segment 필요 |
@@ -755,13 +755,13 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 새 로그의 `initData.gitCommit`은 다음 코드 수정 커밋을 포함해야 한다.
 
 ```text
-필수 코드 조상: CANCEL_FIX_COMMIT
+필수 코드 조상: c44f887a57091d2c220d8e7e598c2e3f3e0ba707
 ```
 
 브랜치 HEAD에는 이 보고서처럼 제어 코드에 영향을 주지 않는 후속 문서 커밋이 추가될 수 있으므로 SHA가 필수 코드 조상과 정확히 같을 필요는 없다. 대신 기록된 커밋이 그 커밋의 후손인지 확인한다.
 
 ```bash
-git merge-base --is-ancestor CANCEL_FIX_COMMIT <initData.gitCommit>
+git merge-base --is-ancestor c44f887 <initData.gitCommit>
 ```
 
 종료 코드가 0이면 수정 포함 버전이다. 후손이 아니면 합성 cancel release 수정 전 버전의 로그이므로 최종 결과 판정에 사용할 수 없다.
@@ -800,7 +800,7 @@ git merge-base --is-ancestor CANCEL_FIX_COMMIT <initData.gitCommit>
 
 ### 12.4 재발하면 우선 확인할 순서
 
-1. 실제 커밋이 `CANCEL_FIX_COMMIT`을 포함한 후손인지 확인
+1. 실제 커밋이 `c44f887`을 포함한 후손인지 확인
 2. 최초 source 192 프레임의 주소와 payload 확인
 3. 최초 Panda ACK 오류보다 먼저 카메라 source 2가 끊겼는지 확인
 4. 오류 직전 순정 source 2 `0x2CB`와 openpilot `0x2CB`/`0x315` 카운터·활성 비트·체크섬 확인
