@@ -19,6 +19,18 @@ BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.D
                 CruiseButtons.MAIN: ButtonType.mainCruise, CruiseButtons.CANCEL: ButtonType.cancel,
                 CruiseButtons.GAP_DIST: ButtonType.gapAdjustCruise}
 
+
+def create_stock_long_cancel_button_events() -> list[structs.CarState.ButtonEvent]:
+  """Create an atomic synthetic cancel click for a stock ACC authority loss."""
+  # VCruiseCarrot tracks button duration from matching press/release edges. A
+  # press-only synthetic cancel latches that tracker forever, is eventually
+  # interpreted as a long press, and prevents later SET/RES button handling.
+  # Keep both edges in one carState message so they cannot be lost separately.
+  return [
+    structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel),
+    structs.CarState.ButtonEvent(pressed=False, type=ButtonType.cancel),
+  ]
+
 class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
@@ -230,10 +242,11 @@ class CarState(CarStateBase):
                               {1: ButtonType.lkas})
       ]
     if self.cam_stock_long_cancel:
-      # Treat the camera's active-to-inactive edge like a cancel button. The
-      # controller has already neutralized this cycle's actuation; this edge
-      # also prevents openpilot from remaining visually engaged with no ACC.
-      ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
+      # Treat the camera's active-to-inactive edge like a complete momentary
+      # cancel click. The controller has already neutralized this cycle's
+      # actuation; this edge also prevents openpilot from remaining visually
+      # engaged with no ACC without latching the cruise-button state machine.
+      ret.buttonEvents = [*ret.buttonEvents, *create_stock_long_cancel_button_events()]
 
     return ret
 
