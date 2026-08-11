@@ -6,9 +6,14 @@ from opendbc.car.common.conversions import Conversions as CV
 NetworkLocation = structs.CarParams.NetworkLocation
 
 
+def is_trailblazer_camera_longitudinal(CP):
+  return (CP.openpilotLongitudinalControl and
+          CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
+          CP.networkLocation == NetworkLocation.fwdCamera)
+
+
 def get_longitudinal_sync_messages(CP):
-  if (CP.openpilotLongitudinalControl and CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
-      CP.networkLocation == NetworkLocation.fwdCamera):
+  if is_trailblazer_camera_longitudinal(CP):
     # These are synchronization references, not platform-wide CAN validity
     # requirements. A slow camera startup must not invalidate the whole car.
     return [("ASCMGasRegenCmd", float('nan')), ("ASCMActiveCruiseControlStatus", float('nan'))]
@@ -16,11 +21,7 @@ def get_longitudinal_sync_messages(CP):
 
 
 def get_longitudinal_command_timing(CP, CS, frame):
-  sync_trailblazer_counter = (
-    CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER and
-    CP.networkLocation == NetworkLocation.fwdCamera
-  )
-  if sync_trailblazer_counter:
+  if is_trailblazer_camera_longitudinal(CP):
     # The stock command counter can lag ASCM_2CD by one cycle during a cold
     # start, then align with it after ACC becomes active. Follow the actual
     # stock 0x2CB command so both phases are handled without guessing.
@@ -127,7 +128,8 @@ def create_adas_keepalive(bus):
   return [CanData(0x409, dat, bus), CanData(0x40a, dat, bus)]
 
 
-def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop):
+def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop, car_fingerprint=None):
+  """Create 0x2CB, selecting the stock-verified checksum only for Trailblazer."""
   values = {
     "GasRegenCmdActive": enabled,
     "RollingCounter": idx,
@@ -137,10 +139,15 @@ def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop):
   }
 
   dat = packer.make_can_msg("ASCMGasRegenCmd", bus, values)[1]
-  # The stock ASCM calculates the lower checksum as one 24-bit subtraction.
-  # Keep the carry/borrow across bytes; byte-wise complements are wrong at
-  # boundaries such as dat[3] == 0 with counter 0.
-  checksum = (0x1000000 - int.from_bytes(dat[1:4], "big") - idx) & 0xFFFFFF
+  if car_fingerprint == CAR.CHEVROLET_TRAILBLAZER:
+    # Captured 2021-22 Trailblazer frames use one 24-bit subtraction, with
+    # carry/borrow across bytes. Other GM platforms retain the established
+    # byte-wise checksum until their stock frames prove the same requirement.
+    checksum = (0x1000000 - int.from_bytes(dat[1:4], "big") - idx) & 0xFFFFFF
+  else:
+    checksum = (((0xff - dat[1]) & 0xff) << 16) | \
+               (((0xff - dat[2]) & 0xff) << 8) | \
+               ((0x100 - dat[3] - idx) & 0xff)
   values["GasRegenChecksum"] = ((1 - enabled) << 24) | checksum
 
   return packer.make_can_msg("ASCMGasRegenCmd", bus, values)

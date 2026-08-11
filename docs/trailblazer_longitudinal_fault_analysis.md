@@ -24,7 +24,7 @@
 7. 순정 카메라가 종방향 권한을 먼저 해제한 뒤에도 openpilot이 약 170 ms 동안 활성 제동 명령을 계속 보내던 문제
 8. 권한 해제용 합성 cancel을 `pressed=true` 한 번만 보내 크루즈 버튼 추적기가 영구적으로 잠기던 문제
 
-`fa2b434`의 냉간 카운터·순정 권한 보호는 2026-08-08 로그의 `95844678`에서 실제로 동작했다. 두 최신 segment에서 순정과 송신 `0x2CB`/`0x315` 카운터가 각각 1,500/1,500회 일치하고 체크섬·ACC·CAN 오류가 없었다. 다만 권한 해제용 합성 cancel에 해제 edge가 없어 그 뒤 `SET/-`, `RES/+`와 조향 허용 상태가 막히는 소프트웨어 회귀가 새로 드러났다. 이 문제도 누름/해제를 한 상태 업데이트에 같이 보내도록 수정했으며, 현재 상태는 **원인 확인 및 코드 수정 완료, 최종 실차 재검증 대기**다.
+`fa2b434`의 냉간 카운터·순정 권한 보호는 2026-08-08 로그의 `95844678`에서 실제로 동작했다. 두 최신 segment에서 순정과 송신 `0x2CB`/`0x315` 카운터가 각각 1,500/1,500회 일치하고 체크섬·ACC·CAN 오류가 없었다. 다만 권한 해제용 합성 cancel에 해제 edge가 없어 그 뒤 `SET/-`, `RES/+`와 조향 허용 상태가 막히는 소프트웨어 회귀가 새로 드러났다. 이 문제도 누름/해제를 한 상태 업데이트에 같이 보내도록 수정했다. 2026-08-11 사용자는 이후 주행에서 추가 오류 없이 정상 작동한다고 확인했다. 새 rlog는 아직 문서에 보관되지 않았으므로 이는 사용자 실차 확인이며 로그 단위 재검증과는 구분한다.
 
 ## 2. 먼저 아주 쉽게 설명하면
 
@@ -256,7 +256,7 @@ accFaulted=true + canValid=false → 카메라 CAN까지 실제로 끊어진 상
 | 3차 수정 | `d8ebe59` | `L15`, `L16` | 체크섬·카운터·상태 정상. 가속페달 순간 차단만 남음 | 가속 시 `-500`/`0` 즉시 송신 |
 | 4차 수정 | `8802d35` 이후 `46bddc25` | `L17`~`L23` | 오류 시점 Panda 차단 없음. 냉간 카운터 선행과 순정 권한 해제 지연을 새로 확인 | 실제 순정 `0x2CB` 추종과 권한 gate |
 | 5차 수정 | `fa2b434` 포함 `95844678` | `L24`, `L25` | 순정 카운터 3,000/3,000회 일치, 체크섬·ACC·CAN 오류 없음. 그러나 press-only 합성 cancel 뒤 버튼 추적기가 잠겨 +/-와 조향 허용이 먹통 | 합성 cancel 누름/해제 원자적 전달 |
-| 현재 코드 | `c44f887` | 아직 실차 로그 없음 | 합성 cancel이 같은 상태 업데이트 안에서 press→release로 끝나며 다음 +/- 입력을 정상 처리하는 집중 테스트 47개 통과 | 약한 제동→재인게이지→버튼·조향 실차 검증 대기 |
+| 현재 코드 | `c44f887` + PR 범위 정리 | 사용자 정상 작동 확인, 새 rlog 미보관 | 합성 cancel이 같은 상태 업데이트 안에서 press→release로 끝나며 다음 +/- 입력 정상 처리. 체크섬을 Trailblazer에만 한정 | 로그 보관 시 최종 수치 재검증 |
 
 ### 6.2 `L05` 수정 전 반복 크루즈 오류
 
@@ -665,6 +665,7 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 | [`8802d35`](https://github.com/leehyuk1108/carrotpilot/commit/8802d35b53e73cf396a71d336184691f41a6a520) | 가속페달 입력 즉시 `-500`/`0` 명령 그룹 송신 | Panda 차단 및 그 뒤의 간헐적 CAN 붕괴 | 단위/safety 테스트 완료; 후속 오류 시점 차단 없음 |
 | [`fa2b434`](https://github.com/leehyuk1108/carrotpilot/commit/fa2b434050c38b1344de5ce0f275c8b89d76f2a7) | 실제 순정 `0x2CB` 카운터 추종, 느린 부팅 기준 메시지 대기, 순정 active 해제 즉시 명령 중립화·cancel | 냉간 EBCM unavailable/ESC·파워스티어링 경고, 약한 제동 시 크루즈 오류 | `L24`·`L25`에서 종방향 프로토콜 정상화 확인; press-only cancel 회귀 발견 |
 | [`c44f887`](https://github.com/leehyuk1108/carrotpilot/commit/c44f887a57091d2c220d8e7e598c2e3f3e0ba707) | 합성 cancel의 press/release를 같은 상태 업데이트에 원자적으로 전달 | 권한 해제 뒤 +/- 설정속도와 조향 허용 상태가 계속 잠기는 문제 | 집중 테스트 완료, 실차 재검증 대기 |
+| `PR_SCOPE_COMMIT` | 24비트 체크섬을 Trailblazer에만 한정하고 다른 GM의 기존 체크섬·함수 호출 호환성 보존, 사용하지 않는 `0x2CD` DBC 신호 제거 | 대형 브랜치 PR에서 다른 GM 차량에 미칠 수 있는 범위 최소화 | 회귀 테스트 완료 |
 
 ### 9.1 다른 GM 차량에 미치는 영향
 
@@ -674,8 +675,16 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 - 가속 오버라이드 명령 변경: `CHEVROLET_TRAILBLAZER`에만 적용
 - 순정 종방향 권한 해제 gate/cancel: `CHEVROLET_TRAILBLAZER`에만 적용
 - 합성 cancel press/release 쌍: 위 Trailblazer 권한 해제 edge에서만 생성
+- 24비트 가스·리젠 체크섬: `CHEVROLET_TRAILBLAZER`에만 적용
+- 다른 GM 차량과 fingerprint를 넘기지 않는 기존 호출: 기존 바이트별 체크섬 유지
 - `CHEVROLET_TRAILBLAZER_CC` 비롱컨 및 다른 GM 차량은 기존 경로 유지
 - Panda safety 제한 자체는 변경하지 않음
+
+### 9.2 PR 범위 정리
+
+초기 수정은 `create_gas_regen_command()`의 체크섬을 공용으로 바꿨다. Trailblazer 순정 캡처로는 새 24비트 계산이 확정됐지만 다른 GM 실차 캡처로 같은 규칙을 검증하지 않았으므로, 대형 브랜치에 올릴 최종 코드는 차량 fingerprint를 함수에 전달해 Trailblazer에서만 새 계산을 선택한다. 다른 GM과 fingerprint를 생략하는 기존 외부 호출은 이전 payload를 그대로 만든다.
+
+초기에 간접 카운터 기준으로 사용했던 `ASCM_2CD RollingCounter` DBC 추가는 최종 구현이 실제 `0x2CB`를 직접 추종하면서 더 이상 사용하지 않는다. PR diff를 작게 유지하기 위해 이 미사용 신호도 제거했다. 이 정리는 Trailblazer가 현재 보내는 payload를 바꾸지 않는다.
 
 ## 10. 테스트 및 검증 결과
 
@@ -698,6 +707,8 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 - 다른 GM 차량의 frame 기반 일정과 dashboard enable 동작 불변
 - 합성 cancel 이벤트가 같은 업데이트에서 `pressed=true→false`로 완결되는지 확인
 - 합성 cancel 직후 실제 `RES/+` press/release가 무시되지 않고 설정속도를 80→81 km/h로 변경하며 버튼 추적기가 0으로 복귀하는지 확인
+- 다른 GM의 체크섬 경계 payload와 fingerprint 생략 호출이 기존 바이트별 결과를 그대로 유지하는지 확인
+- Trailblazer 전용 조건이 `TRAILBLAZER_CC`, 비롱컨 및 다른 GM에서는 false인지 확인
 - 생성 payload 확인:
 
 ```text
@@ -711,9 +722,9 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 ```
 
 - Panda에서 가속페달 입력 중 위 `0x2CB`/`0x315` 그룹이 모두 허용되는지 확인
-- `TestTrailblazerLongitudinalIntegrity` 집중 테스트 36개 통과
+- `TestTrailblazerLongitudinalIntegrity` 집중 테스트 40개 통과
 - `test_carrot_cruise_buttons.py` 버튼 상태 머신 테스트 11개 통과
-- 이번 변경 집중 테스트 합계 47개 통과
+- 이번 변경 집중 테스트 합계 51개 통과
 - 변경된 Python 파일 구문 검사 통과
 
 ### 10.2 문서 및 정적 검사
@@ -725,7 +736,7 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 
 ### 10.3 전체 GM 테스트 참고
 
-이번 환경의 전체 `test_gm.py` 실행에서는 58개가 통과했고 8개 fingerprint 테스트가 실패했다. 해당 8개는 빈 fingerprint 또는 기존 camera diagnostic address 누락을 검사하는 기존 데이터 문제로, 합성 cancel 변경과 관계없다. 변경 대상인 `TestTrailblazerLongitudinalIntegrity` 36개와 크루즈 버튼 테스트 11개는 별도로 실행해 모두 통과했다.
+이번 환경의 전체 `test_gm.py` 실행에서는 62개가 통과했고 8개 fingerprint 테스트가 실패했다. 해당 8개는 빈 fingerprint 또는 기존 camera diagnostic address 누락을 검사하는 기존 데이터 문제로 Trailblazer 수정과 관계없다. 변경 대상인 `TestTrailblazerLongitudinalIntegrity` 40개와 크루즈 버튼 테스트 11개는 별도로 실행해 모두 통과했다.
 
 ## 11. 해결된 부분과 남은 부분
 
@@ -838,4 +849,4 @@ git merge-base --is-ancestor c44f887 <initData.gitCommit>
 
 2026-08-08의 `L24`·`L25`는 `fa2b434`가 들어간 실제 주행이다. 총 3,000개의 순정/송신 주기에서 `0x2CB`와 `0x315` 카운터가 모두 일치했고 체크섬, `accFaulted`, CAN invalid가 없었으므로 종방향 프로토콜은 분명 진전됐다. 새 증상은 차량 CAN이 아니라 합성 cancel의 release 누락이었다. press-only 이벤트가 내부적으로 긴 cancel로 변해 `latEnabled=false`가 되고, 그 상태가 새 +/- 버튼 입력까지 가로막았다.
 
-현재 코드는 합성 cancel의 press/release를 같은 업데이트에 넣어 디스인게이지는 유지하되 버튼 추적을 즉시 끝낸다. 집중 테스트 47개가 통과했다. 따라서 현재 브랜치는 **지금까지 로그로 확인된 직접 원인에 대한 수정이 적용된 상태**지만, 버튼·조향 수정은 아직 실차 rlog가 없으므로 “완전 해결 확정”이 아니라 “코드상 해결, 약한 제동 뒤 재인게이지 및 장거리 실차 검증 대기”로 관리한다.
+현재 코드는 합성 cancel의 press/release를 같은 업데이트에 넣어 디스인게이지는 유지하되 버튼 추적을 즉시 끝낸다. 2026-08-11 사용자는 이후 오류 없이 정상 작동한다고 확인했고 집중 테스트 51개가 통과했다. PR 범위 정리로 24비트 체크섬도 Trailblazer에만 한정했으므로, 다른 GM은 기존 체크섬·25 Hz 일정·dashboard 경로를 유지한다. 따라서 현재 브랜치는 **지금까지 로그로 확인된 직접 원인에 대한 수정과 다른 차량 영향 최소화가 적용된 상태**다. 다만 최종 수정 후 rlog가 보관되면 동일 수치 분석으로 실차 확인을 한 번 더 문서화한다.

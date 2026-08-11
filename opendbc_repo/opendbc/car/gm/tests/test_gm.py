@@ -9,7 +9,8 @@ from opendbc.car.gm.carstate import create_stock_long_cancel_button_events
 from opendbc.car.gm.fingerprints import FINGERPRINTS
 from opendbc.car.gm.gmcan import (apply_driver_gas_override, apply_stock_longitudinal_gate, create_acc_dashboard_command,
                                  create_friction_brake_command, create_gas_regen_command, get_acc_dashboard_enabled,
-                                 get_longitudinal_command_timing, get_longitudinal_sync_messages)
+                                 get_longitudinal_command_timing, get_longitudinal_sync_messages,
+                                 is_trailblazer_camera_longitudinal)
 from opendbc.car.gm.values import CAR, CAMERA_ACC_CAR, GM_RX_OFFSET
 
 CAMERA_DIAGNOSTIC_ADDRESS = 0x24B
@@ -55,7 +56,7 @@ class TestTrailblazerLongitudinalIntegrity:
       CP.carFingerprint, True, -500, -540, 143, False, True,
     )
 
-    gas_msg = create_gas_regen_command(packer, 0, apply_gas, 3, True, at_full_stop)
+    gas_msg = create_gas_regen_command(packer, 0, apply_gas, 3, True, at_full_stop, CP.carFingerprint)
     brake_msg = create_friction_brake_command(packer, 0, apply_brake, 3, True, near_stop, at_full_stop, CP)
 
     assert gas_msg[1].hex() == "c142b09000bd4f6d"
@@ -73,8 +74,20 @@ class TestTrailblazerLongitudinalIntegrity:
   )
   def test_gas_regen_checksum_matches_stock(self, _, throttle, counter, enabled, expected_payload):
     packer = CANPacker("gm_global_a_powertrain_volt")
-    msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False)
+    msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False, CAR.CHEVROLET_TRAILBLAZER)
     assert msg[1].hex() == expected_payload
+
+  @parameterized.expand([
+    ("counter_0_low_byte_zero", 346, 0, True, "0142cb0000bd3400"),
+    ("counter_3_low_byte_overflow", 249.75, 3, True, "c142c7fe00bd38ff"),
+    ("inactive", -500, 2, False, "8042b09001bd4f6e"),
+  ])
+  def test_other_gm_keeps_legacy_gas_regen_checksum(self, _, throttle, counter, enabled, expected_payload):
+    packer = CANPacker("gm_global_a_powertrain_volt")
+    msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False, CAR.CHEVROLET_EQUINOX)
+    default_msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False)
+    assert msg[1].hex() == expected_payload
+    assert default_msg[1] == msg[1]
 
   @parameterized.expand([
     ("inactive_counter_0", "0042b09001bd4f70", 0, 0),
@@ -94,7 +107,8 @@ class TestTrailblazerLongitudinalIntegrity:
     ("inactive", False),
   ])
   def test_uses_actual_stock_gas_regen_counter(self, _, stock_active):
-    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=NetworkLocation.fwdCamera)
+    CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
+                         networkLocation=NetworkLocation.fwdCamera)
     CS = SimpleNamespace(cam_ascm_2cb_counter_ts_nanos=1, cam_ascm_2cb_counter_updated=True,
                          cam_ascm_2cb_counter=3, cam_stock_long_active=stock_active, cam_acc_status={})
     assert get_longitudinal_command_timing(CP, CS, frame=41) == (True, 3)
@@ -108,15 +122,29 @@ class TestTrailblazerLongitudinalIntegrity:
     ("no_acc_status", 1, False, None),
   ])
   def test_waits_for_both_stock_references(self, _, counter_ts, stock_active, acc_status):
-    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=NetworkLocation.fwdCamera)
+    CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
+                         networkLocation=NetworkLocation.fwdCamera)
     CS = SimpleNamespace(cam_ascm_2cb_counter_ts_nanos=counter_ts, cam_stock_long_active=stock_active,
                          cam_acc_status=acc_status)
     assert get_longitudinal_command_timing(CP, CS, frame=4) == (False, 0)
 
   def test_other_gm_uses_original_clock(self):
-    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_EQUINOX, networkLocation=NetworkLocation.fwdCamera)
+    CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_EQUINOX,
+                         networkLocation=NetworkLocation.fwdCamera)
     assert get_longitudinal_command_timing(CP, SimpleNamespace(), frame=4) == (True, 1)
     assert get_longitudinal_command_timing(CP, SimpleNamespace(), frame=5) == (False, 1)
+
+  def test_trailblazer_camera_longitudinal_scope(self):
+    CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
+                         networkLocation=NetworkLocation.fwdCamera)
+    assert is_trailblazer_camera_longitudinal(CP)
+
+    CP.carFingerprint = CAR.CHEVROLET_TRAILBLAZER_CC
+    assert not is_trailblazer_camera_longitudinal(CP)
+
+    CP.carFingerprint = CAR.CHEVROLET_TRAILBLAZER
+    CP.openpilotLongitudinalControl = False
+    assert not is_trailblazer_camera_longitudinal(CP)
 
   def test_sync_messages_do_not_require_alive_frequency(self):
     CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
@@ -145,7 +173,7 @@ class TestTrailblazerLongitudinalIntegrity:
     values = apply_stock_longitudinal_gate(CP.carFingerprint, False, -500, -540, 143, True, True, True)
     apply_gas, apply_brake, at_full_stop, near_stop, acc_engaged = values
 
-    gas_msg = create_gas_regen_command(packer, 0, apply_gas, 1, acc_engaged, at_full_stop)
+    gas_msg = create_gas_regen_command(packer, 0, apply_gas, 1, acc_engaged, at_full_stop, CP.carFingerprint)
     brake_msg = create_friction_brake_command(packer, 0, apply_brake, 1, acc_engaged, near_stop, at_full_stop, CP)
 
     assert gas_msg[1].hex() == "4042b09001bd4f6f"
