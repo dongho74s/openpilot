@@ -665,7 +665,7 @@ CAN ACK 오류는 실제로 존재하지만, 위 증거를 종합하면 하드�
 | [`8802d35`](https://github.com/leehyuk1108/carrotpilot/commit/8802d35b53e73cf396a71d336184691f41a6a520) | 가속페달 입력 즉시 `-500`/`0` 명령 그룹 송신 | Panda 차단 및 그 뒤의 간헐적 CAN 붕괴 | 단위/safety 테스트 완료; 후속 오류 시점 차단 없음 |
 | [`fa2b434`](https://github.com/leehyuk1108/carrotpilot/commit/fa2b434050c38b1344de5ce0f275c8b89d76f2a7) | 실제 순정 `0x2CB` 카운터 추종, 느린 부팅 기준 메시지 대기, 순정 active 해제 즉시 명령 중립화·cancel | 냉간 EBCM unavailable/ESC·파워스티어링 경고, 약한 제동 시 크루즈 오류 | `L24`·`L25`에서 종방향 프로토콜 정상화 확인; press-only cancel 회귀 발견 |
 | [`c44f887`](https://github.com/leehyuk1108/carrotpilot/commit/c44f887a57091d2c220d8e7e598c2e3f3e0ba707) | 합성 cancel의 press/release를 같은 상태 업데이트에 원자적으로 전달 | 권한 해제 뒤 +/- 설정속도와 조향 허용 상태가 계속 잠기는 문제 | 집중 테스트 완료, 실차 재검증 대기 |
-| `PR_SCOPE_COMMIT` | 24비트 체크섬을 Trailblazer에만 한정하고 다른 GM의 기존 체크섬·함수 호출 호환성 보존, 사용하지 않는 `0x2CD` DBC 신호 제거 | 대형 브랜치 PR에서 다른 GM 차량에 미칠 수 있는 범위 최소화 | 회귀 테스트 완료 |
+| [`2f5b640`](https://github.com/leehyuk1108/carrotpilot/commit/2f5b64030fb3f95dde6e04b95217b66a58e8bede) | 24비트 체크섬을 Trailblazer에만 한정하고 다른 GM의 기존 체크섬·함수 호출 호환성 보존, 사용하지 않는 `0x2CD` DBC 신호 제거 | 대형 브랜치 PR에서 다른 GM 차량에 미칠 수 있는 범위 최소화 | 회귀 테스트 완료 |
 
 ### 9.1 다른 GM 차량에 미치는 영향
 
