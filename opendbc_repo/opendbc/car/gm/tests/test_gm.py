@@ -43,6 +43,7 @@ class TestTrailblazerLongitudinalIntegrity:
   @parameterized.expand([
     ("trailblazer_gas", CAR.CHEVROLET_TRAILBLAZER, True, (-500, 0, False, False)),
     ("trailblazer_released", CAR.CHEVROLET_TRAILBLAZER, False, (-540, 143, True, True)),
+    ("trailblazer_cc_gas", CAR.CHEVROLET_TRAILBLAZER_CC, True, (-540, 143, True, True)),
     ("other_gm_gas", CAR.CHEVROLET_EQUINOX, True, (-540, 143, True, True)),
   ])
   def test_driver_gas_override_values(self, _, car_fingerprint, gas_pressed, expected):
@@ -85,8 +86,12 @@ class TestTrailblazerLongitudinalIntegrity:
   def test_other_gm_keeps_legacy_gas_regen_checksum(self, _, throttle, counter, enabled, expected_payload):
     packer = CANPacker("gm_global_a_powertrain_volt")
     msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False, CAR.CHEVROLET_EQUINOX)
+    trailblazer_cc_msg = create_gas_regen_command(
+      packer, 0, throttle, counter, enabled, False, CAR.CHEVROLET_TRAILBLAZER_CC,
+    )
     default_msg = create_gas_regen_command(packer, 0, throttle, counter, enabled, False)
     assert msg[1].hex() == expected_payload
+    assert trailblazer_cc_msg[1] == msg[1]
     assert default_msg[1] == msg[1]
 
   @parameterized.expand([
@@ -146,6 +151,10 @@ class TestTrailblazerLongitudinalIntegrity:
     CP.openpilotLongitudinalControl = False
     assert not is_trailblazer_camera_longitudinal(CP)
 
+    CP.openpilotLongitudinalControl = True
+    CP.networkLocation = NetworkLocation.gateway
+    assert not is_trailblazer_camera_longitudinal(CP)
+
   def test_sync_messages_do_not_require_alive_frequency(self):
     CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
                          networkLocation=NetworkLocation.fwdCamera)
@@ -161,6 +170,7 @@ class TestTrailblazerLongitudinalIntegrity:
     ("trailblazer_stock_inactive", CAR.CHEVROLET_TRAILBLAZER, False, (-500, 0, False, False, False)),
     ("trailblazer_stock_missing", CAR.CHEVROLET_TRAILBLAZER, None, (-500, 0, False, False, False)),
     ("trailblazer_stock_active", CAR.CHEVROLET_TRAILBLAZER, True, (-540, 143, True, True, True)),
+    ("trailblazer_cc", CAR.CHEVROLET_TRAILBLAZER_CC, False, (-540, 143, True, True, True)),
     ("other_gm", CAR.CHEVROLET_EQUINOX, False, (-540, 143, True, True, True)),
   ])
   def test_stock_longitudinal_gate(self, _, car_fingerprint, stock_active, expected):
@@ -194,6 +204,7 @@ class TestTrailblazerLongitudinalIntegrity:
 
   def test_other_gm_dashboard_state_is_unchanged(self):
     assert get_acc_dashboard_enabled(CAR.CHEVROLET_EQUINOX, True, False, False, None)
+    assert get_acc_dashboard_enabled(CAR.CHEVROLET_TRAILBLAZER_CC, True, False, False, None)
 
   @parameterized.expand([
     ("inactive", "000231790000"),
