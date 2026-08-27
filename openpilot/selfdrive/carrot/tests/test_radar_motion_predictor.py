@@ -3219,6 +3219,95 @@ def test_stationary_front_hands_off_to_persistent_closer_vision_match() -> None:
   assert matcher.stationary_identity == ("frontRadar", 46)
 
 
+def test_stationary_front_hands_off_to_offset_closer_vision_range() -> None:
+  matcher = VisionRadarMatcher()
+  match = None
+  for index in range(7):
+    time_s = index * 0.05
+    held = snapshot_radar_points(
+      (Point(55, 4.55, -0.30, v_rel=0.0),),
+      v_ego=0.0,
+    )[0]
+    match = matcher.match(
+      model_with_lead(4.55, -0.30, 0.0, probability=1.0),
+      (held,),
+      STRAIGHT_PATH,
+      time_s=time_s,
+      stationary_points=(held,),
+      prefer_primary_stationary=True,
+    )
+
+  assert match is not None
+  assert match.point.track_id == 55
+
+  selected_ids = []
+  for index in range(7, 14):
+    time_s = index * 0.05
+    points = snapshot_radar_points((
+      Point(55, 4.55, -0.30, v_rel=0.0),
+      Point(35, 2.40, 0.75, v_rel=0.0),
+    ), v_ego=0.0)
+    model = model_with_lead(2.80, 0.0, 0.0, probability=1.0)
+    model.leadsV3[0].xStd = (0.44,)
+    model.leadsV3[0].yStd = (0.22,)
+    model.leadsV3[0].vStd = (0.07,)
+    match = matcher.match(
+      model,
+      points,
+      STRAIGHT_PATH,
+      time_s=time_s,
+      stationary_points=points,
+      prefer_primary_stationary=True,
+    )
+    assert match is not None
+    selected_ids.append(match.point.track_id)
+
+  assert selected_ids[:5] == [55] * 5
+  assert selected_ids[-1] == 35
+  assert matcher.stationary_identity == ("frontRadar", 35)
+
+
+def test_stationary_front_rejects_offset_challenger_without_range_gain() -> None:
+  matcher = VisionRadarMatcher()
+  match = None
+  for index in range(7):
+    time_s = index * 0.05
+    held = snapshot_radar_points(
+      (Point(55, 4.55, -0.30, v_rel=0.0),),
+      v_ego=0.0,
+    )[0]
+    match = matcher.match(
+      model_with_lead(4.55, -0.30, 0.0, probability=1.0),
+      (held,),
+      STRAIGHT_PATH,
+      time_s=time_s,
+      stationary_points=(held,),
+      prefer_primary_stationary=True,
+    )
+
+  assert match is not None
+  assert match.point.track_id == 55
+
+  for index in range(7, 15):
+    time_s = index * 0.05
+    points = snapshot_radar_points((
+      Point(55, 4.55, -0.30, v_rel=0.0),
+      Point(35, 2.40, 0.75, v_rel=0.0),
+    ), v_ego=0.0)
+    match = matcher.match(
+      model_with_lead(4.10, 0.0, 0.0, probability=1.0),
+      points,
+      STRAIGHT_PATH,
+      time_s=time_s,
+      stationary_points=points,
+      prefer_primary_stationary=True,
+    )
+    assert match is not None
+    assert match.point.track_id == 55
+
+  assert matcher.stationary_identity == ("frontRadar", 55)
+
+
 def test_stationary_front_ignores_transient_closer_vision_match() -> None:
   matcher = VisionRadarMatcher()
   match = None
@@ -4066,6 +4155,112 @@ def test_controller_publishes_vision_seeded_continuous_corner_stationary_lead() 
   assert output.lead_one is not None
   assert output.lead_one["radarTrackId"] == 1009
   assert output.lead_one["vLead"] == pytest.approx(0.0)
+
+
+def test_controller_turn_rejects_weak_vision_stationary_corner_seed() -> None:
+  controller = DPathRadarController(prefer_corner_radar=True)
+  output = None
+  for index in range(12):
+    time_s = index * 0.05
+    output = controller.update(
+      time_s=time_s,
+      v_ego=6.0,
+      radar_points=(Point(
+        2734,
+        14.0 - 6.0 * time_s,
+        -0.5,
+        v_rel=-6.0,
+        source="corner235",
+      ),),
+      model=model_with_lead(
+        14.0 - 6.0 * time_s,
+        -0.5,
+        0.0,
+        probability=0.65,
+      ),
+      yaw_rate_rad_s=0.20,
+    )
+
+  assert output is not None
+  assert (
+    output.lead_one is None
+    or output.lead_one["radarTrackId"] != 2734
+  )
+  assert controller.primary_matcher.stationary_identity is None
+
+
+def test_controller_turn_allows_strong_vision_stationary_corner_seed() -> None:
+  controller = DPathRadarController(prefer_corner_radar=True)
+  output = None
+  for index in range(7):
+    time_s = index * 0.05
+    output = controller.update(
+      time_s=time_s,
+      v_ego=6.0,
+      radar_points=(Point(
+        1009,
+        14.0 - 6.0 * time_s,
+        0.1,
+        v_rel=-6.0,
+        source="corner235",
+      ),),
+      model=model_with_lead(
+        14.0 - 6.0 * time_s,
+        0.1,
+        0.0,
+        probability=0.85,
+      ),
+      yaw_rate_rad_s=0.20,
+    )
+
+  assert output is not None
+  assert output.lead_one is not None
+  assert output.lead_one["radarTrackId"] == 1009
+
+
+def test_controller_turn_retains_previously_confirmed_stationary_corner() -> None:
+  controller = DPathRadarController(prefer_corner_radar=True)
+  output = None
+  for index in range(7):
+    time_s = index * 0.05
+    output = controller.update(
+      time_s=time_s,
+      v_ego=6.0,
+      radar_points=(Point(
+        1009,
+        20.0 - 6.0 * time_s,
+        0.1,
+        v_rel=-6.0,
+        source="corner235",
+      ),),
+      model=model_with_lead(
+        20.0 - 6.0 * time_s,
+        0.1,
+        0.0,
+        probability=0.45,
+      ),
+    )
+
+  assert output is not None
+  assert output.lead_one is not None
+  assert output.lead_one["radarTrackId"] == 1009
+
+  retained = controller.update(
+    time_s=0.35,
+    v_ego=6.0,
+    radar_points=(Point(
+      1009,
+      17.9,
+      0.2,
+      v_rel=-6.0,
+      source="corner235",
+    ),),
+    model=model_with_lead(17.9, 0.2, 0.0, probability=0.0),
+    yaw_rate_rad_s=0.20,
+  )
+
+  assert retained.lead_one is not None
+  assert retained.lead_one["radarTrackId"] == 1009
 
 
 def test_weak_vision_accelerates_only_tight_front_corner_stationary_pair() -> None:
