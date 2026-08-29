@@ -33,10 +33,11 @@ VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES = (1, 2, 3)  # Freeway, IC, JC
 VEHICLE_NAVI_CONTROLLED_ACCESS_ROAD_CLASSES = (1, 2)  # Freeway, arterial/city freeway
 VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE = 1000.0
 VEHICLE_NAVI_POSITION_TIMEOUT_NS = 1_000_000_000
-VEHICLE_NAVI_CURVE_MAX_DISTANCE = 1500.0
+VEHICLE_NAVI_CURVE_MAX_DISTANCE = 8190.0  # 13-bit offset; 8191 is the invalid sentinel
 VEHICLE_NAVI_CURVE_DISTANCE_FACTOR = 2.0
+VEHICLE_NAVI_CURVE_CANFD_SCALE = 0.1
 VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_DISTANCE = 10.0
-VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED = 20.0
+VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED = 60.0
 VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL = 1.9
 STANDSTILL_THRESHOLD = 12 * 0.03125 * CV.KPH_TO_MS
 CANFD_AVH_RELEASE_GRACE_FRAMES = round(0.5 / DT_CTRL)
@@ -227,6 +228,7 @@ class CarState(CarStateBase):
     self.vehicleNaviRouteResetTimestamp = 0
     self.vehicleNaviCurveRouteActive = False
     self.vehicleNaviCurveRouteState = 3
+    self.vehicleNaviCurvePathIndex = None
     self.vehicleNaviRoadClass = 7
     self.vehicleNaviCameraTarget = None
     self.vehicleNaviSpeedZoneActive = False
@@ -668,6 +670,7 @@ class CarState(CarStateBase):
     raw = sum(int(values.get(f"BYTE_{i + 1}", 0)) << (i * 8) for i in range(8))
     return {
       "offset": raw & 0x1fff,
+      "path_index": (raw >> 13) & 0x3f,
       "calculated_route": (raw >> 22) & 0x3,
       "functional_road_class": (raw >> 24) & 0x7,
     }
@@ -712,25 +715,33 @@ class CarState(CarStateBase):
     elif magnitude <= 448:
       decoded = 64 * (coded - sign * 321)
     else:
-      decoded = 128 * (coded - sign * 384)
+      decoded = 128 * (coded - sign * 384.5)
     return decoded / 100000.0
 
   @staticmethod
   def _decode_vehicle_navi_curve(values):
+    # The 3rd-generation CAN-FD DBC ends this payload at ProfileType. Bits
+    # 58-59 cycle across logged spots and are not a ControlPoint validity flag.
     if int(values.get("PROSHORT_PROFILE_TYPE", 0)) != 1:
       return None
 
     offset = int(values.get("PROSHORT_OFFSET", 8191))
+    path_index = int(values.get("PROSHORT_PATH_INDEX", 63))
     distance = int(values.get("PROSHORT_DISTANCE", 1023))
     raw_curvature = int(values.get("PROSHORT_VALUE_0", 1023))
     if not 0 <= offset <= VEHICLE_NAVI_CURVE_MAX_DISTANCE or raw_curvature == 1023:
       return None
 
-    curvature = CarState._decode_adasis_curvature(raw_curvature)
+    standard_curvature = CarState._decode_adasis_curvature(raw_curvature)
+    # Hyundai CAN-FD 0x4BA uses the ADASIS piecewise code at one tenth of
+    # the standard physical curvature. Applying the standard value directly
+    # makes ordinary highway bends look like 20-40 km/h hairpins.
+    curvature = standard_curvature * VEHICLE_NAVI_CURVE_CANFD_SCALE if standard_curvature is not None else None
     if curvature is None:
       return None
     return {
       "offset": offset,
+      "path_index": path_index,
       "span": distance * VEHICLE_NAVI_CURVE_DISTANCE_FACTOR if 0 <= distance < 1023 else 0.0,
       "curvature": curvature,
       "raw_curvature": raw_curvature,
@@ -746,9 +757,8 @@ class CarState(CarStateBase):
     target = self.totalDistance + curve["offset"]
     reference_speed = self._vehicle_navi_curve_reference_speed(curve["curvature"])
     # A single 10 m map node with a hairpin-level value is commonly a turn-node
-    # discontinuity, not a road curve long enough to justify an 18 km/h cap.
-    # Normal 10 m curve samples remain usable; only the saturated low-speed spot
-    # is ignored here. Route/TBT turn control continues to handle real turns.
+    # discontinuity, not a road curve long enough to justify a strong slowdown.
+    # Normal 10 m curve samples remain usable; route/TBT control handles turns.
     short_spot = 0.0 < curve["span"] <= VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_DISTANCE
     if short_spot and reference_speed <= VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED:
       return
@@ -763,6 +773,7 @@ class CarState(CarStateBase):
   def _update_vehicle_navi_curve_profile(self, cp, ret):
     ret.vehicleNaviCurveDistance = 0.0
     ret.vehicleNaviCurveSpeed = 0.0
+    ret.vehicleNaviCurveTargetSpeed = 0.0
     ret.vehicleNaviCurveCurvature = 0.0
     ret.vehicleNaviCurveRouteActive = self.vehicleNaviCurveRouteActive
     ret.vehicleNaviCurveRouteState = self.vehicleNaviCurveRouteState
@@ -772,8 +783,10 @@ class CarState(CarStateBase):
       if timestamp > self.vehicleNaviCurveTimestamp:
         self.vehicleNaviCurveTimestamp = timestamp
         curve = self._decode_vehicle_navi_curve(self.navi_profile_4ba)
-        if curve is not None and timestamp > self.vehicleNaviRouteResetTimestamp:
-          self._add_vehicle_navi_curve(curve)
+        if curve is not None:
+          path_matches = self.vehicleNaviCurvePathIndex is None or curve["path_index"] == self.vehicleNaviCurvePathIndex
+          if path_matches and timestamp > self.vehicleNaviRouteResetTimestamp:
+            self._add_vehicle_navi_curve(curve)
 
     # Release each curvature spot as soon as its apex is passed. The following
     # lower-curvature spots then raise the target speed before the curve exit.
@@ -787,12 +800,13 @@ class CarState(CarStateBase):
       safe_speed = target_speed / CV.MS_TO_KPH
       decel_distance = max(0.0, distance - safe_speed * self.vehicleNaviCurveControlEnd)
       preview_speed = math.sqrt(safe_speed ** 2 + 2 * self.vehicleNaviCurveDecelRate * decel_distance) * CV.MS_TO_KPH
-      candidates.append((preview_speed, distance, curve))
+      candidates.append((preview_speed, distance, target_speed, curve))
 
     if candidates:
-      _, distance, curve = min(candidates, key=lambda item: item[0])
+      _, distance, target_speed, curve = min(candidates, key=lambda item: item[0])
       ret.vehicleNaviCurveDistance = distance
       ret.vehicleNaviCurveSpeed = curve["speed"]
+      ret.vehicleNaviCurveTargetSpeed = target_speed
       ret.vehicleNaviCurveCurvature = curve["curvature"]
 
   @staticmethod
@@ -862,18 +876,21 @@ class CarState(CarStateBase):
         if segment["functional_road_class"] != 7:
           self.vehicleNaviRoadClass = segment["functional_road_class"]
         if segment["calculated_route"] == 1:
-          if self.vehicleNaviCurveRouteState != 1:
+          if self.vehicleNaviCurveRouteState != 1 or self.vehicleNaviCurvePathIndex != segment["path_index"]:
             self._clear_vehicle_navi_curves()
           self.vehicleNaviCurveRouteState = 1
           self.vehicleNaviCurveRouteActive = True
+          self.vehicleNaviCurvePathIndex = segment["path_index"]
         elif segment["calculated_route"] == 0:
-          if self.vehicleNaviCurveRouteState != 0:
+          if self.vehicleNaviCurveRouteState != 0 or self.vehicleNaviCurvePathIndex != segment["path_index"]:
             self._clear_vehicle_navi_curves()
           self.vehicleNaviCurveRouteState = 0
           self.vehicleNaviCurveRouteActive = False
+          self.vehicleNaviCurvePathIndex = segment["path_index"]
         if segment["calculated_route"] == 2:
           self.vehicleNaviCurveRouteState = 2
           self.vehicleNaviCurveRouteActive = False
+          self.vehicleNaviCurvePathIndex = None
           self.vehicleNaviRouteResetTimestamp = timestamp
           self._clear_vehicle_navi_events()
           self._clear_vehicle_navi_curves()
