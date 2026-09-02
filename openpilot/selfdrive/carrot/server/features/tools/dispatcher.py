@@ -524,7 +524,10 @@ async def run_tool_job(job: Dict[str, Any]) -> None:
       # Phase 0: clear stale git locks so the remote/config/fetch steps below
       # aren't blocked by a leftover *.lock from a crashed git process.
       await jobs.capture_exec(["find", ".git", "-type", "f", "-name", "*.lock", "-delete"], cwd=repo_dir, timeout=10)
-      # Phase 1: ensure origin points to the correct URL
+      # Phase 1: ensure origin points to the correct URL and tracks every
+      # branch. Installations migrated from comma may still have a narrow
+      # release-tizi-staging fetch refspec, which does not exist on this
+      # remote and makes even a plain `git fetch origin` fail.
       jobs.progress(job, message="configuring origin remote", current=1, total=4)
 
       rc_set, _ = await jobs.capture_exec(
@@ -541,6 +544,15 @@ async def run_tool_job(job: Dict[str, Any]) -> None:
           jobs.finish(job, ok=False, result={"ok": False, "error": f"failed to configure remote: {out_add}"})
           return
       jobs.append(job, f"origin → {url}\n")
+
+      rc_branches, out_branches = await jobs.capture_exec(
+        ["git", "remote", "set-branches", "origin", "*"], cwd=repo_dir, timeout=15
+      )
+      if rc_branches != 0:
+        jobs.append(job, f"failed to configure origin branches: {out_branches}\n")
+        jobs.finish(job, ok=False, result={"ok": False, "error": f"failed to configure origin branches: {out_branches}"})
+        return
+      jobs.append(job, "origin branches: *\n")
 
       # Phase 2: remove ALL other remotes (so only origin remains)
       jobs.progress(job, message="cleaning other remotes", current=2, total=4)
@@ -684,55 +696,6 @@ async def run_tool_job(job: Dict[str, Any]) -> None:
       params = Params()
       params.put_nonblocking("CarrotException", "tmux_send")
       jobs.finish(job, ok=True, result={"ok": True, "out": "tmux send triggered"})
-      return
-
-    if action == "install_required":
-      import importlib.util
-
-      packages = [
-        {"pip": "flask", "import": "flask"},
-        {"pip": "shapely", "import": "shapely"},
-        {"pip": "kaitaistruct", "import": "kaitaistruct"},
-      ]
-      results = []
-      installed_any = False
-
-      for idx, item in enumerate(packages, start=1):
-        pip_name = item["pip"]
-        import_name = item["import"]
-        jobs.progress(job, message=f"checking {pip_name}", current=idx - 1, total=len(packages))
-
-        if importlib.util.find_spec(import_name) is not None:
-          results.append({"package": pip_name, "status": "already_installed"})
-          jobs.append(job, f"{pip_name}: already installed")
-          continue
-
-        jobs.progress(job, message=f"installing {pip_name}", current=idx, total=len(packages))
-        jobs.append(job, f"$ pip install {pip_name}")
-        rc = await jobs.stream_exec(job, ["pip", "install", pip_name], timeout=300)
-        results.append({"package": pip_name, "status": "installed" if rc == 0 else "failed", "returncode": rc})
-        if rc != 0:
-          jobs.finish(
-            job,
-            ok=False,
-            result={
-              "ok": False,
-              "error": f"pip install failed: {pip_name}",
-              "results": results,
-              "need_reboot": False,
-            },
-            error=f"pip install failed: {pip_name}",
-          )
-          return
-        installed_any = True
-
-      result = {
-        "ok": True,
-        "out": "required packages installed. reboot is required to apply changes." if installed_any else "all required packages are already installed.",
-        "results": results,
-        "need_reboot": installed_any,
-      }
-      jobs.finish(job, ok=True, result=result)
       return
 
     if action == "backup_settings":
@@ -1059,6 +1022,11 @@ async def dispatch_sync(request: web.Request, body: Dict[str, Any]) -> web.Respo
       else:
         out_all += f"> git remote set-url origin {url}\n{out_set}\n\n"
 
+      rc_branches, out_branches = run(["git", "remote", "set-branches", "origin", "*"], cwd=REPO_DIR)
+      out_all += f"> git remote set-branches origin '*'\n{out_branches}\n\n"
+      if rc_branches != 0:
+        return web.json_response({"ok": False, "rc": rc_branches, "out": out_all.strip()})
+
       rc_rem, out_rem = run(["git", "remote"], cwd=REPO_DIR)
       for rname in (out_rem or "").splitlines():
         rname = rname.strip()
@@ -1163,71 +1131,6 @@ async def dispatch_sync(request: web.Request, body: Dict[str, Any]) -> web.Respo
       params = Params()
       params.put_nonblocking("CarrotException", "tmux_send")
       return web.json_response({"ok": True, "out": "tmux send triggered"})
-
-    if action == "install_required":
-      import importlib.util
-
-      packages = [
-        {"pip": "flask", "import": "flask"},
-        {"pip": "shapely", "import": "shapely"},
-        {"pip": "kaitaistruct", "import": "kaitaistruct"},
-      ]
-
-      results = []
-      installed_any = False
-
-      for item in packages:
-        pip_name = item["pip"]
-        import_name = item["import"]
-
-        try:
-          if importlib.util.find_spec(import_name) is not None:
-            results.append({"package": pip_name, "status": "already_installed"})
-            continue
-
-          cmd = ["pip", "install", pip_name]
-          p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-          results.append({
-            "package": pip_name,
-            "status": "installed" if p.returncode == 0 else "failed",
-            "returncode": p.returncode,
-            "stdout": (p.stdout or "")[-2000:],
-            "stderr": (p.stderr or "")[-2000:],
-          })
-
-          if p.returncode != 0:
-            return web.json_response({
-              "ok": False,
-              "error": f"pip install failed: {pip_name}",
-              "results": results,
-              "need_reboot": False,
-            }, status=500)
-
-          installed_any = True
-
-        except Exception as e:
-          return web.json_response({
-            "ok": False,
-            "error": f"exception while checking/installing {pip_name}: {str(e)}",
-            "results": results,
-            "need_reboot": False,
-          }, status=500)
-
-      if installed_any:
-        return web.json_response({
-          "ok": True,
-          "out": "required packages installed. reboot is required to apply changes.",
-          "results": results,
-          "need_reboot": True,
-        })
-
-      return web.json_response({
-        "ok": True,
-        "out": "all required packages are already installed.",
-        "results": results,
-        "need_reboot": False,
-      })
 
     if action == "backup_settings":
       if not HAS_PARAMS or ParamKeyType is None:

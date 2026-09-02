@@ -15,6 +15,16 @@ const WEB_SETTINGS_GROUPS = [
         descKey: "web_auto_update_desc",
       },
       {
+        id: "auto_update_reboot",
+        titleKey: "web_auto_update_reboot",
+        descKey: "web_auto_update_reboot_desc",
+        options: [
+          { value: "off", labelKey: "web_auto_update_reboot_off" },
+          { value: "park", labelKey: "web_auto_update_reboot_park" },
+          { value: "disengaged", labelKey: "web_auto_update_reboot_disengaged_or_offroad" },
+        ],
+      },
+      {
         id: "start_page",
         titleKey: "web_start_page",
         descKey: "web_start_page_desc",
@@ -76,6 +86,11 @@ const WEB_SETTINGS_GROUPS = [
     labelKey: "web_settings_navigation",
     items: [
       {
+        id: "carrot_navi_fullscreen_on_tap",
+        titleKey: "web_navi_fullscreen_on_tap",
+        descKey: "web_navi_fullscreen_on_tap_desc",
+      },
+      {
         id: "carrot_navi_map_appearance",
         component: "param-selects",
         fields: [
@@ -95,6 +110,7 @@ const WEB_SETTINGS_GROUPS = [
             titleKey: "web_navi_map_theme",
             descKey: "web_navi_map_theme_desc",
             options: [
+              { value: "0", labelKey: "web_navi_map_theme_auto" },
               { value: "1", labelKey: "web_navi_map_theme_dark" },
               { value: "2", labelKey: "web_navi_map_theme_light" },
             ],

@@ -16,6 +16,7 @@ from openpilot.common.gps import get_gps_location_service
 
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
+from openpilot.selfdrive.selfdrived.camera_config import get_camera_packets
 from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
 from openpilot.selfdrive.selfdrived.state import StateMachine
@@ -74,9 +75,9 @@ class SelfdriveD:
     self.gps_location_service = get_gps_location_service(self.params)
     self.gps_packets = [self.gps_location_service]
     self.sensor_packets = ["accelerometer", "gyroscope"]
-    self.camera_packets = ["roadCameraState", "driverCameraState", "wideRoadCameraState"]
-
     self.disable_dm = self.params.get_int("DisableDM")
+    self.use_wide_camera = bool(self.params.get("UseWideCamera", return_default=True))
+    self.camera_packets = get_camera_packets(self.use_wide_camera, self.disable_dm, SIMULATION)
 
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
@@ -84,13 +85,13 @@ class SelfdriveD:
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug']
     if SIMULATION:
       ignore += ['driverCameraState', 'managerState']
-    elif self.disable_dm > 0:
-      self.camera_packets.remove("driverCameraState")
     ignore += ['driverMonitoringState']
 
     if REPLAY:
       # no vipc in replay will make them ignored anyways
-      ignore += ['roadCameraState', 'wideRoadCameraState']
+      ignore += ['roadCameraState']
+      if self.use_wide_camera:
+        ignore += ['wideRoadCameraState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'livePose', # 'liveDelay',
                                    'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters',
@@ -133,6 +134,9 @@ class SelfdriveD:
     self.dm_lockout_set = False
     self.cutin_audio_tracker = CutinAlertTracker()
     self.dm_uncertain_alerted = False
+    self.big_model_loading = False
+    self.big_model_active = False
+    self.big_model_ready_t = 0.0
     self.state_machine = StateMachine()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
@@ -161,6 +165,18 @@ class SelfdriveD:
       set_offroad_alert("Offroad_CarUnrecognized", True)
     elif self.CP.passive:
       self.events.add(EventName.dashcamMode, static=True)
+
+  def _big_model_settling(self) -> bool:
+    """Allow modeld to settle after eGPU startup or runtime fallback."""
+    loading = self.params.get_bool("UsbGpuLoading")
+    active = self.params.get_bool("UsbGpuActive")
+
+    if (self.big_model_loading and not loading) or (self.big_model_active and not active):
+      self.big_model_ready_t = time.monotonic()
+
+    self.big_model_loading = loading
+    self.big_model_active = active
+    return loading or time.monotonic() < self.big_model_ready_t + 5.0
 
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
@@ -391,7 +407,8 @@ class SelfdriveD:
     # generic catch-all. ideally, a more specific event should be added above instead
     has_disable_events = self.events.contains(ET.NO_ENTRY) and (self.events.contains(ET.SOFT_DISABLE) or self.events.contains(ET.IMMEDIATE_DISABLE))
     no_system_errors = (not has_disable_events) or (len(self.events) == num_events)
-    if not self.sm.all_checks() and no_system_errors:
+    big_model_settling = self._big_model_settling()
+    if not self.sm.all_checks() and no_system_errors and not big_model_settling:
       if not self.sm.all_alive():
         self.events.add(EventName.commIssue)
       elif not self.sm.all_freq_ok():
@@ -489,7 +506,7 @@ class SelfdriveD:
         if VisionStreamType.VISION_STREAM_ROAD not in available_streams:
           self.sm.ignore_alive.append('roadCameraState')
           self.sm.ignore_valid.append('roadCameraState')
-        if VisionStreamType.VISION_STREAM_WIDE_ROAD not in available_streams:
+        if self.use_wide_camera and VisionStreamType.VISION_STREAM_WIDE_ROAD not in available_streams:
           self.sm.ignore_alive.append('wideRoadCameraState')
           self.sm.ignore_valid.append('wideRoadCameraState')
 
