@@ -659,6 +659,19 @@
       "scene": "An adjacent visual lead and an opposite-side stationary front-radar reflection must not be associated as leadOne"
     },
     {
+      "id": "niro-63f-2-median-vision-stationary-l1",
+      "vehicle_folder": "KIA_NIRO_HEV_2ND_GEN c903ce877d9129f9",
+      "log": "0000063f--0131464865--2/rlog.zst",
+      "source": "front",
+      "window": [53.35, 55.35],
+      "expected": "clear",
+      "human_verified": true,
+      "validation_stage": "lead_one",
+      "target_track_ids": [37],
+      "forbidden_lead_one_ids": [37],
+      "scene": "A moving visual lead must not let the offset stationary center-divider reflection 37 become leadOne"
+    },
+    {
       "id": "palisade-bef-2-motorcycle-leadone",
       "vehicle_folder": "HYUNDAI_PALISADE b84b4a4fbb604be1",
       "log": "00000bef--a8eb1d8c98--2/rlog.zst",
@@ -1588,6 +1601,17 @@
       "forbidden_lead_one_ids": [1448, 1510],
       "forbidden_lead_two_ids": [1448, 1510],
       "scene": "A moving vehicle remains far to the right while a tight left curve projects its corner-radar track onto the model path"
+    },
+    {
+      "id": "ioniq9-1c9-2-center-stationary-reflection-23",
+      "vehicle_folder": "HYUNDAI_IONIQ_9 7a9a8e68022c1881",
+      "log": "000001c9--dc79b098bb--2/rlog.zst",
+      "source": "front",
+      "window": [22.70, 23.45],
+      "expected": "clear",
+      "human_verified": true,
+      "forbidden_lead_one_ids": [35],
+      "scene": "A centered stationary road reflection becomes a tentative moving front-radar track near the bumper and must not replace the far vision-matched leadOne through the closer-challenger path"
     }
   ]
 }

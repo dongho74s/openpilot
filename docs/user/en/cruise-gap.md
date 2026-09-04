@@ -5,7 +5,7 @@
 > [!NOTE]
 > This is the canonical English user guide maintained with the `carrot-wip` code. When user-visible behavior changes, update this document together with the related code and tests.
 
-This page explains all **30 cruise and following-gap settings** from the current implementation, including where each value enters the calculation and the direction of adjustment.
+This page explains all **31 cruise and following-gap settings** from the current implementation, including where each value enters the calculation and the direction of adjustment.
 
 Change them in **Carrot Web → Settings → Driving control → Cruise and following gap**.
 
@@ -34,7 +34,7 @@ Change them in **Carrot Web → Settings → Driving control → Cruise and foll
 
 The same symptom can therefore have different causes. A slow launch might come from the low-speed acceleration table, start acceleration-change cost, PID gains, or a vehicle limit.
 
-Catalog defaults and initial Params values currently differ for `CruiseMaxVals1` through `6`, `StopDistanceCarrot`, `LongTuningKf`, and `DynamicTFollowLC`. Use the value shown on your device as the baseline.
+Catalog defaults and initial Params values currently differ for `CruiseMaxVals1` through `6`, `StopDistanceCarrot`, and `DynamicTFollowLC`. Use the value shown on your device as the baseline.
 
 <a id="driving-mode"></a>
 ## 1. Driving mode
@@ -103,7 +103,7 @@ Range 400–1000 cm, step 10 cm. The code divides by 100 and uses it as the fixe
 
     ego braking distance + time gap × ego speed + StopDistance - lead braking distance
 
-It is therefore not the actual moving following distance. Its direct effect is clearest near zero speed behind a stopped lead. Although the catalog description says “stop position ×0.8,” the running code does not apply 0.8.
+It is therefore not the actual moving following distance. Its direct effect is clearest near zero speed behind a stopped lead. When there is no active `leadOne` but the camera model consistently associates a stationary vehicle with the E2E stop endpoint, the planner first corrects that endpoint toward the inferred vehicle position and then applies this fixed clearance. No SCC/radar object is created. Although the catalog description says “stop position ×0.8,” the running code does not apply 0.8.
 
 ### `StoppingAccel`
 
@@ -128,12 +128,12 @@ Range 0–200, step 10, catalog default 10. Zero permits the quickest accelerati
 <a id="longitudinal-tuning"></a>
 ## 4. Longitudinal tuning
 
-| Setting | Stored range (step) | Actual scale | Role |
-|---|---:|---:|---|
-| `LongTuningKpV` | 0–200 (5) | ×0.01 | Immediate proportional response |
-| `LongTuningKiV` | 0–2000 (1) | ×0.001 | Accumulated correction for persistent error |
-| `LongTuningKf` | 0–200 (5) | ×0.01 | Feedforward from target acceleration |
-| `LongActuatorDelay` | 0–200 (5) | ×0.01 s | How far ahead in the plan to compensate for response delay |
+| Setting | Default | Stored range (step) | Actual scale | Role |
+|---|---:|---:|---:|---|
+| `LongTuningKpV` | 100 | 0–200 (5) | ×0.01 | Immediate proportional response |
+| `LongTuningKiV` | 0 | 0–2000 (1) | ×0.001 | Accumulated correction for persistent error |
+| `LongTuningKf` | 100 | 0–200 (5) | ×0.01 | Feedforward from target acceleration |
+| `LongActuatorDelay` | 20 | 0–200 (5) | ×0.01 s | How far ahead in the plan to compensate for response delay |
 
 > [!IMPORTANT]
 > The displayed `LongTuningKiV` title says `×0.01`, but `longcontrol.py` currently applies **×0.001**. Stored `100` is Ki `0.100`, not `1.00`.
@@ -187,6 +187,8 @@ For a positive value of 20, the time gap is 80% of base at 0 km/h, 90% at 50 km/
 
 Negative modes build a speed table and then apply personality multipliers of ×1.0, ×1.3, ×1.6, and ×2.0. The result is clamped back to the four values' minimum/maximum, so large multipliers may stop near `TFollowGap4`.
 
+Selecting following-distance level 1 with `LeadAccelResponse=4` or `5` while tracking a lead is an exception. `TFollowGap1` takes priority over positive or negative `EnableSpeedTF` adjustments and Eco/Safe gap factors only while a stable radar lead is accelerating positively and the gap is opening. When lead acceleration falls to `0.1 m/s²` or below, the exception is removed immediately and normal gap control—including the existing TF increase ramp—and braking behavior resume. It does not change the no-lead cruise target; `TFollowDecelBoost`, lane-change, and `DynamicTFollow` adjustments can still apply.
+
 ### `DynamicTFollow`
 
 Range 0–100, step 1; zero disables it. It changes time gap from lead jerk `jLead`:
@@ -219,8 +221,36 @@ For a clean baseline, use `EnableSpeedTF=0`, `DynamicTFollow=0`, `DynamicTFollow
 
 | Setting | Range/scale | Role |
 |---|---|---|
+| `LeadAccelResponse` | 0–5, default 0 | Responsiveness to a lead starting or accelerating at following-distance level 1 |
 | `RadarReactionFactor` | 0–200%, default 100% | How long measured lead acceleration persists into the future |
 | `JLeadFactor3` | 0–100, ×0.01 | How much lead acceleration change enters future trajectory prediction |
+
+### `LeadAccelResponse`
+
+When the lead starts or accelerates and the gap begins to open, this setting samples a slightly later point in the MPC trajectory to raise the acceleration target. It operates **only with following-distance level 1 (aggressive/TF1)**. On openpilot-longitudinal vehicles that cannot report `pcmCruiseGap`, it uses the selected level-1 personality instead. Levels 3–5 continue responding when a stable radar lead remains present but MPC changes its source to `cruise`, progressively applying the speed-based `CruiseMaxVals` envelope to the acceleration target. The final command remains bounded by each mode's acceleration envelope, curve limit, cut-in pre-deceleration limit, and vehicle safety limits.
+
+| Value | UI meaning | Maximum preview | Maximum increase over base | Final acceleration envelope available with `cruise` source | Allowance inside target distance |
+|---:|---|---:|---:|---:|---:|
+| `0` | Disabled | None | None | None | None |
+| `1` | Gentle | 0.08 s | 0.08 m/s² | Disabled | 0 m |
+| `2` | Smooth | 0.15 s | 0.18 m/s² | Disabled | 0.75 m |
+| `3` | Balanced (recommended) | 0.28 s | 0.45 m/s² | Up to 55% | 2.0 m |
+| `4` | Strong gap control | 0.45 s | 0.65 m/s² | Up to 80% | 3.0 m |
+| `5` | Acceleration tracking (test) | 0.70 s | 0.80 m/s² | Up to 100% | Uses the prediction gates below instead |
+
+Levels 1–2 retain the gentle response. Level 3 is the everyday balance and may use up to 55% of the final `CruiseMaxVals` envelope with a `cruise` source. Level 4 prioritizes target-gap recovery, may use up to 80%, and uses the configured `TFollowGap1` as its base target; level 5 may use up to 100% and also raises up to `0.50 m/s²` of direct boost quickly. When this special response raises the base target, it uses the lower of measured lead acceleration plus `0.10/0.15/0.20 m/s²` and the base target plus `0.45/0.65/0.80 m/s²`, respectively, as an upper bound. These percentages are available ceilings, not fixed acceleration commands; speed error and every other gate can request less.
+
+A nonzero value responds only when all of these common gates pass:
+
+- The normal ACC planner is active, no stop is requested, and the driver is not pressing the accelerator.
+- The same radar track has been observed for at least three consecutive updates. Levels 1–2 require a radar-lead MPC source; levels 3–5 may also operate with a `cruise` source.
+- With a radar-lead source, levels 1–4 require relative lead acceleration above the `0.1 m/s²` deadband. Levels 3–5 with a `cruise` source, and level 5 with any source, require measured lead acceleration above `0.1 m/s²`.
+- Current relative speed plus predicted lead acceleration shows the lead pulling away while respecting the level-specific relative-speed floor.
+- A direct `cruise`-source target requires set speed to exceed current speed by more than `1 km/h`, and falls immediately as that speed error closes.
+
+Levels 1–4 also require the per-level distance allowance in the table and no current ego or base-MPC deceleration. With a radar-lead MPC source, levels 1–4 additionally require a preview target no lower than the base target. With a `cruise` source, levels 3–4 may use the direct target above instead so they can overcome a slow MPC acceleration ramp. Level 5 relaxes those three gates, but current relative speed must be at least `-0.2 m/s` and the gap must be predicted to open within 0.5 seconds. If measured lead acceleration falls to `0.1 m/s²` or below, the gap is predicted to close, or set-speed headroom disappears, the direct `cruise` target is removed immediately and normal MPC control resumes.
+
+Levels 1–3 do not change the target time gap. The level 4–5 exception that prioritizes the configured `TFollowGap1` as the base target applies only during positive lead acceleration; `DynamicTFollow` and lane-change corrections may still apply afterward. Lead-braking response and stopping behavior retain normal control at every level. Every level remains inactive with the experimental blended planner, a vision-only lead, and following-distance levels 2–4. Use level 5 only when you can verify that short-gap starts do not cause unwanted acceleration.
 
 ### `RadarReactionFactor`
 
@@ -237,7 +267,7 @@ The code smooths `jLead` as 10% new and 90% previous, multiplies by this percent
 > [!NOTE]
 > Even with `JLeadFactor3=0`, `DynamicTFollow` separately uses raw `jLead`. Check both settings when isolating jerk-related behavior.
 
-For a baseline, set dynamic following off, `JLeadFactor3=0`, and `RadarReactionFactor=100`. Change only one setting if response is consistently late, and restore immediately if surging appears.
+For a baseline, set `DynamicTFollow=0`, `LeadAccelResponse=0`, `JLeadFactor3=0`, and `RadarReactionFactor=100`. If only TF1 response to a lead starting or accelerating is late, raise `LeadAccelResponse` from level 1 one step at a time. Change only one setting at once, and restore immediately if surging or unintended acceleration appears.
 
 <a id="carrot-cruise"></a>
 ## 7. Carrot cruise
