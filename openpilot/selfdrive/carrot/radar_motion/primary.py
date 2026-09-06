@@ -76,6 +76,11 @@ STATIONARY_FRONT_POSITION_LOCK_MAX_DISTANCE_ERROR_M = 5.0
 STATIONARY_FRONT_POSITION_LOCK_MAX_YREL_ERROR_M = 1.25
 STATIONARY_FRONT_POSITION_LOCK_MAX_DPATH_M = 1.0
 STATIONARY_FRONT_POSITION_LOCK_MAX_ABS_YAW_RATE_RAD_S = 0.02
+# A separate measured moving target can disprove the velocity-error hypothesis.
+# Its range, lateral position, and speed must all agree with the current vision.
+STATIONARY_MOVING_VISION_MIN_SPEED_DELTA_MPS = 6.0
+STATIONARY_MOVING_VISION_MAX_SPEED_ERROR_MPS = 2.5
+STATIONARY_MOVING_VISION_MAX_YREL_ERROR_M = 1.25
 STATIONARY_TURN_FRONT_MIN_ABS_YAW_RATE_RAD_S = 0.02
 STATIONARY_TURN_FRONT_FAST_VISION_SPEED_DELTA_MPS = 6.0
 STATIONARY_TURN_FRONT_FAST_VISION_MAX_YREL_ERROR_M = 1.25
@@ -90,16 +95,12 @@ STATIONARY_HELD_FRONT_DEPARTURE_DPATH_M = STATIONARY_FRESH_MAX_DPATH_M
 STATIONARY_HELD_FRONT_DEPARTURE_CONFIRMATION_S = 0.25
 STATIONARY_RADAR_ONLY_HELD_MAX_DPATH_M = 1.2
 STATIONARY_RADAR_ONLY_CORNER_MAX_DPATH_M = 0.50
-STATIONARY_RADAR_ONLY_FRONT_MIN_ACQUISITION_DREL_M = 60.0
-STATIONARY_RADAR_ONLY_FRONT_MIN_OBSERVED_S = 1.0
 STATIONARY_RADAR_ONLY_FRONT_MIN_TRACK_STATE = 2
 STATIONARY_RADAR_ONLY_FRONT_FAR_DREL_M = 80.0
 STATIONARY_RADAR_ONLY_FRONT_NEAR_MAX_DPATH_M = 1.1
 STATIONARY_RADAR_ONLY_FRONT_FAR_MAX_DPATH_M = 1.5
 STATIONARY_RADAR_ONLY_FRONT_MAX_PATH_Y_OFFSET_M = 1.5
 STATIONARY_RADAR_ONLY_FRONT_MAX_ABS_YAW_RATE_RAD_S = 0.02
-STATIONARY_RADAR_ONLY_FRONT_DUPLICATE_MAX_DREL_M = 2.0
-STATIONARY_RADAR_ONLY_FRONT_DUPLICATE_MAX_VLEAD_MPS = 2.0
 # A stopped vehicle first seen only by corner radar at close range is
 # indistinguishable from a curb, pole, or road-edge reflection that sweeps
 # through the curved model path. Real stopped leads normally have already
@@ -1043,9 +1044,7 @@ class VisionRadarMatcher:
   def _stationary_radar_only_initial_projection_points(
     self,
     points: Sequence[RadarPointSnapshot],
-    path: Sequence[tuple[float, float]],
     time_s: float,
-    yaw_rate_rad_s: float,
   ) -> tuple[RadarPointSnapshot, ...]:
     """Project trusted sources and identities before front corroboration."""
     retained_identities = {
@@ -1074,80 +1073,13 @@ class VisionRadarMatcher:
         continue
       if point.source != "frontRadar":
         continue
-      cross_source_continuous = self._stationary_cross_source_continuous(
-        point, time_s,
-      )
-      duplicate_front_return = any(
-        other.source == "frontRadar"
-        and self._identity(other) != identity
-        and other.measured
-        and abs(other.v_lead) <= STATIONARY_MAX_ABS_VLEAD_MPS
-        and abs(point.d_rel - other.d_rel)
-        <= STATIONARY_RADAR_ONLY_FRONT_DUPLICATE_MAX_DREL_M
-        and abs(point.v_lead - other.v_lead)
-        <= STATIONARY_RADAR_ONLY_FRONT_DUPLICATE_MAX_VLEAD_MPS
-        for other in points
-      )
-      observed_since_s = self._observed_since_s.get(identity)
-      if (
-        not cross_source_continuous
-        and (
-          duplicate_front_return
-          or not point.measured
-          or point.radar_track_state
-          < STATIONARY_RADAR_ONLY_FRONT_MIN_TRACK_STATE
-          or point.d_rel
-          < STATIONARY_RADAR_ONLY_FRONT_MIN_ACQUISITION_DREL_M
-          or abs(point.v_lead) > STATIONARY_MAX_ABS_VLEAD_MPS
-          or abs(yaw_rate_rad_s)
-          >= STATIONARY_RADAR_ONLY_FRONT_MAX_ABS_YAW_RATE_RAD_S
-          or observed_since_s is None
-          or time_s - observed_since_s
-          < STATIONARY_RADAR_ONLY_FRONT_MIN_OBSERVED_S
-        )
-      ):
-        continue
-      d_path = project_to_model_path(
-        path, point.d_rel, point.y_rel,
-      ).d_path
-      if (
-        cross_source_continuous
-        or self._stationary_front_radar_only_acquisition_allowed(
-          point, d_path, time_s, yaw_rate_rad_s,
-        )
-      ):
+      # A stationary reflector can be central, high quality, and continuously
+      # measured for seconds. None of those observations confirms a vehicle.
+      # Fresh front points enter below only when a central corner return can
+      # corroborate them; established cross-sensor handoffs remain eligible.
+      if self._stationary_cross_source_continuous(point, time_s):
         projection_points.append(point)
     return tuple(projection_points)
-
-  def _stationary_front_radar_only_acquisition_allowed(
-    self,
-    point: RadarPointSnapshot,
-    d_path: float,
-    time_s: float,
-    yaw_rate_rad_s: float,
-  ) -> bool:
-    observed_since_s = self._observed_since_s.get(self._identity(point))
-    d_path_limit = (
-      STATIONARY_RADAR_ONLY_FRONT_FAR_MAX_DPATH_M
-      if point.d_rel >= STATIONARY_RADAR_ONLY_FRONT_FAR_DREL_M
-      else STATIONARY_RADAR_ONLY_FRONT_NEAR_MAX_DPATH_M
-    )
-    return bool(
-      point.source == "frontRadar"
-      and point.measured
-      and point.radar_track_state
-      >= STATIONARY_RADAR_ONLY_FRONT_MIN_TRACK_STATE
-      and point.d_rel >= STATIONARY_RADAR_ONLY_FRONT_MIN_ACQUISITION_DREL_M
-      and abs(point.v_lead) <= STATIONARY_MAX_ABS_VLEAD_MPS
-      and abs(d_path) <= d_path_limit
-      and abs(point.y_rel - d_path)
-      <= STATIONARY_RADAR_ONLY_FRONT_MAX_PATH_Y_OFFSET_M
-      and abs(yaw_rate_rad_s)
-      < STATIONARY_RADAR_ONLY_FRONT_MAX_ABS_YAW_RATE_RAD_S
-      and observed_since_s is not None
-      and time_s - observed_since_s
-      >= STATIONARY_RADAR_ONLY_FRONT_MIN_OBSERVED_S
-    )
 
   @staticmethod
   def _stationary_radar_only_corroborating_front_points(
@@ -1619,29 +1551,80 @@ class VisionRadarMatcher:
       / STATIONARY_FRONT_POSITION_LOCK_MAX_DPATH_M
     )
 
+  def _stationary_front_moving_vision_conflicts(
+    self,
+    vision: VisionLead | None,
+    points: Sequence[RadarPointSnapshot],
+    path: Sequence[tuple[float, float]],
+    time_s: float | None,
+  ) -> set[tuple[str, int]]:
+    """Do not lend one moving vehicle's vision to a stationary reflection."""
+    if (
+      vision is None
+      or vision.probability < STATIONARY_VISION_MIN_PROB
+      or time_s is None
+      or not math.isfinite(time_s)
+    ):
+      return set()
+    stationary_fronts = tuple(
+      point for point in points
+      if point.source == "frontRadar"
+      and abs(point.v_lead) <= STATIONARY_MAX_ABS_VLEAD_MPS
+      and abs(point.v_lead - vision.velocity)
+      > STATIONARY_MOVING_VISION_MIN_SPEED_DELTA_MPS
+    )
+    if not stationary_fronts:
+      return set()
+    moving_support = any(
+      point.measured
+      and 0.5 < point.d_rel < 180.0
+      and (point.source in PRIMARY_RADAR_SOURCES or point.source.startswith("corner"))
+      and point.v_lead > STATIONARY_MAX_ABS_VLEAD_MPS
+      and abs(point.v_lead - vision.velocity)
+      <= STATIONARY_MOVING_VISION_MAX_SPEED_ERROR_MPS
+      and abs(point.d_rel - vision.d_rel) <= VISION_RADAR_MAX_DISTANCE_ERROR_M
+      and abs(point.y_rel - vision.y_rel) <= STATIONARY_MOVING_VISION_MAX_YREL_ERROR_M
+      and time_s - self._observed_since_s.get(self._identity(point), time_s)
+      >= VISION_CORROBORATED_MIN_OBSERVED_S
+      and abs(project_to_model_path(path, point.d_rel, point.y_rel).d_path)
+      <= VISION_MATCH_FRESH_MAX_DPATH_M
+      for point in points
+    )
+    if not moving_support:
+      return set()
+    independently_supported = {
+      self._identity(front)
+      for front, _, _, _ in self._stationary_front_corner_pairs(points, path)
+    }
+    return {
+      self._identity(point) for point in stationary_fronts
+      if self._identity(point) not in independently_supported
+    }
+
   def _stationary_radar_only_support(
     self,
     candidates: Sequence[
       tuple[RadarPointSnapshot, float]
     ],
-    time_s: float,
     yaw_rate_rad_s: float,
   ) -> list[tuple[RadarPointSnapshot, float, float]]:
-    """Trust central corroborated sources and long-observed front returns."""
+    """Require independent corner support for a fresh no-vision front lead."""
     front = tuple(
       candidate
       for candidate in candidates
       if candidate[0].source == "frontRadar"
+    )
+    central_corners = tuple(
+      point for point, d_path in candidates
+      if point.source.startswith("corner")
+      and point.measured
+      and abs(d_path) <= STATIONARY_RADAR_ONLY_CORNER_MAX_DPATH_M
     )
     supported: list[
       tuple[RadarPointSnapshot, float, float]
     ] = []
     for point, d_path in candidates:
       if point.source == "frontRadar":
-        retained = self._identity(point) in (
-          self.stationary_identity,
-          self._stationary_pending_identity,
-        )
         d_path_limit = (
           STATIONARY_RADAR_ONLY_FRONT_FAR_MAX_DPATH_M
           if point.d_rel >= STATIONARY_RADAR_ONLY_FRONT_FAR_DREL_M
@@ -1658,11 +1641,9 @@ class VisionRadarMatcher:
           and abs(yaw_rate_rad_s)
           < STATIONARY_RADAR_ONLY_FRONT_MAX_ABS_YAW_RATE_RAD_S
         )
-        if front_quality_valid and (
-          retained
-          or self._stationary_front_radar_only_acquisition_allowed(
-            point, d_path, time_s, yaw_rate_rad_s,
-          )
+        if front_quality_valid and any(
+          self._stationary_cross_source_equivalent(point, corner)
+          for corner in central_corners
         ):
           supported.append((
             point,
@@ -2026,6 +2007,8 @@ class VisionRadarMatcher:
         >= STATIONARY_RADAR_ONLY_FRONT_MIN_TRACK_STATE
         and point.d_rel < vision.d_rel
         and abs(point.v_lead) <= STATIONARY_MAX_ABS_VLEAD_MPS
+        and abs(point.v_lead - vision.velocity)
+        <= STATIONARY_MAX_VISION_SPEED_DELTA_MPS
         and abs(project_to_model_path(
           path, point.d_rel, point.y_rel,
         ).d_path) <= (
@@ -2064,7 +2047,7 @@ class VisionRadarMatcher:
       tuple(eligible_points)
       if strong_vision
       else self._stationary_radar_only_initial_projection_points(
-        eligible_points, path, time_s, yaw_rate_rad_s,
+        eligible_points, time_s,
       )
     )
     candidate_values: list[tuple[RadarPointSnapshot, float]] = []
@@ -2130,8 +2113,9 @@ class VisionRadarMatcher:
       for point in self._stationary_radar_only_corroborating_front_points(
         eligible_points, candidate_values,
       ):
-        # A fresh no-vision front point cannot become stationary leadOne. Its
-        # exact projection is needed only to rank a central corner return.
+        # Project only front points near a measured central corner. Admission
+        # still requires the same object's range, lateral position, and speed
+        # to agree throughout stationary confirmation.
         append_projected_candidate(point)
     if (
       prefer_corner
@@ -2214,7 +2198,6 @@ class VisionRadarMatcher:
     else:
       supported = self._stationary_radar_only_support(
         candidate_values,
-        time_s,
         yaw_rate_rad_s,
       )
       weak_pair_supported = self._stationary_weak_vision_pair_support(
@@ -2225,7 +2208,7 @@ class VisionRadarMatcher:
       )
       if weak_pair_supported:
         supported = weak_pair_supported
-      if not weak_pair_supported and any(
+      if not prefer_primary and not weak_pair_supported and any(
         point.source.startswith("corner")
         for point, _, _ in supported
       ):
@@ -2234,13 +2217,17 @@ class VisionRadarMatcher:
           for candidate in supported
           if candidate[0].source.startswith("corner")
         ]
-    corner_supported = any(
-      point.source.startswith("corner")
-      for point, _, _ in supported
-    ) or any(
-      self._identity(point) in cross_source_front_support_by_identity
-      for point, _, _ in supported
-    )
+    corner_supported_identities = {
+      self._identity(point) for point, _, _ in supported
+      if point.source.startswith("corner")
+      or (
+        point.source == "frontRadar"
+        and (
+          not strong_vision  # Radar-only front support already requires its own corner.
+          or self._identity(point) in front_corner_pair_identities
+        )
+      )
+    }
     if allowed_output_sources is not None:
       candidate_values = [
         candidate for candidate in candidate_values
@@ -2270,7 +2257,7 @@ class VisionRadarMatcher:
       tuple[RadarPointSnapshot, float, float] | None
     ) = None
     if self.stationary_identity is not None:
-      if corner_supported:
+      if self.stationary_identity in corner_supported_identities:
         self._stationary_corner_supported = True
       supported_with_hold = tuple(
         (
@@ -2383,6 +2370,7 @@ class VisionRadarMatcher:
           return None
 
       selected_identity = self._identity(selected[0])
+      corner_supported = selected_identity in corner_supported_identities
       selected_has_current_support = any(
         self._identity(point) == selected_identity
         for point, _, _ in supported
@@ -2486,7 +2474,12 @@ class VisionRadarMatcher:
         and not self._stationary_corner_supported
         and not pending_measurement_held
       ):
-        self._stationary_pending_vision_support_frames = 0
+        # Once the bounded support gap expires, a later visual glimpse must
+        # start its own confirmation dwell. Keeping the old start time while
+        # resetting only the frame count approves three fresh frames in about
+        # 0.10 s after an arbitrarily long unsupported interval.
+        self._reset_stationary()
+        return None
       self._stationary_last_point = selected[0]
       self._stationary_last_time_s = time_s
       required_support_frames = (
@@ -2518,6 +2511,14 @@ class VisionRadarMatcher:
 
     point, d_path, score = selected
     selected_identity = self._identity(point)
+    if selected_identity != self.stationary_identity:
+      self._stationary_corner_supported = (
+        selected_identity in corner_supported_identities
+        or (
+          self._stationary_corner_supported
+          and self._stationary_cross_source_continuous(point, time_s)
+        )
+      )
     selected_has_current_vision_support = (
       strong_vision
       and any(
@@ -3308,6 +3309,7 @@ class VisionRadarMatcher:
     self._stationary_last_point = match.point
     self._stationary_last_time_s = time_s
     self._stationary_seed_probability = vision.probability
+    self._stationary_corner_supported = False
     base_cost = self._stationary_vision_base_cost(vision, match.point)
     self._stationary_seed_score = (
       base_cost if base_cost is not None else max(0.0, 1.0 - match.score)
@@ -3394,6 +3396,28 @@ class VisionRadarMatcher:
       for identity in stale_identities:
         self._observed_since_s.pop(identity, None)
         self._observed_last_s.pop(identity, None)
+    conflicting_fronts = self._stationary_front_moving_vision_conflicts(
+      vision, stationary_values, path, time_s,
+    )
+    if conflicting_fronts:
+      # Filter every admission path, including pending/dropout holds and the
+      # ordinary matcher. A closer high-quality return does not override
+      # independent evidence that vision belongs to a different moving object.
+      point_values = tuple(
+        point for point in point_values
+        if self._identity(point) not in conflicting_fronts
+      )
+      stationary_values = tuple(
+        point for point in stationary_values
+        if self._identity(point) not in conflicting_fronts
+      )
+      if (
+        self.stationary_identity in conflicting_fronts
+        or self._stationary_pending_identity in conflicting_fronts
+      ):
+        self._reset_stationary()
+      if self.last_identity in conflicting_fronts:
+        self._reset_moving()
     stationary = self._match_stationary(
       vision,
       stationary_values,
