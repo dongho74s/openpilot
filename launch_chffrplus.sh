@@ -28,6 +28,27 @@ function cleanup_stale_git_lfs_hooks {
   done
 }
 
+function install_runtime_python_package {
+  # uv-created Ubuntu environments may intentionally have no pip module. Use
+  # the launcher's interpreter and pydeps target with either installer.
+  if python3 -m pip --version > /dev/null 2>&1; then
+    python3 -m pip install --disable-pip-version-check --no-input --timeout 15 --retries 2 \
+      --target "$PYDEPS" --upgrade "$@"
+  elif command -v uv > /dev/null 2>&1; then
+    UV_HTTP_TIMEOUT=15 UV_HTTP_RETRIES=2 uv pip install --python "$(command -v python3)" --no-python-downloads \
+      --target "$PYDEPS" --upgrade "$@"
+  else
+    echo "pip is missing; attempting to bootstrap it with ensurepip."
+    if python3 -m ensurepip --upgrade && python3 -m pip --version > /dev/null 2>&1; then
+      python3 -m pip install --disable-pip-version-check --no-input --timeout 15 --retries 2 \
+        --target "$PYDEPS" --upgrade "$@"
+    else
+      echo "No Python package installer is available. Run tools/setup.sh to prepare the Ubuntu environment."
+      return 1
+    fi
+  fi
+}
+
 function ensure_python_package {
   local import_name="$1"
   local package_name="$2"
@@ -42,9 +63,9 @@ function ensure_python_package {
 
   echo "${package_name} installing from local wheel."
   if [ "$install_dependencies" = "1" ]; then
-    python3 -m pip install --no-index --find-links "$wheel_dir" --target "$PYDEPS" --upgrade "$package_name"
+    install_runtime_python_package --no-index --find-links "$wheel_dir" "$package_name"
   else
-    python3 -m pip install --no-index --no-deps --find-links "$wheel_dir" --target "$PYDEPS" --upgrade "$package_name"
+    install_runtime_python_package --no-index --no-deps --find-links "$wheel_dir" "$package_name"
   fi
   if [ "$?" = "0" ] && \
      python3 -c "import ${import_name}" > /dev/null 2>&1; then
@@ -52,6 +73,20 @@ function ensure_python_package {
     return 0
   fi
 
+  # Bundled native wheels target AGNOS/aarch64. Desktop Ubuntu may need wheels
+  # for another architecture or Python version; allow its installer to fetch
+  # compatible packages and dependencies. Vehicle startup stays offline.
+  if [ ! -f /TICI ] && [ ! -f /AGNOS ]; then
+    echo "${package_name} local installation failed; trying the online package index."
+    if install_runtime_python_package "$package_name" && \
+       python3 -c "import ${import_name}" > /dev/null 2>&1; then
+      echo "${package_name} installed."
+      return 0
+    fi
+  fi
+
+  # Keep the actual import error visible when installation could not repair it.
+  python3 -c "import ${import_name}" >&2
   if [ "$required" = "1" ]; then
     echo "Required Python package ${package_name} is unavailable; not starting openpilot."
     return 1
@@ -75,6 +110,12 @@ function bootstrap_runtime_dependencies {
 
   ensure_python_package brotli brotli 0
   ensure_python_package usb pyusb 0
+
+  # Xiaoge lane/BSD inference uses a pinned, bundled OpenCV wheel. Keep NumPy
+  # from AGNOS and install only into pydeps, never the read-only system venv.
+  # Prepare it even when ShareData is off so the settings toggle works offline.
+  ensure_python_package "cv2; assert cv2.__version__ == '4.13.0'; assert hasattr(cv2.dnn, 'readNetFromONNX')" \
+    "opencv-python-headless==4.13.0.92" 0
 
   # AGNOS 19 follows current comma, which no longer includes the legacy Eigen
   # and libjpeg wrappers used by this branch's rednose and JPEG encoder. Keep
@@ -179,7 +220,6 @@ function start_carrot_recovery {
 }
 
 function start_carrot_web {
-  export CARROT_WEB_EXTERNAL="${CARROT_WEB_EXTERNAL:-1}"
   [ "$CARROT_WEB_EXTERNAL" = "1" ] || return
 
   local watchdog_script="$DIR/scripts/carrot_web_watchdog.sh"
@@ -310,11 +350,32 @@ function invalidate_native_build_if_needed {
   fi
 }
 
-function launch {
-  cleanup_stale_git_lfs_hooks
+function start_manager {
+  # A warm start or a long build can leave the launcher on an isolated CPU.
+  # Set the manager's initial mask before Python creates threads or forks:
+  # ordinary services share CPUs 0-5; camera/model/control keep their explicit
+  # affinity overrides. The compiler can still use all eight CPUs separately.
+  if [ -f /AGNOS ]; then
+    taskset -c 0-5 ./manager.py
+  else
+    ./manager.py
+  fi
+}
 
-  # Remove orphaned git lock if it exists on boot
-  [ -f "$DIR/.git/index.lock" ] && rm -f $DIR/.git/index.lock
+function launch {
+  # Protect the checkout throughout bootstrap, SCons and manager initialization.
+  # The manager releases this inherited flock after init; background web/recovery
+  # servers must not inherit it. Never delete the lock file itself.
+  export CARROT_REPO_LOCK_PATH="${CARROT_REPO_LOCK_PATH:-/tmp/carrot_repo_update.lock}"
+  exec 9>"$CARROT_REPO_LOCK_PATH"
+  if ! flock -w 300 9; then
+    echo "Another repository operation is still running; launch deferred."
+    exec 9>&-
+    start_carrot_recovery
+    while true; do sleep 1; done
+  fi
+  export CARROT_BOOT_LOCK_FD=9
+  cleanup_stale_git_lfs_hooks
 
   # Check to see if there's a valid overlay-based update available. Conditions
   # are as follows:
@@ -364,11 +425,16 @@ function launch {
   if [ "$(cat /data/params/d/SshEnabled 2>/dev/null)" != "1" ]; then
     echo -n 1 > /data/params/d/SshEnabled
   fi
-  start_carrot_recovery
+  (
+    exec 9>&-
+    unset CARROT_BOOT_LOCK_FD
+    start_carrot_recovery
+  )
 
   # hardware specific init
   if [ -f /AGNOS ]; then
     if ! agnos_init; then
+      flock -u 9
       while true; do sleep 1; done
     fi
   fi
@@ -377,16 +443,26 @@ function launch {
   # imports native dependency modules while building Params, so bootstrap them
   # before the first SCons invocation.
   if ! bootstrap_runtime_dependencies; then
+    flock -u 9
     while true; do sleep 1; done
   fi
 
   # Build Params before any long-running carrot service imports it.
   if ! bash "$DIR/scripts/ensure_params_build.sh"; then
     echo "Params registry build failed, not starting openpilot."
+    flock -u 9
     while true; do sleep 1; done
   fi
 
-  start_carrot_web
+  # Export in the parent so manager also knows the external watchdog owns the
+  # web server. An export inside the subshell never reaches manager and causes
+  # a second carrot_server to crash repeatedly on the occupied port 7000.
+  export CARROT_WEB_EXTERNAL="${CARROT_WEB_EXTERNAL:-1}"
+  (
+    exec 9>&-
+    unset CARROT_BOOT_LOCK_FD
+    start_carrot_web
+  )
 
 
   FORCE_REBUILD=0
@@ -403,6 +479,7 @@ function launch {
   if [ "$FORCE_REBUILD" = "1" ] || [ ! -f $DIR/prebuilt ]; then
     if ! ./build.py; then
       echo "openpilot build failed, not starting manager."
+      flock -u 9
       while true; do sleep 1; done
     fi
     if [ "$FORCE_REBUILD" = "1" ]; then
@@ -414,7 +491,10 @@ function launch {
     fi
   fi
   start_big_model_update
-  ./manager.py
+  start_manager
+  # Also release if manager failed before reaching main()/initialization.
+  flock -u 9
+  exec 9>&-
 
   # if broken, keep on screen error
   while true; do sleep 1; done

@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from openpilot.cereal import log
@@ -33,33 +31,53 @@ def test_gap_reduction_remains_immediate():
   assert ramp_t_follow(1.1, 1.6, 0.0, DT_MDL) == pytest.approx(1.1)
 
 
-def test_lane_change_response_scales_gap_and_jerk_for_first_1_5_seconds():
-  planner = CarrotPlanner.__new__(CarrotPlanner)
-  planner.desireState = 1.0
-  planner.desireStateCount = 1
-  planner.dynamicTFollowLC = 0.8
-  planner.jerk_factor = 0.7
-  planner.t_follow_last = 1.3
-  planner._tf_decel_extra = 0.0
-
-  lead = SimpleNamespace(status=True, jLead=2.0)
-  assert planner.dynamic_t_follow(1.3, lead, 0.0, 0.0) == pytest.approx(1.04)
-  assert planner.jerk_factor_apply == pytest.approx(0.56)
+@pytest.mark.parametrize("lane_change", [True, False])
+def test_gap_stays_at_baseline_without_dynamic_jerk_adjustment(lane_change):
+  planner = _speed_tf_planner(0, 1.3)
+  planner.enableSpeedTF = 0
+  planner.myTFollowFactor = 1.0
+  planner.tFollowGap1 = planner.tFollowGap2 = planner.tFollowGap3 = planner.tFollowGap4 = 1.3
+  planner.lane_change_active = lane_change
+  for _ in range(100):
+    assert planner.get_T_FOLLOW(v_ego=15., a_ego=0.) == pytest.approx(1.3)
+    assert planner.t_follow_last == pytest.approx(1.3)
 
 
-def test_dynamic_lead_acceleration_response_closes_gap_more_quickly():
-  planner = CarrotPlanner.__new__(CarrotPlanner)
-  planner.desireState = 0.0
-  planner.desireStateCount = 0
-  planner.dynamicTFollow = 0.2
-  planner.dynamicTFollowLC = 1.0
-  planner.jerk_factor = 0.7
-  planner.t_follow_last = 1.3
-  planner._tf_decel_extra = 0.0
+@pytest.mark.parametrize("boost", [5, 20, 50, 100])
+def test_decel_boost_is_added_once_even_in_sustained_braking(boost):
+  planner = _speed_tf_planner(0, 1.2)
+  planner.enableSpeedTF = 0
+  planner.myTFollowFactor = 1.
+  planner.tFollowGap2 = 1.2
+  planner.tFollowGap4 = 1.8
+  planner.tFollowDecelBoost = boost / 100.
+  values = [planner.get_T_FOLLOW(v_ego=15., a_ego=-1.) for _ in range(200)]
+  assert max(values) == pytest.approx(1.2 + .25 * boost / 100.)
+  assert planner._tf_decel_base == pytest.approx(1.2)
 
-  lead = SimpleNamespace(status=True, jLead=2.0)
-  assert planner.dynamic_t_follow(1.3, lead, 0.0, 0.0) == pytest.approx(1.1)
-  assert planner.jerk_factor_apply == pytest.approx(0.35)
+
+def test_boost_release_does_not_drop_target_gap_in_one_cycle():
+  planner = _speed_tf_planner(0, 1.2)
+  planner.enableSpeedTF = 0
+  planner.myTFollowFactor = 1.
+  planner.tFollowGap2 = 1.2
+  planner.tFollowGap4 = 1.8
+  planner.tFollowDecelBoost = 1.
+  for _ in range(100):
+    before = planner.get_T_FOLLOW(v_ego=15., a_ego=-1.)
+  assert before == pytest.approx(1.45)
+  after = planner.get_T_FOLLOW(v_ego=15., a_ego=0.)
+  assert after == pytest.approx(before - .005)
+  for _ in range(100):
+    after = planner.get_T_FOLLOW(v_ego=15., a_ego=0.)
+  assert after == pytest.approx(1.2)
+
+
+def test_increased_braking_margin_is_not_delayed_by_release_filter():
+  planner = _speed_tf_planner(0, 1.2)
+  planner.tFollowDecelBoost = 1.
+  planner._apply_decel_hold_and_boost_t_follow(1.2, -0.3)
+  assert planner._apply_decel_hold_and_boost_t_follow(1.2, -2.5) == pytest.approx(1.7)
 
 
 @pytest.mark.parametrize(
@@ -112,6 +130,7 @@ def test_safe_t_follow_does_not_compound_during_repeated_deceleration():
   planner.tFollowGap3 = 0.8
   planner.tFollowGap4 = 1.2
   planner.tFollowDecelBoost = 0.0
+  planner.leadAccelResponse = 0
   planner.myDrivingMode = DrivingMode.Safe
   planner.myTFollowFactor = 1.2
   planner._tf_decel_extra = 0.0
@@ -201,13 +220,65 @@ def test_level_five_acceleration_end_uses_existing_gap_increase_ramp():
   ) == pytest.approx(0.415)
 
 
-def test_level_five_does_not_force_gap_one_for_other_personalities():
-  planner = _speed_tf_planner(lead_accel_response=5, applied_t_follow=0.936)
+GAP_CASES = [
+  (log.LongitudinalPersonality.aggressive, 0.4, 1.0),
+  (log.LongitudinalPersonality.standard, 0.6, 1.3),
+  (log.LongitudinalPersonality.relaxed, 0.8, 1.6),
+  (log.LongitudinalPersonality.moreRelaxed, 1.2, 2.0),
+]
+
+
+@pytest.mark.parametrize(("personality", "configured_tf", "speed_factor"), GAP_CASES)
+@pytest.mark.parametrize("level", [4, 5])
+@pytest.mark.parametrize("speed_tf", [-3, 0, 30])
+def test_strong_response_uses_each_selected_gap(personality, configured_tf, speed_factor, level, speed_tf):
+  planner = _speed_tf_planner(lead_accel_response=level, applied_t_follow=1.44)
+  planner.enableSpeedTF = speed_tf
 
   assert planner.get_T_FOLLOW(
-    log.LongitudinalPersonality.standard, v_ego=50.0 / 3.6, a_ego=0.0,
+    personality, v_ego=50.0 / 3.6, a_ego=0.0,
     lead_status=True, lead_accel=0.5,
-  ) == pytest.approx(0.936)
+  ) == pytest.approx(configured_tf)
+  assert planner.jerk_factor == 1.0  # Safe mode base jerk is refreshed for the selected gap.
+
+
+@pytest.mark.parametrize(("personality", "configured_tf", "speed_factor"), GAP_CASES)
+@pytest.mark.parametrize("level", [0, 1, 2, 3])
+def test_mild_response_keeps_normal_tf_at_every_gap(personality, configured_tf, speed_factor, level):
+  normal_tf = 0.6 * speed_factor * 1.2
+  planner = _speed_tf_planner(lead_accel_response=level, applied_t_follow=normal_tf)
+
+  assert planner.get_T_FOLLOW(
+    personality, v_ego=50.0 / 3.6, a_ego=0.0,
+    lead_status=True, lead_accel=0.5,
+  ) == pytest.approx(normal_tf)
+
+
+@pytest.mark.parametrize(("personality", "configured_tf", "speed_factor"), GAP_CASES)
+@pytest.mark.parametrize("level", [4, 5])
+@pytest.mark.parametrize(("lead_status", "lead_accel"), [
+  (False, 0.5), (True, 0.1), (True, 0.0), (True, -0.5), (True, float("nan")),
+])
+def test_all_gaps_restore_normal_tf_without_accelerating_lead(personality, configured_tf, speed_factor,
+                                                             level, lead_status, lead_accel):
+  normal_tf = 0.6 * speed_factor * 1.2
+  planner = _speed_tf_planner(lead_accel_response=level, applied_t_follow=normal_tf)
+
+  assert planner.get_T_FOLLOW(
+    personality, v_ego=50.0 / 3.6, a_ego=0.0,
+    lead_status=lead_status, lead_accel=lead_accel,
+  ) == pytest.approx(normal_tf)
+
+
+@pytest.mark.parametrize(("personality", "configured_tf", "speed_factor"), GAP_CASES)
+def test_all_gaps_preserve_deceleration_hold(personality, configured_tf, speed_factor):
+  normal_tf = 0.6 * speed_factor * 1.2
+  planner = _speed_tf_planner(lead_accel_response=5, applied_t_follow=normal_tf)
+
+  assert planner.get_T_FOLLOW(
+    personality, v_ego=50.0 / 3.6, a_ego=-1.0,
+    lead_status=True, lead_accel=0.5,
+  ) == pytest.approx(normal_tf)
 
 
 def test_level_five_tf1_does_not_change_cruise_target_without_a_lead():
