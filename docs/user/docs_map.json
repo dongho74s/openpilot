@@ -108,6 +108,7 @@
       "code_paths": [
         "openpilot/selfdrive/carrot/carrot_functions.py",
         "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
+        "openpilot/selfdrive/controls/lib/longitudinal_preview.py",
         "openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py",
         "openpilot/selfdrive/controls/lib/longcontrol.py"
       ],
@@ -200,6 +201,21 @@
         [
           "docs/user/ko/radar.md",
           "docs/user/en/radar.md"
+        ]
+      ]
+    },
+    {
+      "id": "gm-vehicle-integration",
+      "description": "GM vehicle CAN compatibility and driver-control inputs",
+      "code_paths": [
+        "opendbc_repo/opendbc/car/gm/**",
+        "opendbc_repo/opendbc/safety/safety/safety_gm.h",
+        "opendbc_repo/opendbc/safety/tests/test_gm.py"
+      ],
+      "doc_sets": [
+        [
+          "docs/user/ko/cruise-gap.md",
+          "docs/user/en/cruise-gap.md"
         ]
       ]
     },

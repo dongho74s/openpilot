@@ -1,49 +1,93 @@
 from __future__ import annotations
 
 from collections import deque
+from statistics import median
 
 import numpy as np
 
 
-# Pull the virtual stop line toward the car at speed so the stationary-obstacle
-# constraint starts the stop before the model endpoint becomes urgent. Preserve
-# the historical high-speed correction, but fade it out inside 50 m so the final
-# stopping position remains model-based.
-TRAFFIC_STOP_DISTANCE_RATIO_SPEED_BP_KPH = (0.0, 100.0)
-TRAFFIC_STOP_DISTANCE_RATIO = (1.0, 0.7)
-TRAFFIC_STOP_DISTANCE_FADE_BP_M = (0.0, 50.0)
 TRAFFIC_STOP_ENTRY_STEERING_LIMIT_DEG = 50.0
-TRAFFIC_STOP_SOFT_DECEL_MPS2 = 2.2
-TRAFFIC_STOP_MAX_DECEL_MPS2 = 4.0
-TRAFFIC_STOP_RESPONSE_TIME_S = 0.5
-TRAFFIC_STOP_DISTANCE_UNCERTAINTY_M = 5.0
-TRAFFIC_STOP_DECEL_SAFETY_BUFFER_MPS2 = 0.2
-TRAFFIC_STOP_DECEL_URGENCY_BP_MPS2 = (4.0, 5.0)
-TRAFFIC_STOP_DISTANCE_STABILITY_SAMPLES = 8  # 0.4 s at the 20 Hz model rate
+MODEL_LEAD_STOP_OFFSET_M = 2.0
+MODEL_LEAD_STOP_CONFIRM_FRAMES = 5
+MODEL_LEAD_STOP_PROBABILITY_MIN = 0.90
+MODEL_LEAD_STOP_DISTANCE_MIN_M = 4.0
+MODEL_LEAD_STOP_DISTANCE_MAX_M = 80.0
+MODEL_LEAD_STOP_GAP_MIN_M = 0.0
+MODEL_LEAD_STOP_GAP_MAX_M = 3.0
+MODEL_LEAD_STOP_SPEED_MAX_MPS = 2.0
+MODEL_LEAD_STOP_X_STD_MAX_M = 5.0
+MODEL_LEAD_STOP_Y_STD_MAX_M = 0.75
+MODEL_LEAD_STOP_V_STD_MAX_MPS = 1.5
 
 
-class TrafficStopDistanceTracker:
-  """Hold transient near stop-line estimates while accounting for ego motion."""
+class TrafficStopModelLeadMatcher:
+  """Recognize when an E2E stop point belongs to a stationary model lead.
 
-  def __init__(self, sample_count: int = TRAFFIC_STOP_DISTANCE_STABILITY_SAMPLES):
-    self._world_candidates = deque(maxlen=max(1, int(sample_count)))
-    self._distance_traveled = 0.0
+  The driving model normally places its ego stop endpoint about 2 m behind a
+  queued vehicle.  Once that relationship is stable, expose the vehicle's
+  approximate position as the MPC obstacle while keeping the normal configured
+  following distance.  This is deliberately only an E2E obstacle correction;
+  it never publishes or promotes a radar lead.
+  """
 
-  def update(self, model_distance: float, ego_distance: float) -> float:
-    ego_distance = float(ego_distance)
-    if np.isfinite(ego_distance):
-      self._distance_traveled += max(0.0, ego_distance)
+  def __init__(self, confirm_frames: int = MODEL_LEAD_STOP_CONFIRM_FRAMES):
+    self._confirm_frames = max(1, int(confirm_frames))
+    self._lead_distances = deque(maxlen=self._confirm_frames)
+    self._lead_velocities = deque(maxlen=self._confirm_frames)
+    self._match_count = 0
+    self._confirmed = False
 
-    model_distance = float(model_distance)
-    if np.isfinite(model_distance):
-      # Convert every candidate to the same fixed world coordinate. The largest
-      # recent candidate rejects a one-frame closer estimate, while a persistent
-      # closer line is accepted as soon as the older samples leave the window.
-      self._world_candidates.append(self._distance_traveled + max(0.0, model_distance))
+  def _clear_pending(self) -> None:
+    self._lead_distances.clear()
+    self._lead_velocities.clear()
+    self._match_count = 0
 
-    if not self._world_candidates:
+  def reset(self) -> None:
+    self._clear_pending()
+    self._confirmed = False
+
+  def update(self, *, stop_active: bool, allow_confirmation: bool, active_lead: bool,
+             stop_distance: float, lead_probability: float, lead_distance: float,
+             lead_velocity: float, lead_x_std: float, lead_y_std: float,
+             lead_v_std: float) -> float:
+    if not stop_active or active_lead:
+      self.reset()
       return 0.0
-    return max(0.0, max(self._world_candidates) - self._distance_traveled)
+
+    if self._confirmed:
+      return MODEL_LEAD_STOP_OFFSET_M
+
+    values = (
+      stop_distance, lead_probability, lead_distance, lead_velocity,
+      lead_x_std, lead_y_std, lead_v_std,
+    )
+    if not allow_confirmation or not all(np.isfinite(value) for value in values):
+      self._clear_pending()
+      return 0.0
+
+    self._lead_distances.append(float(lead_distance))
+    self._lead_velocities.append(float(lead_velocity))
+    filtered_distance = float(median(self._lead_distances))
+    filtered_velocity = float(median(self._lead_velocities))
+    endpoint_gap = filtered_distance - float(stop_distance)
+
+    valid = (
+      float(lead_probability) >= MODEL_LEAD_STOP_PROBABILITY_MIN
+      and MODEL_LEAD_STOP_DISTANCE_MIN_M <= filtered_distance <= MODEL_LEAD_STOP_DISTANCE_MAX_M
+      and MODEL_LEAD_STOP_GAP_MIN_M <= endpoint_gap <= MODEL_LEAD_STOP_GAP_MAX_M
+      and abs(filtered_velocity) <= MODEL_LEAD_STOP_SPEED_MAX_MPS
+      and 0.0 <= float(lead_x_std) <= MODEL_LEAD_STOP_X_STD_MAX_M
+      and 0.0 <= float(lead_y_std) <= MODEL_LEAD_STOP_Y_STD_MAX_M
+      and 0.0 <= float(lead_v_std) <= MODEL_LEAD_STOP_V_STD_MAX_MPS
+    )
+    self._match_count = self._match_count + 1 if valid else 0
+    if not valid:
+      self._lead_distances.clear()
+      self._lead_velocities.clear()
+    elif self._match_count >= self._confirm_frames:
+      self._confirmed = True
+
+    return MODEL_LEAD_STOP_OFFSET_M if self._confirmed else 0.0
 
 
 def is_traffic_stop_entry_allowed(steering_angle_deg: float) -> bool:
@@ -51,63 +95,27 @@ def is_traffic_stop_entry_allowed(steering_angle_deg: float) -> bool:
   return abs(float(steering_angle_deg)) < TRAFFIC_STOP_ENTRY_STEERING_LIMIT_DEG
 
 
-def get_traffic_stop_reference_speed(v_ego_kph: float, previous_reference_kph: float | None) -> float:
-  """Latch the highest speed seen during a signal stop so its distance advance does not relax."""
-  return max(0.0, float(v_ego_kph), float(previous_reference_kph or 0.0))
+def get_traffic_stop_distance_adjust(configured_adjust: float, v_ego: float,
+                                     model_lead_offset: float) -> float:
+  """Select the obstacle offset without mixing signal and queued-car semantics."""
+  model_lead_offset = float(model_lead_offset)
+  if np.isfinite(model_lead_offset) and model_lead_offset > 0.0:
+    return model_lead_offset
+  return float(configured_adjust) if float(v_ego) > 0.1 else -2.0
 
 
-def get_virtual_traffic_stop_distance(model_distance: float, v_ego_kph: float) -> float:
-  """Return the model stop distance with a bounded, near-line-fading advance."""
-  model_distance = max(0.0, float(model_distance))
-  v_ego_kph = max(0.0, float(v_ego_kph))
+def get_traffic_stop_obstacle_distance(stop_distance: float, cruise_obstacle_distance: float,
+                                       distance_adjust: float, release_distance: float = 50.0) -> float:
+  """Smoothly release the historical cruise-distance mask before a signal stop."""
+  signal_obstacle = max(0.0, float(stop_distance) + float(distance_adjust))
+  cruise_obstacle = max(0.0, float(cruise_obstacle_distance))
+  release_distance = max(0.0, float(release_distance))
 
-  distance_ratio = float(np.interp(
-    v_ego_kph,
-    TRAFFIC_STOP_DISTANCE_RATIO_SPEED_BP_KPH,
-    TRAFFIC_STOP_DISTANCE_RATIO,
-  ))
-  applied_ratio = float(np.interp(
-    model_distance,
-    TRAFFIC_STOP_DISTANCE_FADE_BP_M,
-    (1.0, distance_ratio),
-  ))
-  return max(0.0, model_distance * applied_ratio)
-
-
-def get_traffic_stop_obstacle_distance(stop_distance: float, distance_adjust: float) -> float:
-  """Apply the configured stop-line correction without placing an obstacle behind the ego."""
-  return max(0.0, float(stop_distance) + float(distance_adjust))
-
-
-def get_traffic_stop_accel_floor(v_ego: float, raw_stop_distance: float, stop_distance: float) -> float:
-  """Hold comfortable signal braking until the remaining distance becomes safety-critical."""
-  values = (v_ego, raw_stop_distance, stop_distance)
-  if not all(np.isfinite(value) for value in values):
-    return -TRAFFIC_STOP_MAX_DECEL_MPS2
-
-  v_ego = max(0.0, float(v_ego))
-  available_distance = (
-    float(raw_stop_distance)
-    - max(0.0, float(stop_distance))
-    - v_ego * TRAFFIC_STOP_RESPONSE_TIME_S
-    - TRAFFIC_STOP_DISTANCE_UNCERTAINTY_M
-  )
-  if available_distance <= 0.0:
-    return -TRAFFIC_STOP_MAX_DECEL_MPS2
-
-  buffered_required_decel = v_ego ** 2 / (2.0 * available_distance) + TRAFFIC_STOP_DECEL_SAFETY_BUFFER_MPS2
-  # position.x[-1] is a predicted trajectory endpoint, not a measured stop-line
-  # distance. Do not increase braking continuously as that prediction contracts.
-  # Keep the comfort floor through the normal margin range, then blend quickly
-  # to the full safety limit only when the required decel is genuinely high.
-  allowed_decel = np.interp(
-    buffered_required_decel,
-    TRAFFIC_STOP_DECEL_URGENCY_BP_MPS2,
-    (TRAFFIC_STOP_SOFT_DECEL_MPS2, TRAFFIC_STOP_MAX_DECEL_MPS2),
-  )
-  return -float(allowed_decel)
-
-
-def should_limit_traffic_stop_accel(signal_stop_active: bool, mpc_source: str) -> bool:
-  """Limit signal braking unless a real lead obstacle is the active MPC source."""
-  return bool(signal_stop_active) and mpc_source in ("cruise", "e2e")
+  # Historically, a signal obstacle between 50 m and the cruise safe distance
+  # was replaced by the cruise obstacle, then exposed all at once at 50 m. Keep
+  # that protection at first contact, but progressively expose the real signal
+  # obstacle so braking can build before the 50 m boundary.
+  if release_distance < signal_obstacle < cruise_obstacle:
+    release = float(np.interp(signal_obstacle, [release_distance, cruise_obstacle], [1.0, 0.0]))
+    return cruise_obstacle + release * (signal_obstacle - cruise_obstacle)
+  return signal_obstacle

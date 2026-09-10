@@ -287,15 +287,19 @@ function renderGitPullStatus(status = {}) {
 
   const behind = Math.max(0, Number(status.behind || 0));
   const state = String(status.state || "");
-  const hasError = Boolean(state && state !== "ok");
-  const hasUpdates = behind > 0;
-  const label = hasUpdates ? (behind > 99 ? "99+" : String(behind)) : (hasError ? "X" : "✓");
+  const autoUpdate = status.auto_update || {};
+  const autoUpdateStatus = String(autoUpdate.status || "");
+  const hasAutoUpdateError = ["error", "reboot_blocked"].includes(autoUpdateStatus);
+  const waiting = (state === "busy" || autoUpdateStatus === "waiting") && !hasAutoUpdateError;
+  const hasError = Boolean(state && !["ok", "busy"].includes(state)) || hasAutoUpdateError;
+  const hasUpdates = behind > 0 && !hasError && !waiting;
+  const label = waiting ? "…" : (hasUpdates ? (behind > 99 ? "99+" : String(behind)) : (hasError ? "X" : "✓"));
   button.classList.toggle("has-updates", hasUpdates);
-  button.classList.toggle("is-current", !hasUpdates && !hasError);
+  button.classList.toggle("is-current", !hasUpdates && !hasError && !waiting);
   button.classList.toggle("has-git-error", !hasUpdates && hasError);
   badge.hidden = false;
   badge.textContent = label;
-  badge.dataset.state = hasUpdates ? "updates" : (hasError ? "error" : "current");
+  badge.dataset.state = waiting ? "waiting" : (hasUpdates ? "updates" : (hasError ? "error" : "current"));
 
   if (navButton) {
     navButton.classList.toggle("has-git-updates", hasUpdates);
@@ -303,12 +307,14 @@ function renderGitPullStatus(status = {}) {
     else navButton.removeAttribute("data-git-behind");
   }
 
-  if (hasUpdates) {
+  if (waiting) {
+    button.title = getUIText("web_auto_update_waiting", "Waiting for startup or another update to finish.");
+  } else if (hasUpdates) {
     const upstream = String(status.upstream || "").trim();
     const suffix = upstream ? ` (${upstream})` : "";
     button.title = `${behind} commits available${suffix}`;
   } else if (hasError) {
-    button.title = status.error || status.fetch_error || "git status unavailable";
+    button.title = autoUpdate.error || autoUpdate.error_code || status.error || status.fetch_error || "git status unavailable";
   } else {
     button.title = "Up to date";
   }
@@ -366,7 +372,6 @@ function getToolCommandPreview(action, payload = {}) {
     case "git_remote_add": return `git remote add/set-url ${payload.name || ""}`.trim();
     case "send_tmux_log": return "capture tmux";
     case "server_tmux_log": return "send tmux";
-    case "install_required": return "install shapely";
     case "delete_all_videos": return "delete all videos";
     case "delete_all_logs": return "delete all logs";
     case "rebuild_all": return "rebuild all";
@@ -608,6 +613,7 @@ function rerenderPageLangUi() {
   syncToolsMetaStatusLocale();
   renderToolsMeta();
   renderToolsShortcuts();
+  globalThis.CarrotEgpuModel?.render?.();
   refreshToolsMetaInfo().catch(() => {});
   if (CURRENT_PAGE === "logs") {
     globalThis.CarrotLogsRuntime?.dashcam.render?.({ animate: false });
@@ -1039,6 +1045,7 @@ function initToolsPage() {
   refreshGitPullStatus({ force: true }).catch(() => {});
   initToolsGroups();
   initToolsLogPanel();
+  globalThis.CarrotEgpuModel?.init?.();
 
   bindOnce("btnToolsCarSelect", () => {
     if (typeof window.openCarPickerFlow === "function") window.openCarPickerFlow();
@@ -1286,30 +1293,6 @@ function initToolsPage() {
       }
     } catch (e) {
       showError("server_tmux_log", e);
-    }
-  });
-
-  bindOnce("btnInstallRequired", async () => {
-    try {
-      const j = await runTool("install_required");
-
-      let summary = "";
-      if (j.results && Array.isArray(j.results)) {
-        const lines = j.results.map(r => `${r.package}: ${r.status}`);
-        summary = lines.join("\n");
-      }
-      if (summary.trim()) toolsLogNotice(summary, { label: "install_required", meta: false });
-
-      if (j.need_reboot) {
-        const yes = await appConfirm(UI_STRINGS[LANG].confirm_reboot_after_install, {
-          title: UI_STRINGS[LANG].reboot || "Reboot",
-        });
-        if (yes) {
-          await runTool("reboot");
-        }
-      }
-    } catch (e) {
-      showError("install_required", e);
     }
   });
 
