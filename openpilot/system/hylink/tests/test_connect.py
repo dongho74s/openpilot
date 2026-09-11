@@ -26,8 +26,9 @@ def test_local_subnet_only_and_no_dns_rebinding():
 def test_local_key_reuses_existing_identity_without_extra_code(configured):
   params, config = configured
   assert pairing.status(params)["key"] == config["token"]
-  result = pairing.connect(params, {"consent": True, "media": True, "impact": True, "remote": True})
-  assert result["key"] == config["token"] and result["remote"]
+  result = pairing.connect(params, {})
+  assert result["key"] == config["token"]
+  assert all(result[feature] for feature in ("enabled", "media", "impact", "remote"))
   assert runtime.remote_ready(False, params)
   params.put_bool("IsOnroad", True)
   with pytest.raises(ValueError):
@@ -37,22 +38,19 @@ def test_local_key_reuses_existing_identity_without_extra_code(configured):
   assert not runtime.remote_ready(False, params)
 
 
-def test_first_registration_requires_consent_and_rechecks_ignition(configured):
+def test_first_registration_rechecks_ignition_before_enabling_defaults(configured):
   params, config = configured
   runtime.CONFIG_PATH.unlink()
-  with pytest.raises(ValueError, match="동의"):
-    pairing.connect(params, {})
-  assert not runtime.CONFIG_PATH.exists()
   def enroll(params, activate):
     assert activate is False
     params.put_bool("IsOnroad", True)
     return {**config, "enabled": False}
   with pytest.raises(ValueError, match="차량 상태"):
-    pairing.connect(params, {"consent": True, "media": True}, enroll)
+    pairing.connect(params, {}, enroll)
   assert not runtime.CONFIG_PATH.exists()
 
 
-def test_first_registration_persists_key_but_does_not_enable_without_choice(configured):
+def test_pending_registration_does_not_enable_until_offroad_recheck(configured):
   params, _ = configured
   runtime.CONFIG_PATH.unlink()
   result = setup.enroll(params, lambda *a, **k: SimpleNamespace(status_code=200), activate=False)
@@ -61,13 +59,50 @@ def test_first_registration_persists_key_but_does_not_enable_without_choice(conf
   assert not runtime.enabled(False, params, None)
 
 
+def test_first_page_connection_enables_every_feature_without_settings(configured):
+  params, _ = configured
+  runtime.CONFIG_PATH.unlink()
+  def enroll(params, activate):
+    return setup.enroll(params, lambda *a, **k: SimpleNamespace(status_code=200), activate=activate)
+  result = pairing.connect(params, {}, enroll)
+  assert all(result[feature] for feature in ("enabled", "media", "impact", "remote"))
+  assert runtime.remote_ready(False, params)
+  assert runtime.media_ready(False, params)
+  assert runtime.impact_ready(False, params)
+
+
+def test_existing_disabled_features_upgrade_but_key_get_never_reenables(configured):
+  params, config = configured
+  config.update(enabled=False, media_enabled=False, impact_enabled=False, remote_enabled=False)
+  runtime.write_json(runtime.CONFIG_PATH, config)
+  assert not pairing.status(params)["enabled"]
+  assert runtime.read_json(runtime.CONFIG_PATH) == config
+  # Even a cached old page with unchecked options receives the new defaults.
+  result = pairing.connect(params, {"media": False, "impact": False, "remote": False})
+  assert result["key"] == config["token"]
+  assert all(result[feature] for feature in ("enabled", "media", "impact", "remote"))
+  config = runtime.read_json(runtime.CONFIG_PATH)
+  config["enabled"] = False
+  runtime.write_json(runtime.CONFIG_PATH, config)
+  assert not pairing.status(params)["enabled"]
+  assert runtime.read_json(runtime.CONFIG_PATH) == config
+
+
+def test_auto_connection_rejects_another_vehicle_identity(configured):
+  params, config = configured
+  params.put("DongleId", "fedcba9876543210")
+  with pytest.raises(ValueError, match="different device"):
+    pairing.connect(params, {})
+  assert runtime.read_json(runtime.CONFIG_PATH) == config
+
+
 def test_network_failure_keeps_enrollment_identity(configured):
   params, _ = configured
   runtime.CONFIG_PATH.unlink()
   def enroll(params, activate):
     return setup.enroll(params, lambda *a, **k: SimpleNamespace(status_code=503), activate=activate)
   with pytest.raises(RuntimeError):
-    pairing.connect(params, {"consent": True}, enroll)
+    pairing.connect(params, {}, enroll)
   pending = runtime.read_json(runtime.CONFIG_PATH)
   assert not pending["enabled"] and pending["token"].startswith("wayon_")
 
@@ -89,15 +124,18 @@ def test_http_key_page_csrf_and_onroad_cutoff(configured):
   try:
     code, headers, body = request("GET", "/")
     assert code == 200 and config["token"] not in body
+    assert body.count("<button") == 1 and 'type="checkbox"' not in body
+    assert 'id="setup"' not in body and 'id="copy"' in body
+    assert runtime.read_json(runtime.CONFIG_PATH) == config
     assert headers["Cache-Control"] == "no-store" and "Access-Control-Allow-Origin" not in headers
     code, _, body = request("GET", "/api/key", **{"X-Hylink-Request": "1"})
     assert code == 200 and json.loads(body)["key"] == config["token"]
     assert request("GET", "/api/key")[0] == 403
     assert request("GET", "/", Host="evil.example:1108")[0] == 403
-    body = json.dumps({"consent": True, "media": True})
+    body = "{}"
     assert request("POST", "/api/connect", body, **{"Content-Type": "application/json", "Origin": "http://evil.example", "X-Hylink-Request": "1"})[0] == 403
-    code, _, _ = request("POST", "/api/connect", body, **{"Content-Type": "application/json", "Origin": "http://127.0.0.1:1108", "X-Hylink-Request": "1"})
-    assert code == 200
+    code, _, result = request("POST", "/api/connect", body, **{"Content-Type": "application/json", "Origin": "http://127.0.0.1:1108", "X-Hylink-Request": "1"})
+    assert code == 200 and all(json.loads(result)[key] for key in ("enabled", "media", "impact", "remote"))
     params.put_bool("IsOnroad", True)
     assert request("GET", "/api/key", **{"X-Hylink-Request": "1"})[0] == 409
     assert request("GET", "/")[0] == 409
