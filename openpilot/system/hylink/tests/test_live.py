@@ -1,0 +1,161 @@
+import json
+import socket
+import time
+from types import SimpleNamespace
+
+from openpilot.system.hylink.live import (
+  CLIENT_HEARTBEAT_MAGIC,
+  CLIENT_CONTROL_CLIP,
+  CLIENT_CONTROL_HEADER,
+  CLIENT_CONTROL_MAGIC,
+  ClipFrameStore,
+  ClientHeartbeatMonitor,
+  ClientControlState,
+  FRAME_FLAG_KEY,
+  FRAME_HEADER,
+  FRAME_MAGIC,
+  FRAME_TYPE_METADATA,
+  FRAME_TYPE_DRIVER,
+  FRAME_TYPE_WIDE,
+  bounded_number,
+  encoded_payload,
+  json_frame,
+  pack_frame,
+  read_client_control,
+  stream_metadata,
+)
+
+
+def unpack_frame(frame):
+  header = FRAME_HEADER.unpack(frame[:FRAME_HEADER.size])
+  magic, frame_type, flags, _, sequence, timestamp_us, payload_size = header
+  return magic, frame_type, flags, sequence, timestamp_us, frame[FRAME_HEADER.size:FRAME_HEADER.size + payload_size]
+
+
+def test_pack_frame_preserves_header_and_payload():
+  frame = pack_frame(2, b"video", sequence=42, timestamp_us=123_456, key_frame=True)
+  magic, frame_type, flags, sequence, timestamp_us, payload = unpack_frame(frame)
+
+  assert magic == FRAME_MAGIC
+  assert frame_type == 2
+  assert flags & FRAME_FLAG_KEY
+  assert sequence == 42
+  assert timestamp_us == 123_456
+  assert payload == b"video"
+
+
+def test_json_frame_uses_compact_utf8_payload():
+  frame = json_frame(FRAME_TYPE_METADATA, {"state": "live", "fps": 20})
+  *_, payload = unpack_frame(frame)
+  assert json.loads(payload) == {"state": "live", "fps": 20}
+
+
+def test_encoded_payload_prepends_codec_header_on_key_frame():
+  payload, key_frame = encoded_payload(SimpleNamespace(header=b"sps-pps", data=b"frame"))
+  assert payload == b"sps-ppsframe"
+  assert key_frame is True
+
+  payload, key_frame = encoded_payload(SimpleNamespace(header=b"", data=b"delta"))
+  assert payload == b"delta"
+  assert key_frame is False
+
+
+def test_bounded_number_clamps_and_falls_back():
+  assert bounded_number("800", 10, 100, 1000) == 800
+  assert bounded_number(10, 50, 20, 100) == 20
+  assert bounded_number("bad", 50, 20, 100) == 50
+
+
+
+
+
+
+
+
+def test_driver_camera_uses_correct_horizontal_orientation():
+  metadata = stream_metadata(800_000, 300)
+  assert metadata["panorama"]["driverMirror"] is False
+  assert metadata["panorama"]["blendDeg"] == 24.0
+  assert metadata["panorama"]["wideRadialDistortion"] == [-0.018, 0.006]
+
+
+def test_panorama_uses_mici_equidistant_projection():
+  panorama = stream_metadata(800_000, 300)["panorama"]
+
+  assert panorama["projectionModel"] == "equidistant-sphere-v1"
+  assert panorama["wideFocalScale"] == [0.31640625, 0.55953947]
+  assert panorama["driverFocalScale"] == [0.31640625, 0.55953947]
+  assert panorama["widePitchDeg"] == -6.5
+  assert panorama["driverPitchDeg"] == -14.0
+  assert panorama["widePositionM"] == [-0.2, 0.0, 0.0]
+  assert panorama["driverPositionM"] == [0.0, -0.435, 0.03]
+
+
+def test_client_control_accepts_fragmented_heartbeat():
+  state = ClientControlState()
+
+  state.feed(CLIENT_HEARTBEAT_MAGIC[:2])
+  assert not state.heartbeat_seen
+  assert bytes(state.buffer) == CLIENT_HEARTBEAT_MAGIC[:2]
+
+  state.feed(CLIENT_HEARTBEAT_MAGIC[2:])
+  assert state.heartbeat_seen
+  assert not state.buffer
+
+
+def test_client_control_preserves_binary_command_payload():
+  state = ClientControlState()
+  payload = b"clip-contains-" + CLIENT_HEARTBEAT_MAGIC
+  packet = CLIENT_CONTROL_HEADER.pack(CLIENT_CONTROL_MAGIC, CLIENT_CONTROL_CLIP, len(payload)) + payload
+
+  state.feed(packet[:7])
+  assert state.pop_commands() == []
+  state.feed(packet[7:])
+  assert state.pop_commands() == [(CLIENT_CONTROL_CLIP, payload)]
+  assert not state.heartbeat_seen
+
+
+def test_clip_frame_store_preserves_full_stream_and_prunes_old_frames():
+  store = ClipFrameStore(max_buffer_s=12)
+  for second in range(21):
+    store.append(FRAME_TYPE_WIDE, (second, f"w{second}".encode(), second % 5 == 0, second * 1_000_000))
+    store.append(FRAME_TYPE_DRIVER, (second, f"d{second}".encode(), second % 5 == 0, second * 1_000_000))
+
+  wide, driver = store.recent_pair(duration_s=10, now_s=20)
+
+  assert [item[1] for item in wide] == [f"w{second}".encode() for second in range(10, 21)]
+  assert [item[1] for item in driver] == [f"d{second}".encode() for second in range(10, 21)]
+  assert store.buffers[FRAME_TYPE_WIDE][0][0] == 8
+
+
+def test_read_client_control_detects_heartbeat_and_disconnect():
+  client, peer = socket.socketpair()
+  state = ClientControlState()
+  try:
+    peer.sendall(CLIENT_HEARTBEAT_MAGIC)
+    assert read_client_control(client, state, timeout_s=0.1)
+    assert state.heartbeat_seen
+
+    peer.close()
+    assert not read_client_control(client, state, timeout_s=0.1)
+  finally:
+    client.close()
+
+
+def test_heartbeat_monitor_closes_stale_client():
+  client, peer = socket.socketpair()
+  state = ClientControlState()
+  monitor = ClientHeartbeatMonitor(client, state, timeout_s=0.05, poll_s=0.01)
+  try:
+    monitor.start()
+    deadline = time.monotonic() + 0.5
+    while monitor.client_alive and time.monotonic() < deadline:
+      time.sleep(0.01)
+
+    assert monitor.timed_out
+    assert not monitor.client_alive
+    assert peer.recv(1) == b""
+  finally:
+    monitor.stop()
+    peer.close()
+    client.close()
