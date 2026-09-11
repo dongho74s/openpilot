@@ -83,6 +83,10 @@ def impact_ready(started, params, CP=None):
   return offroad(started, params, CP) and read_config(params).get("impact_enabled") is True
 
 
+def remote_ready(started, params, CP=None):
+  return offroad(started, params, CP) and read_config(params).get("remote_enabled") is True
+
+
 def camera_requested(started, params, CP=None):
   return bool(media_ready(started, params, CP) and not params.get_bool("IsDriverViewEnabled")
               and not params.get_bool("IsTakingSnapshot") and fresh_record(CAMERA_PATH).get("active") is True)

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hylink 차량 연결</title><link rel="stylesheet" href="/connect.css">
+<main><p class="eyebrow">HYLINK · 차량 연결</p><h1>내 차와<br>연결하세요.</h1><p>시동을 끄고 콤마와 같은 Wi-Fi에 연결한 상태에서 진행해 주세요. 공용 Wi-Fi에서는 연결 키를 열지 마세요.</p>
+<section id="result" hidden><h2>Wayon Cloud Key</h2><p>아래 키를 복사한 뒤 Hylink 앱의 <strong>차량 → Wayon Cloud 키</strong>에 붙여 넣으세요. 같은 네트워크에 접속한 사람이 이 키를 볼 수 있으니 신뢰하는 개인 Wi-Fi만 사용하세요.</p><label for="key">Wayon Cloud 키</label><input id="key" readonly><button id="copy">연결 키 복사</button><p id="features"></p></section>
+<section id="setup"><h2>사용할 기능 선택</h2><p>첫 연결에서는 아래 정보 전송에 동의해 주세요. 이미 연결했다면 같은 키가 바로 표시됩니다.</p><label class="choice"><input id="consent" type="checkbox"><span><b>차량 정보 연결 (필수)</b><small>차량 위치, 상태, 장치 정보와 주행 기록을 Wayon Cloud에 전송합니다.</small></span></label>
+<label class="choice"><input id="media" type="checkbox"><span><b>라이브와 주차 사진</b><small>전방·실내 카메라 보기, 사진 및 10/30초 영상 저장, 1시간 간격 주차 사진. 실내 탑승자가 촬영될 수 있어요.</small></span></label>
+<label class="choice"><input id="impact" type="checkbox"><span><b>주차 충격 감지</b><small>감지 기록을 전송합니다. 카메라에도 동의하면 감지 직후 사진을 함께 저장해요. 충돌을 확정하는 기능은 아니에요.</small></span></label>
+<label class="choice"><input id="remote" type="checkbox"><span><b>원격 터미널 (고급)</b><small>연결 키를 가진 휴대폰에서 주차 중 콤마 셸에 접속할 수 있습니다. 명령은 시스템을 변경할 수 있으니 신뢰하는 소유자만 켜세요.</small></span></label>
+<p class="note">주차 기능은 콤마 전원과 인터넷이 연결되어 있고 시동이 꺼져 있을 때만 동작해요. 저전압·고온·시동 켜짐에서는 중단하며, 꺼진 콤마를 깨우거나 절전 종료를 막지 않아요. 언제든 콤마에서 연결을 끌 수 있어요.</p>
+<button id="connect">선택한 정보 전송에 동의하고 연결</button></section>
+<p id="status" role="status" aria-live="polite"></p></main><script src="/connect.js"></script></html>

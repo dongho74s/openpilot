@@ -211,6 +211,8 @@ def telemetry_signature(payload: dict[str, Any]) -> tuple[Any, ...]:
   vehicle = payload.get("vehicle") or {}
   can = vehicle.get("can") or {}
   openpilot = payload.get("openpilot") or {}
+  alert = openpilot.get("alert") or {}
+  steering_fault = vehicle.get("steeringFault") or {}
   panda = payload.get("panda") or {}
   cutin = payload.get("cutInRisk") or {}
   connections = payload.get("connections") or {}
@@ -218,6 +220,8 @@ def telemetry_signature(payload: dict[str, Any]) -> tuple[Any, ...]:
     bool(payload.get("onroad")), bool(payload.get("ignition")), bool(payload.get("enabled")),
     bool(openpilot.get("active")), str(openpilot.get("state") or ""),
     bool(can.get("valid")), bool(can.get("timeout")),
+    bool(steering_fault.get("temporary")), bool(steering_fault.get("permanent")),
+    str(alert.get("type") or ""), str(alert.get("text1") or ""), str(alert.get("text2") or ""),
     bool(vehicle.get("doorOpen")), bool(vehicle.get("parkingBrake")),
     str(vehicle.get("gear") or ""), str(panda.get("faultStatus") or ""),
     str(payload.get("thermalStatus") or ""), int(cutin.get("level") or 0),

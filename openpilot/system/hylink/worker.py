@@ -6,6 +6,7 @@ from openpilot.common.params import Params
 from openpilot.system.hylink import routes
 from openpilot.system.hylink.camera import snapshot_payload
 from openpilot.system.hylink.impact import peek_impact_event, remove_impact_event
+from openpilot.system.hylink.impact_upload import upload_impact
 from openpilot.system.hylink.policy import UploadBackoff
 from openpilot.system.hylink.runtime import CONFIG_PATH, media_ready, offroad, read_config, read_json, write_json
 from openpilot.system.hylink.transport import post_json
@@ -15,7 +16,7 @@ def main():
   if hasattr(os, "nice"):
     os.nice(10)
   params = Params()
-  due = {"trip": 0.0, "snapshot": 0.0, "impact": 0.0}
+  due = {"impact": 0.0, "snapshot": 0.0, "trip": 0.0}
   backoffs = {name: UploadBackoff() for name in due}
   while (config := read_config(params)) and offroad(False, params):
     for name in due:
@@ -40,8 +41,7 @@ def main():
         elif name == "impact":
           event = peek_impact_event()
           if event and offroad(False, params):
-            # Publish the IMU event even if no camera is available. Never invent a photograph.
-            post_json(config, "/api/impact", {**event, "deviceId": config["device_id"]})
+            upload_impact(config, event, lambda: offroad(False, params), lambda: media_ready(False, params), post_json)
             remove_impact_event(event["id"])
         backoffs[name].success()
       except Exception as exc:

@@ -130,13 +130,15 @@ procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
 
   # Hylink is opt-in and isolated from Athena, vehicle control, and Panda safety.
-  PythonProcess("hylink_guard", "openpilot.system.hylink.guard", hylink.enabled, enabled=not PC, restart_if_crash=True),
+  PythonProcess("hylink_guard", "openpilot.system.hylink.guard", only_offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
+  PythonProcess("hylink_connect", "openpilot.system.hylink.connect_server", only_offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
   PythonProcess("hylink_telemetry", "openpilot.system.hylink.telemetry", hylink.enabled, enabled=not PC, restart_if_crash=True),
   # Heavy workers are killed on the offroad -> onroad edge, including upload threads.
   PythonProcess("hylink_worker", "openpilot.system.hylink.worker", hylink.offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
   PythonProcess("hylink_impact", "openpilot.system.hylink.impactd", hylink.impact_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
   PythonProcess("hylink_live", "openpilot.system.hylink.live", hylink.media_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
   PythonProcess("hylink_relay", "openpilot.system.hylink.relay", hylink.media_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
+  PythonProcess("hylink_remote", "openpilot.system.hylink.remote", hylink.remote_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
   NativeProcess("hylink_encoderd", "openpilot/system/loggerd", ["./encoderd", "--stream"], hylink.stream_requested, enabled=not PC, sigkill=True),
 
   NativeProcess("loggerd", "openpilot/system/loggerd", ["./loggerd"], logging),

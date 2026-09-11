@@ -1,4 +1,4 @@
-"""Explicit local enrollment; never exposes an unauthenticated LAN key page."""
+"""Explicit enrollment; preserve pending identity through failed cloud requests."""
 import argparse
 import re
 import secrets
@@ -25,7 +25,7 @@ def import_legacy(params, path=Path("/data/wayon_cloud/config.json")):
                            "enabled": False, "media_enabled": False, "impact_enabled": False})
 
 
-def enroll(params, post=requests.post):
+def enroll(params, post=requests.post, activate=True):
   device_id = param_text(params, "DongleId")
   if not re.fullmatch(r"[0-9a-f]{16}", device_id):
     raise ValueError("Wait for this device to register with comma before enrolling Hylink.")
@@ -48,14 +48,16 @@ def enroll(params, post=requests.post):
     if not 200 <= response.status_code < 300:
       raise RuntimeError(f"Enrollment failed (HTTP {response.status_code}); config kept for retry.")
     config["registered"] = True
-  config["enabled"] = True
+  if activate:
+    config["enabled"] = True
   write_json(CONFIG_PATH, config)
   return config
 
 
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument("command", choices=["enable", "disable", "status", "show-key", "import-legacy", "media-on", "media-off", "impact-on", "impact-off"])
+  parser.add_argument("command", choices=["enable", "disable", "status", "show-key", "import-legacy",
+                                          "media-on", "media-off", "impact-on", "impact-off", "remote-on", "remote-off"])
   args = parser.parse_args()
   params = Params()
   config = read_json(CONFIG_PATH)
@@ -68,7 +70,7 @@ def main():
     if config:
       config["enabled"] = False
       write_json(CONFIG_PATH, config)
-  elif args.command in ("media-on", "media-off", "impact-on", "impact-off"):
+  elif args.command in ("media-on", "media-off", "impact-on", "impact-off", "remote-on", "remote-off"):
     if not config.get("registered") or config.get("device_id") != param_text(params, "DongleId"):
       raise ValueError("Enroll this device first.")
     feature, action = args.command.split("-")
@@ -79,7 +81,7 @@ def main():
       raise ValueError("Enroll this device first.")
     print(config["token"])
     return
-  print({key: config.get(key) for key in ("device_id", "enabled", "media_enabled", "impact_enabled")})
+  print({key: config.get(key) for key in ("device_id", "enabled", "media_enabled", "impact_enabled", "remote_enabled")})
 
 
 if __name__ == "__main__":

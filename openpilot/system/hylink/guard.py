@@ -4,7 +4,7 @@ import time
 
 from openpilot.cereal import messaging
 from openpilot.common.params import Params
-from openpilot.system.hylink.runtime import STATE_PATH, read_config, service_fresh, write_json
+from openpilot.system.hylink.runtime import STATE_PATH, service_fresh, write_json
 
 
 def observed_offroad(sm, params, now=None):
@@ -26,7 +26,7 @@ def main():
   params = Params()
   sm = messaging.SubMaster(["deviceState", "pandaStates"])
   try:
-    while read_config(params):
+    while True:
       sm.update(0)
       write_json(STATE_PATH, {"pid": os.getpid(), "at": time.monotonic(),
                              "offroad": observed_offroad(sm, params)})

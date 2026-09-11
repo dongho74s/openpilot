@@ -57,6 +57,12 @@ class DeviceLayout(Widget):
       text_item(lambda: tr("Dongle ID"), self._params.get("DongleId") or (lambda: tr("N/A"))),
       text_item(lambda: tr("Serial"), self._params.get("HardwareSerial") or (lambda: tr("N/A"))),
       self._pair_device_btn,
+      button_item("Hylink 앱 연결 / Connect", "연결 / PAIR",
+                  "시동을 끈 뒤 같은 Wi-Fi의 휴대폰에서 http://콤마IP:1108에 접속하세요. / Pair on the same Wi-Fi with ignition off.",
+                  callback=self._hylink_pair, enabled=ui_state.is_offroad),
+      button_item("Hylink 정보 전송 / Sharing", "중지 / STOP",
+                  "위치·주행 기록·카메라·충격 감지·원격 터미널을 모두 중지합니다. / Stop all Hylink sharing and parking features.",
+                  callback=self._hylink_disable, enabled=ui_state.is_offroad),
       button_item(lambda: tr("Driver Camera"), lambda: tr("PREVIEW"), lambda: tr(DESCRIPTIONS['driver_camera']),
                   callback=lambda: gui_app.push_widget(DriverCameraDialog()), enabled=ui_state.is_offroad),
       self._reset_calib_btn,
@@ -67,6 +73,26 @@ class DeviceLayout(Widget):
       self._power_off_btn,
     ]
     return items
+
+  def _hylink_pair(self):
+    if not ui_state.is_offroad() or ui_state.engaged:
+      return
+    text = ("휴대폰을 콤마와 같은 Wi-Fi에 연결하세요.\n" +
+            "브라우저에서 http://콤마IP:1108 접속 후\nWayon Cloud 키를 앱에 붙여 넣으세요.\n" +
+            "Use comma IP:1108 on the same Wi-Fi.\nPaste the Cloud key into Hylink.")
+    gui_app.push_widget(alert_dialog(text))
+
+  def _hylink_disable(self):
+    def disable(result):
+      if result != DialogResult.CONFIRM or not ui_state.is_offroad() or ui_state.engaged:
+        return
+      from openpilot.system.hylink.runtime import CONFIG_PATH, read_json, write_json
+      config = read_json(CONFIG_PATH)
+      if config:
+        config["enabled"] = False
+        write_json(CONFIG_PATH, config)
+    gui_app.push_widget(ConfirmDialog("Hylink의 모든 정보 전송과 주차 기능을 중지할까요?\nStop Hylink sharing and parking features?",
+                                     "중지 / Stop", callback=disable))
 
   def _offroad_transition(self):
     self._power_off_btn.action_item.right_button.set_visible(ui_state.is_offroad())

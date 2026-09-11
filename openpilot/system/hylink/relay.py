@@ -13,8 +13,9 @@ TARGET = ("127.0.0.1", 8765)
 
 
 class Relay:
-  def __init__(self, allowed):
+  def __init__(self, allowed, target=TARGET):
     self.allowed = allowed
+    self.target = target
     self.local = None
     self.lock = threading.Lock()
 
@@ -34,7 +35,7 @@ class Relay:
     self.close_local()
     if not self.allowed():
       return
-    local = socket.create_connection(TARGET, timeout=1)
+    local = socket.create_connection(self.target, timeout=1)
     local.settimeout(0.5)
     with self.lock:
       self.local = local
@@ -52,14 +53,27 @@ class Relay:
       except (OSError, WebSocketException):
         pass
       finally:
+        with self.lock:
+          unexpected_end = self.local is local
         self.close_local(local)
+        if unexpected_end:
+          # Propagate a camera/SSH EOF to the phone. Otherwise a five-minute
+          # session can leave its WebSocket open forever with no further bytes.
+          ws.close(timeout=0.5)
     threading.Thread(target=forward, name="hylink-live-forward", daemon=True).start()
+
+  def tick(self):
+    pass
+
+  def command(self, command):
+    pass
 
   def connected(self, ws):
     ws.settimeout(0.5)
     next_ping = time.monotonic() + 20
     try:
       while self.allowed():
+        self.tick()
         try:
           opcode, data = ws.recv_data(control_frame=True)
         except WebSocketTimeoutException:
@@ -73,6 +87,8 @@ class Relay:
             self.open_local(ws)
           elif command == "wayon-peer-close":
             self.close_local()
+          else:
+            self.command(command)
         elif opcode == ABNF.OPCODE_BINARY:
           if len(data) > 8 * 1024 * 1024 + 9:
             raise ValueError("Oversized live control frame")
@@ -86,18 +102,15 @@ class Relay:
       self.close_local()
 
 
-def main():
-  params = Params()
-  def allowed():
-    return media_ready(False, params)
-  relay = Relay(allowed)
+def run_relay(relay, params, kind="live"):
+  allowed = relay.allowed
   backoff = UploadBackoff()
   while allowed():
     ws = None
     connected_at = time.monotonic()
     try:
       config = read_config(params)
-      ws = create_connection(ENDPOINT.replace("https://", "wss://") + "/api/device/relay/live",
+      ws = create_connection(ENDPOINT.replace("https://", "wss://") + "/api/device/relay/" + kind,
                              header=["Authorization: Bearer " + config["token"]],
                              timeout=5, enable_multithread=True, redirect_limit=0)
       relay.connected(ws)
@@ -112,6 +125,11 @@ def main():
     retry_at = time.monotonic() + backoff.failure_delay()
     while allowed() and time.monotonic() < retry_at:
       time.sleep(0.5)
+
+
+def main():
+  params = Params()
+  run_relay(Relay(lambda: media_ready(False, params)), params)
 
 
 if __name__ == "__main__":

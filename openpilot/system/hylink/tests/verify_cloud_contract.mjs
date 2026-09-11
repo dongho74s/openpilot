@@ -64,4 +64,6 @@ assert.equal(raw.schemaVersion, "wayon-telemetry-v3");
 assert.equal(raw.vehicle.can.valid, payload.vehicle.can.valid);
 assert.equal(raw.gps.latitude, payload.gps.latitude);
 assert.equal(raw.openpilot.alert.text1, payload.openpilot.alert.text1);
+if (payload.hylink) assert.deepEqual(raw.hylink, payload.hylink);
+assert.equal(raw.onroad, payload.onroad);
 console.log("PASS: current cereal -> new uploader -> actual Wayon Worker -> Hylink /api/state contract (no network)");
