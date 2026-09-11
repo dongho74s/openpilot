@@ -137,18 +137,19 @@ Select a section title for the code-based state machine, units, and application 
 The result depends heavily on whether the car uses stock SCC and which button message the vehicle accepts. Diagnose unexpected behavior with the normal `CruiseButtonMode=0` behavior first.
 
 <a id="vehicle-steering"></a>
-### Vehicle steering — 37 settings
+### Vehicle steering — 37 top-level + 5 ONNX detail settings
 
 | Section | Parameters | Purpose |
 |---|---|---|
+| ONNX Lane and BSD | `ShareData`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | On-device lane-type and gated camera-BSD detection and tuning |
 | Centering | `PathOffset`, `CameraYawTrimDeg` | Path position and camera-yaw trim |
 | Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | Timing, smoothing, suspension angle, and steering ratio |
-| [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `ShareData`, `LaneLineCheck`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
+| [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
 | Advanced torque | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
 | Steering limits | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | Maximum torque and torque-rate limits |
 
-`ONNX Lane and BSD Detection` (`ShareData`) runs solid/dashed classification and gated camera BSD on the device. It defaults to off and preserves existing saved values. Enabling it adds mici status information; disabling it stops the vision service. The update includes OpenCV, prepared automatically during normal startup. See [conditions and status indicators](lane-change.md#sharedata--onnx-lane-and-bsd-detection).
+`ONNX Lane and BSD Detection` (`ShareData`) runs solid/dashed classification and gated camera BSD on the device. Its detail screen keeps the feature toggle at the top and shows the BSD detection-area editor in a separate card directly below it, with only side selection, image refresh, point undo/reset, and area save in the primary view. The basic rectangular point picker at the image's upper left uses `1(L)` and `1(R)` labels; tapping empty space adds a point whenever none is selected. Zoom, viewport panning, and whole-area dragging are omitted so only the selected point moves. Two equal-width buttons directly below the four editing actions open the road- and wide-camera images in pop-up dialogs. Runtime state, confidence, performance, diagnostics, and five persistent tuning values open from the lower-right **Expand/Collapse advanced settings** text and are collapsed by default. The editor retains one last camera frame and shows a dim default road example when no frame is available. An area can be saved only after receiving a real camera image in the current session. It defaults to off, and saved tuning values survive a service restart. The update includes OpenCV, prepared automatically during normal startup. See [conditions and detailed values](lane-change.md#sharedata--onnx-lane-and-bsd-detection).
 
 A larger `SteerActuatorDelay` compensates by commanding earlier. A larger `LatSmoothSec` is smoother but may respond more slowly. Changing both together makes diagnosis difficult.
 
@@ -156,14 +157,14 @@ The default `SteerRatioRate` of `100%` applies the learned steering ratio withou
 
 `LateralTorqueCustom` and `CustomSteer*` are advanced settings that can affect the vehicle tune and safety limits. Do not alter them without a vehicle-specific validated baseline and a recovery path.
 
-### Speed and deceleration — 22 settings
+### Speed and deceleration — 23 settings
 
 | Section | Parameters | Purpose |
 |---|---|---|
 | [Speed cameras](speed-deceleration.md#speed-camera) | `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `AutoNaviCountDownMode`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime` | Event types, stock-navigation CAN and PV5 section speed caps, deceleration start, and target speed |
 | [Road speed limit](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | Desired-speed adjustment from the road limit |
-| [Speed bumps](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed` | Completion time and crossing speed |
-| [Curves and turns](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ModelTurnSpeedFactor`, `ApplyModelSpeed` | Curve speed from model curvature and route data |
+| [Speed bumps](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | Completion time, crossing speed, and early-release distance |
+| [Curves and turns](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | Curve slowing from curvature and remaining distance, plus route-turn speed |
 | [Traffic lights](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | Stop/go detection, stop-position adjustment, and automatic stopped-vehicle alignment |
 
 `AutoNaviSpeedCtrlMode` is `0` off, `1` fixed speed cameras, `2` cameras plus speed bumps, or `3` those events plus mobile-camera events.
@@ -191,6 +192,8 @@ A lower `AutoNaviSpeedDecelRate` begins slowing farther away. `AutoNaviSpeedSafe
 `TFollowGap1` through `TFollowGap4` are stored in hundredths of a second. Lower values reduce the time gap. Use `LeadAccelResponse` for acceleration response: levels 1–3 are gradual, 4 is quick, and 5 retains maximum response. Added deceleration margin does not accumulate.
 
 `LeadAccelResponse` sets the driver’s preferred MPC response to a lead starting or accelerating at every following-distance level. It uses the selected gap’s TF; response levels 4–5 prioritize that gap’s `TFollowGap1`–`TFollowGap4` setting during positive lead acceleration. Levels 1–3 soften small changes and response near the target gap, level 4 is quick, and level 5 retains maximum follow. Levels 1–4 ramp acceleration boost entry; level 5 has no added entry delay. Higher levels reduce MPC's active acceleration-change and jerk costs so `vTargetNow` and `aTarget` rise together, while the `CruiseMaxVals`, curve, cut-in, and danger-distance limits remain intact. Normal MPC costs and deceleration behavior resume immediately when configured TF is reached or lead acceleration ends. See [Lead-vehicle response](cruise-gap.md#lead-response) for activation gates and per-level costs. Levels 0–4 capture half of the excess over the base following distance when acquiring a radar lead or while the measured following gap opens. Base TF plus extra TF is capped at 2.5 seconds without reducing a larger base TF. A first-order filter recovers the extra TF even while the gap opens, most slowly at level 0. A large gap alone does not repeatedly refill it. A stopped lead retains it; a slow lead recovers it more slowly. Level 5 adds no extra TF. This replaces the previous relative-closing-speed distance allowance rather than stacking with it. In Safe mode, levels 4–5 retain existing launch response and boost entry. Only when ego out-accelerates the lead while catching the target gap does the future positive-acceleration ceiling taper. Renewed lead acceleration or sufficient opening gap removes the extra restriction. This Safe acceleration limiter itself adds no gap allowance; existing Safe acceleration limits, TF processing and braking limits remain active.
+
+Deceleration preview operates independently of the response level. During active control, remaining correction releases progressively when relative acceleration eases or the lead switches between radar and vision or disappears. Accelerator or brake intervention and longitudinal control exit clear it immediately.
 
 `LongTuning*`, `LongActuatorDelay`, and `StoppingAccel` are advanced settings that directly affect vehicles using openpilot longitudinal control. Hyundai, Kia, and Genesis fix `LongTuningKpV`, `LongTuningKiV`, and `LongTuningKf` at the safe `100/0/100` values and hide them from settings. Some parameters have no effect when stock ACC remains responsible for acceleration and braking.
 
@@ -238,6 +241,16 @@ Display contains 37 settings. Most on-road display settings are easy to reverse;
 | Path | `ShowPathMode`, `ShowPathColor`, `ShowPathColorCruiseOff`, `ShowPathModeLane`, `ShowPathColorLane` | Path shape and color by driving state |
 | Brightness/on-road view | `ShowCustomBrightness`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, camera/model composition, and the on-device camera while the external HUD is connected |
 | External HUD | `ClusterHud`, `ClusterHudBrightness`, `ClusterHudOrientation`, and related `ClusterHud*` settings | Supported TURZX HUD layout, live brightness, screen rotation, camera, radar, encoder, and performance options |
+
+`ShowPlotMode` selects an on-road diagnostic graph; `0` turns it off. Modes `4` and `5` both use the primary lead vehicle (`radarState.leadOne`), and the mici device display also updates these graphs when the lead message values change.
+
+| Color | `4`: Lead acceleration/relative speed | `5`: Lead acceleration/jerk |
+|---|---|---|
+| Yellow | First planned ego acceleration `longitudinalPlan.accels[0]` (m/s²) | Actual ego acceleration `carState.aEgo` (m/s²) |
+| Green | Estimated lead acceleration `leadOne.aLeadK` (m/s²) | Lead acceleration `leadOne.aLead` (m/s²) |
+| Orange | Relative lead speed `leadOne.vRel` (m/s) | Rate of change of lead acceleration `leadOne.jLead` (m/s³) |
+
+Negative relative speed means the gap is closing; positive relative speed means it is opening. Lead values display as zero when no lead is detected, and this setting changes only the diagnostic display, with no effect on vehicle control.
 
 An APN label remaining in the `ShowRouteInfo` description refers to route-input state. It is not an indication that CarrotMan or CarrotLink is supported.
 
