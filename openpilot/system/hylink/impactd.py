@@ -5,7 +5,7 @@ import time
 from openpilot.cereal import messaging
 from openpilot.common.params import Params
 from openpilot.system.hylink.impact import ImpactDetector, enqueue_impact_event
-from openpilot.system.hylink.runtime import impact_ready, service_fresh
+from openpilot.system.hylink.runtime import impact_ready, media_ready, service_fresh
 
 
 def sensor_vector(message, field):
@@ -35,7 +35,7 @@ def main():
     last_sample = now
     event = detector.update(accel, gyro, now)
     if event is not None and impact_ready(False, params):
-      event["captureRequested"] = False
+      event["captureRequested"] = media_ready(False, params)
       enqueue_impact_event(event)
 
 

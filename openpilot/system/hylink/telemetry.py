@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openpilot.cereal import messaging
 from openpilot.common.params import Params
-from openpilot.system.hylink.runtime import CONFIG_PATH, param_text, read_config, read_json, service_fresh, write_json
+from openpilot.system.hylink.runtime import CONFIG_PATH, param_text, read_config, read_json, service_fresh, write_json, offroad, media_ready, remote_ready
 from openpilot.system.hylink.policy import UploadBackoff
 from openpilot.system.hylink.drive_quality import telemetry_signature
 from openpilot.system.hylink.transport import post_json
@@ -256,6 +256,20 @@ def telemetry_payload(sm, params, device_id):
   return payload
 
 
+def feature_status(params):
+  config = read_config(params)
+  ready = offroad(False, params)
+  return {"version": "wip-2", "parkingReady": ready,
+          "mediaEnabled": config.get("media_enabled") is True, "impactEnabled": config.get("impact_enabled") is True,
+          "remoteEnabled": config.get("remote_enabled") is True,
+          "liveReady": media_ready(False, params) and not params.get_bool("IsDriverViewEnabled") and not params.get_bool("IsTakingSnapshot"),
+          "impactReady": ready and config.get("impact_enabled") is True,
+          "remoteReady": remote_ready(False, params),
+          "reason": "onroad" if params.get_bool("IsOnroad") else "ready" if ready else "power_temperature_or_vehicle_state",
+          "snapshotIntervalS": 3600, "maxLiveSessionS": 300,
+          "wakeFromPowerOff": False, "phonePushSupported": False}
+
+
 def main():
   params = Params()
   # Poll the low-rate device service, not 100 Hz carState, to avoid an onroad
@@ -264,13 +278,24 @@ def main():
   backoff = UploadBackoff()
   next_upload = next_change = 0.0
   last_signature = None
+  previous_started = None
   while config := read_config(params):
     sm.update(1000)
     now = time.monotonic()
+    started = bool(sm["deviceState"].started) if service_fresh(sm, "deviceState") else None
+    if started is not None and started != previous_started:
+      next_upload = next_change = 0.0
+      previous_started = started
     if now < next_change:
       continue
     payload = telemetry_payload(sm, params, config["device_id"])
-    signature = telemetry_signature(payload)
+    payload["hylink"] = feature_status(params)
+    feature = payload["hylink"]
+    signature = telemetry_signature(payload) + tuple(feature.get(k) for k in
+      ("parkingReady", "mediaEnabled", "impactEnabled", "remoteEnabled", "liveReady", "remoteReady"))
+    # Skipping an unchanged upload must also defer the next expensive payload
+    # build. Otherwise the 5s/15s check degrades into a 2 Hz serialization loop.
+    next_change = now + (5 if payload["onroad"] else 15)
     if now < next_upload and signature == last_signature:
       continue
     try:
@@ -281,7 +306,6 @@ def main():
       backoff.success()
       last_signature = signature
       next_upload = now + (30 if payload["onroad"] else 300)
-      next_change = now + (5 if payload["onroad"] else 15)
     except Exception as exc:
       next_change = now + backoff.failure_delay()
       print(f"Hylink telemetry: {type(exc).__name__}; retry delayed", flush=True)
