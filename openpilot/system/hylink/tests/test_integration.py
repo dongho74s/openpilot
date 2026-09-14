@@ -131,7 +131,7 @@ def test_missing_or_stale_state_never_allows_parking(configured, name):
   assert not guard.observed_offroad(state, params)
 
 
-@pytest.mark.parametrize("condition", ["started", "ignitionCan", "ignitionLine", "heartbeatLost", "unknown", "empty", "low_voltage", "heat", "params"])
+@pytest.mark.parametrize("condition", ["started", "ignitionCan", "ignitionLine", "heartbeatLost", "unknown", "empty", "low_voltage", "fault", "heat", "params"])
 def test_offroad_rejects_every_unsafe_transition(configured, condition):
   params, _ = configured
   state = State()
@@ -144,12 +144,22 @@ def test_offroad_rejects_every_unsafe_transition(configured, condition):
   elif condition == "empty":
     state["pandaStates"] = []
   elif condition == "low_voltage":
-    state["pandaStates"][0].voltage = 11999
+    state["pandaStates"][0].voltage = 11499
+  elif condition == "fault":
+    state["pandaStates"][0].faultStatus = "faultTemp"
   elif condition == "heat":
     state["deviceState"].thermalStatus = "red"
   elif condition == "params":
     params.put_bool("IsOnroad", True)
   assert not guard.observed_offroad(state, params)
+
+
+@pytest.mark.parametrize("voltage,allowed", [(11499, False), (11500, True), (12000, True)])
+def test_parking_voltage_boundary(configured, voltage, allowed):
+  params, _ = configured
+  state = State()
+  state["pandaStates"][0].voltage = voltage
+  assert guard.observed_offroad(state, params) is allowed
 
 
 @pytest.mark.parametrize("change", [{"at": -1}, {"at": float("nan")}, {"pid": -1}, {"pid": 99999999}, {"offroad": "true"}])
