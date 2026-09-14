@@ -1,8 +1,20 @@
 # Hylink
 
+This `carrotpilot:hylink-app` branch contains the Android app, not openpilot.
+Do not install this branch on a comma. Use `carrotpilot:wip` for the vehicle.
+
 Hylink is an Android companion for a vehicle connected to Wayon Cloud.
 It is a separate application from My Traverse and uses a distinct package ID:
 `app.hylink.mobile`.
+
+## Download: Hylink Dev 1.6.4
+
+[Download the verified APK](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.4.apk)
+
+This is the existing Hylink Dev package (`app.hylink.mobile.debug`, versionCode 12),
+signed with the original development certificate for in-place updates. It is not
+My Traverse New or a production-signed Play Store build. Keep the existing app
+installed when updating. See [changes, checksum and validation limits](downloads/README.md).
 
 ## wip connection (1.6.1)
 
@@ -27,8 +39,8 @@ See [implementation and verification notes](docs/APP_UI_20260910.md).
 - openpilot state, availability, engageability, personality, mode, and current alert
 - Cloud trip history with distance/time/speed insights and a saved route map
 - Parking and impact snapshots with camera, size, capture, and sensor metadata
-- Recorded 360-degree photos and 10/30-second clips with layout and storage data
-- Offroad 360-degree Live view and capture
+- Viewing existing saved photos and 10/30-second clips
+- Offroad 360-degree Live viewing (manual photo/video saving removed in 1.6.4)
 - Impact force and jerk, with detected time and severity
 - Device CPU/GPU/memory/storage usage and detailed thermal sensors
 - Network quality, screen state, electrical flow, and estimated offroad energy
