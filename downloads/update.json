@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "channel": "hylink-dev",
   "packageName": "app.hylink.mobile.debug",
-  "versionCode": 13,
-  "versionName": "1.6.5-app-updates-debug",
+  "versionCode": 14,
+  "versionName": "1.6.6-app-updates-debug",
   "minSdk": 24,
-  "apkUrl": "https://raw.githubusercontent.com/leehyuk1108/carrotpilot/4ac73f158f4bfd04540ac522f795caf25a1930c4/downloads/hylink-dev-1.6.5.apk",
-  "size": 14008928,
-  "sha256": "8e6d5680c4ac8d08d618069363d49f35687619b9f6f5a90efa6586724299d8bf",
-  "notes": "차량 탭 맨 아래에 앱 업데이트를 추가했어요.\n새 버전 자동 확인, 다운로드 진행률, 파일·서명 검증을 지원해요.\n설치는 Android 확인 화면에서 진행하며 기존 연결 키와 데이터는 유지해요."
+  "apkUrl": "https://raw.githubusercontent.com/leehyuk1108/carrotpilot/57ab503e300e1466a4b435e07e80342d0284509f/downloads/hylink-dev-1.6.6.apk",
+  "size": 13959776,
+  "sha256": "654fab6761f4f80150f89f76538e3b6ac23cc64e6aa5f0ecb968f88118271ff2",
+  "notes": "앱 내 업데이트를 다시 확인하는 버전이에요.\n기능과 권한은 1.6.5와 같으며 버전만 올렸어요.\nAndroid 설치 확인을 거쳐 기존 연결 키와 데이터를 유지해요."
 }
