@@ -7,19 +7,21 @@ Hylink is an Android companion for a vehicle connected to Wayon Cloud.
 It is a separate application from My Traverse and uses a distinct package ID:
 `app.hylink.mobile`.
 
-## Download: Hylink Dev 1.6.5
+## Download: Hylink Dev 1.6.6
 
-[Download the APK](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.5.apk)
+[Download the APK](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.6.apk)
 
-This is the existing Hylink Dev package (`app.hylink.mobile.debug`, versionCode 13),
+This is the existing Hylink Dev package (`app.hylink.mobile.debug`, versionCode 14),
 signed with the original development certificate for in-place updates. It is not
 My Traverse New or a production-signed Play Store build. Keep the existing app
 installed when updating. See [changes, checksum and validation limits](downloads/README.md).
 
-Version 1.6.5 adds **Vehicle → App update** at the bottom of the vehicle tab.
+Version 1.6.5 added **Vehicle → App update** at the bottom of the vehicle tab.
 It checks GitHub automatically and downloads only on request. Android asks for
-installation approval. Install this version manually once; later versions can
-be obtained inside the app. See [updater behavior and release procedure](docs/APP_UPDATES.md).
+installation approval. Version 1.6.6 changes only the version number to exercise
+the published 1.6.5 → 1.6.6 update path. Users on 1.6.5 can use the in-app button;
+users on 1.6.4 or earlier must install this APK manually once.
+See [updater behavior and release procedure](docs/APP_UPDATES.md).
 
 ## wip connection (1.6.1)
 

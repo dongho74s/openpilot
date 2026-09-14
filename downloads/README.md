@@ -1,4 +1,20 @@
-# Hylink Dev 1.6.5 — 2026-09-14
+# Hylink Dev 1.6.6 — 2026-09-14
+
+[1.6.6 APK 다운로드](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.6.apk)
+
+1.6.5에서 실제 앱 내 업데이트 경로를 다시 확인하기 위한 버전입니다.
+기능·권한·차량 제어 코드는 변경하지 않고 앱 버전만 증가시켰습니다.
+1.6.5 사용자는 차량 탭 맨 아래 **업데이트 확인**으로 받을 수 있습니다.
+최근 자동 확인 후 6시간이 지나지 않았으면 수동 확인 버튼으로 바로 확인합니다.
+
+- 패키지 `app.hylink.mobile.debug`, versionCode `14`, versionName `1.6.6-app-updates-debug`
+- 13,959,776 bytes, Android 7.0 이상
+- SHA-256: `654fab6761f4f80150f89f76538e3b6ac23cc64e6aa5f0ecb968f88118271ff2`
+- 원래 개발 인증서 SHA-256: `55a14240fb656db17c66c695a61ae5679982a5ae24e233563a43211c5125fa94`
+- JVM 테스트 16개와 업데이트 UI 상태·라이브 회귀 검사 통과.
+- [실기기 검증 기록과 제한 사항](../docs/APP_UPDATES.md)
+
+## 이전 버전: Hylink Dev 1.6.5 — 2026-09-14
 
 [1.6.5 APK 다운로드](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.5.apk)
 
