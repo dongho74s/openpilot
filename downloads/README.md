@@ -1,4 +1,22 @@
-# Hylink Dev 1.6.4 — 2026-09-14
+# Hylink Dev 1.6.5 — 2026-09-14
+
+[1.6.5 APK 다운로드](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.5.apk)
+
+차량 탭 맨 아래 앱 업데이트 버튼을 추가했습니다. 자동 버전 확인, 명시적 다운로드,
+파일·서명 검증, Android 설치 확인 화면을 지원합니다. 1.6.4 사용자는 이번 APK를
+한 번 수동으로 덮어 설치하면 이후 앱 안에서 업데이트할 수 있습니다.
+
+- 패키지 `app.hylink.mobile.debug`, versionCode `13`, versionName `1.6.5-app-updates-debug`
+- 14,008,928 bytes, Android 7.0 이상
+- SHA-256: `8e6d5680c4ac8d08d618069363d49f35687619b9f6f5a90efa6586724299d8bf`
+- 원래 개발 인증서 SHA-256: `55a14240fb656db17c66c695a61ae5679982a5ae24e233563a43211c5125fa94`
+- JVM 테스트 16개(기존 API 5 + 업데이트 정책 11), UI 상태/12개 레이아웃 검사 통과.
+- [동작·검증 범위·다음 버전 게시 방법](../docs/APP_UPDATES.md)
+
+콤마용 브랜치는 `wip`입니다. `hylink-app`은 Android 앱 소스이므로 콤마에 설치하지 마세요.
+차량 주행 코드나 기존 라이브 간헐 끊김·전원 종료 문제를 수정하는 APK는 아닙니다.
+
+## 이전 버전: Hylink Dev 1.6.4
 
 [APK 다운로드](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.4.apk)
 

@@ -7,14 +7,19 @@ Hylink is an Android companion for a vehicle connected to Wayon Cloud.
 It is a separate application from My Traverse and uses a distinct package ID:
 `app.hylink.mobile`.
 
-## Download: Hylink Dev 1.6.4
+## Download: Hylink Dev 1.6.5
 
-[Download the verified APK](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.4.apk)
+[Download the APK](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.5.apk)
 
-This is the existing Hylink Dev package (`app.hylink.mobile.debug`, versionCode 12),
+This is the existing Hylink Dev package (`app.hylink.mobile.debug`, versionCode 13),
 signed with the original development certificate for in-place updates. It is not
 My Traverse New or a production-signed Play Store build. Keep the existing app
 installed when updating. See [changes, checksum and validation limits](downloads/README.md).
+
+Version 1.6.5 adds **Vehicle → App update** at the bottom of the vehicle tab.
+It checks GitHub automatically and downloads only on request. Android asks for
+installation approval. Install this version manually once; later versions can
+be obtained inside the app. See [updater behavior and release procedure](docs/APP_UPDATES.md).
 
 ## wip connection (1.6.1)
 
@@ -47,7 +52,9 @@ See [implementation and verification notes](docs/APP_UI_20260910.md).
 - Panda connection, harness, safety model, counters, fault health, and uptime
 - Offroad-only remote SSH terminal through the per-device Wayon relay
 
-Only Wayon Cloud data, camera, and remote-session endpoints are used. Account
+Vehicle features use only Wayon Cloud data, camera, and remote-session endpoints.
+The app updater separately reads public files from `leehyuk1108/carrotpilot` on
+GitHub; no vehicle key or telemetry is sent to GitHub. Account
 vehicle status and lock state bundled by the Cloud are removed before rendering. Hylink
 contains no vehicle commands, account integration, diagnostic clearing, remote
 start, door lock, climate, window, widget command, or Wear OS command code.

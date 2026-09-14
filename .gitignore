@@ -8,7 +8,9 @@ keystore.properties
 *.jks
 *.keystore
 *.apk
+*.apk.idsig
 !downloads/hylink-dev-1.6.4.apk
+!downloads/hylink-dev-1.6.5.apk
 *.aab
 .playwright-cli/
 output/

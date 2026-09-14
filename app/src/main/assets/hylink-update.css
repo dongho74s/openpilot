@@ -1,0 +1,22 @@
+.app-update-card{margin:24px 0 12px;padding:20px;border:1px solid var(--line);border-radius:22px;background:var(--surface);color:var(--ink)}
+.app-update-heading{display:flex;align-items:center;gap:12px}
+.app-update-heading>svg{width:24px;height:24px;flex:none;color:var(--secondary)}
+.app-update-heading h2{font-size:1.0625rem;line-height:1.4;margin:0;font-weight:700}
+.app-update-heading p{font-size:.8125rem;color:var(--secondary);margin:4px 0 0;overflow-wrap:anywhere}
+#app-update-latest{font-size:.875rem;font-weight:650;margin:14px 0 0;overflow-wrap:anywhere}
+#app-update-latest:empty{display:none}
+#app-update-status{font-size:.875rem;line-height:1.6;color:var(--secondary);margin:12px 0 16px;overflow-wrap:anywhere}
+.app-update-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.app-update-actions button{min-height:48px;border:0;border-radius:14px;padding:12px 18px;font-family:inherit;font-size:.9375rem;font-weight:650;line-height:1.4;white-space:normal}
+#app-update-button{flex:1;background:var(--ink);color:var(--bg)}
+#app-update-button:disabled{background:var(--line);color:var(--secondary);cursor:default}
+#app-update-cancel{background:transparent;color:var(--ink)}
+.app-update-actions button:focus-visible,#app-update-details summary:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+#app-update-progress-wrap{display:flex;align-items:center;gap:12px;margin:0 0 16px}
+#app-update-progress{flex:1;min-width:0;height:8px;accent-color:var(--blue)}
+#app-update-percent{font-size:.8125rem;color:var(--secondary);font-variant-numeric:tabular-nums;min-width:3em;text-align:right}
+#app-update-details{margin:16px 0 0;font-size:.875rem;line-height:1.6;color:var(--secondary)}
+#app-update-details summary{min-height:48px;display:flex;align-items:center;cursor:pointer;color:var(--ink)}
+#app-update-notes{margin:0 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.tab-bar [data-navigate="vehicle"]{position:relative}
+#app-update-badge{position:absolute;top:5px;left:calc(50% + 10px);width:7px;height:7px;border-radius:50%;background:var(--blue);border:1px solid var(--bg)}

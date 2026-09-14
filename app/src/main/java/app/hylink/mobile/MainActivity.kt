@@ -19,6 +19,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
@@ -47,6 +48,13 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var liveActive = false
     @Volatile private var terminalActive = false
     private lateinit var terminalClient: WayonTerminalClient
+    private lateinit var appUpdater: AppUpdateController
+    private val updateInstaller = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (::appUpdater.isInitialized) appUpdater.installerReturned()
+    }
+    private val updatePermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (::appUpdater.isInitialized) appUpdater.permissionReturned()
+    }
     private var locationRequestId: Int? = null
     private var locationCancellation: CancellationSignal? = null
     private var locationPermissionPending = false
@@ -67,6 +75,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        appUpdater = AppUpdateController(this,
+            canInteract = { activityVisible && pageReady && !liveActive && !terminalActive },
+            onState = { state -> runJs("window.onHylinkUpdateState?.(${state})") },
+            launchInstaller = { updateInstaller.launch(it) },
+            launchPermission = { updatePermission.launch(it) },
+        )
 
         terminalClient = WayonTerminalClient(
             context = this,
@@ -118,6 +133,8 @@ class MainActivity : AppCompatActivity() {
                 // CSS rem sizes follow Android's accessible text setting; layout reflows at large sizes.
                 runJs("window.onHylinkFontScale?.(${resources.configuration.fontScale})")
                 sendNativeConfiguration()
+                appUpdater.emit()
+                appUpdater.check(manual = false)
                 if (loadWayonCloudKey().isNotBlank()) refreshWayonData()
             }
         }
@@ -137,11 +154,13 @@ class MainActivity : AppCompatActivity() {
         activityVisible = true
         mainHandler.removeCallbacks(autoRefresh)
         mainHandler.post(autoRefresh)
+        if (pageReady) { appUpdater.emit(); appUpdater.check(manual = false) }
     }
 
     override fun onPause() {
         if (!locationPermissionPending && locationRequestId != null) finishLocation(locationRequestId!!, JSONObject().put("error", true).put("code", 2))
         activityVisible = false
+        appUpdater.pause()
         runJs("window.stopWayonLiveView?.()")
         liveActive = false
         mainHandler.removeCallbacks(autoRefresh)
@@ -154,6 +173,7 @@ class MainActivity : AppCompatActivity() {
         cancelLocationInternal()
         mainHandler.removeCallbacksAndMessages(null)
         terminalClient.shutdown()
+        appUpdater.close()
         networkExecutor.shutdownNow()
         webView.removeJavascriptInterface("Android")
         webView.destroy()
@@ -162,6 +182,18 @@ class MainActivity : AppCompatActivity() {
 
     @JavascriptInterface
     fun getWayonCloudKey(): String = loadWayonCloudKey()
+
+    @JavascriptInterface
+    fun checkAppUpdate() = runOnUiThread { appUpdater.check(manual = true) }
+
+    @JavascriptInterface
+    fun downloadAppUpdate() = runOnUiThread { appUpdater.download() }
+
+    @JavascriptInterface
+    fun installAppUpdate() = runOnUiThread { appUpdater.install() }
+
+    @JavascriptInterface
+    fun cancelAppUpdate() = runOnUiThread { appUpdater.cancel() }
 
     @JavascriptInterface
     fun getWayonCloudBaseUrl(): String = BuildConfig.WAYON_CLOUD_URL

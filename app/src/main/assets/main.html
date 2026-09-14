@@ -10,6 +10,8 @@
   <script defer src="vendor/lucide.min.js"></script>
   <script defer src="hylink-model.js"></script><script defer src="hylink-app.js"></script>
   <link rel="stylesheet" href="hylink-production.css">
+  <link rel="stylesheet" href="hylink-update.css">
+  <script defer src="hylink-update.js"></script>
   <script defer src="wayon_terminal.js"></script><script defer src="wayon_live.js"></script>
 </head>
 <body>
@@ -28,9 +30,25 @@
         </div>
       </section>
       <section id="page-records" class="page" aria-label="기록" hidden><div class="page-heading"><p class="eyebrow">차곡차곡 쌓이는</p><h1>차량의 기록</h1><p>주행부터 주차 중의 순간까지.</p></div><div class="page-padding"><div class="filter-tabs" role="group" aria-label="기록 종류"><button class="selected" data-filter="trips">주행</button><button data-filter="photos">사진</button><button data-filter="captures">영상</button><button data-filter="impacts">충격</button></div><div id="record-content"></div></div></section>
-      <section id="page-vehicle" class="page" aria-label="차량" hidden><div class="page-heading"><p class="eyebrow">차량과 연결 장치</p><h1>자세히 살펴보기</h1><p id="vehicle-age">차량 정보를 기다리고 있어요.</p></div><div class="page-padding" id="vehicle-content"></div><div class="page-padding"><button class="sheet-choice" id="connection-button"><i data-lucide="link"></i><span><b>차량 연결</b><small>연결 키 관리 · 새로고침</small></span></button><button class="sheet-choice" data-open-terminal><i data-lucide="terminal"></i><span><b>원격 터미널</b><small id="terminal-availability">상태 확인 중</small></span></button><p class="detail-note" id="terminal-launch-caption"></p></div></section>
+      <section id="page-vehicle" class="page" aria-label="차량" hidden>
+        <div class="page-heading"><p class="eyebrow">차량과 연결 장치</p><h1>자세히 살펴보기</h1><p id="vehicle-age">차량 정보를 기다리고 있어요.</p></div>
+        <div class="page-padding" id="vehicle-content"></div>
+        <div class="page-padding">
+          <button class="sheet-choice" id="connection-button"><i data-lucide="link"></i><span><b>차량 연결</b><small>연결 키 관리 · 새로고침</small></span></button>
+          <button class="sheet-choice" data-open-terminal><i data-lucide="terminal"></i><span><b>원격 터미널</b><small id="terminal-availability">상태 확인 중</small></span></button>
+          <p class="detail-note" id="terminal-launch-caption"></p>
+          <section class="app-update-card" id="app-update-card" aria-labelledby="app-update-title">
+            <div class="app-update-heading"><i data-lucide="download" aria-hidden="true"></i><div><h2 id="app-update-title">앱 업데이트</h2><p id="app-update-version">Hylink Dev</p></div></div>
+            <p id="app-update-latest"></p>
+            <p id="app-update-status" role="status" aria-live="polite">앱을 열면 새 버전을 자동으로 확인해요.</p>
+            <div id="app-update-progress-wrap" hidden><progress id="app-update-progress" max="100" aria-label="업데이트 다운로드 진행률"></progress><span id="app-update-percent" aria-hidden="true"></span></div>
+            <div class="app-update-actions"><button id="app-update-button" type="button" aria-describedby="app-update-status">업데이트 확인</button><button id="app-update-cancel" type="button" hidden>취소</button></div>
+            <details id="app-update-details" hidden><summary>변경 내용 보기</summary><p id="app-update-notes"></p></details>
+          </section>
+        </div>
+      </section>
     </main>
-    <nav class="tab-bar" aria-label="주 메뉴"><button class="selected" data-navigate="now" aria-current="page"><i data-lucide="navigation"></i><span>지금</span></button><button data-navigate="records"><i data-lucide="route"></i><span>기록</span></button><button data-navigate="vehicle"><i data-lucide="car-front"></i><span>차량</span></button></nav>
+    <nav class="tab-bar" aria-label="주 메뉴"><button class="selected" data-navigate="now" aria-current="page"><i data-lucide="navigation"></i><span>지금</span></button><button data-navigate="records"><i data-lucide="route"></i><span>기록</span></button><button data-navigate="vehicle"><i data-lucide="car-front"></i><span>차량</span><span id="app-update-badge" aria-hidden="true" hidden></span></button></nav>
   </div>
   <dialog id="sheet" aria-labelledby="sheet-title"><div class="sheet-handle"></div><div class="sheet-header"><h2 id="sheet-title"></h2><button class="icon-button" id="close-sheet" aria-label="닫기"><i data-lucide="x"></i></button></div><div id="sheet-content"></div></dialog>
   <dialog id="map-dialog" aria-labelledby="map-title">

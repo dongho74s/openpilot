@@ -34,8 +34,8 @@ android {
         applicationId = "app.hylink.mobile"
         minSdk = 24
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.6.4-live-view-only"
+        versionCode = 13
+        versionName = "1.6.5-app-updates"
 
         buildConfigField(
             "String",
