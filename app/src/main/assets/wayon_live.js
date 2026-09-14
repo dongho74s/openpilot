@@ -56,6 +56,7 @@
     let sessionRequestPending = false;
     let startupTimer = 0;
     let heartbeatTimer = 0;
+    let videoStalled = false;
     let nativeRefreshSuspended = false;
     let impactRequestSequence = 0;
     let saveToastTimer = 0;
@@ -94,11 +95,11 @@
 
     const streams = {
         wide: {
-            decoder: null, frame: null, frameReceivedAt: 0, ready: false,
+            decoder: null, frame: null, frameReceivedAt: 0, lastFrameAt: 0, ready: false,
             keySeen: false, droppingUntilKey: false, lastTimestamp: -1,
         },
         driver: {
-            decoder: null, frame: null, frameReceivedAt: 0, ready: false,
+            decoder: null, frame: null, frameReceivedAt: 0, lastFrameAt: 0, ready: false,
             keySeen: false, droppingUntilKey: false, lastTimestamp: -1,
         },
     };
@@ -1155,10 +1156,12 @@
     }
 
     function closeDecoders() {
+        videoStalled = false;
         Object.values(streams).forEach((stream) => {
             if (stream.frame) stream.frame.close();
             stream.frame = null;
             stream.frameReceivedAt = 0;
+            stream.lastFrameAt = 0;
             stream.ready = false;
             stream.keySeen = false;
             stream.droppingUntilKey = false;
@@ -1178,6 +1181,7 @@
                 if (stream.frame) stream.frame.close();
                 stream.frame = frame;
                 stream.frameReceivedAt = performance.now();
+                stream.lastFrameAt = stream.frameReceivedAt;
                 frameCounter += 1;
                 if (savedPlayback) {
                     clearStartupTimer();
@@ -1330,6 +1334,24 @@
     function stopHeartbeat() {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         heartbeatTimer = 0;
+    }
+
+    function updateVideoFreshness(now) {
+        if (savedPlayback || terminalState || (!videoStalled && !status.classList.contains("live"))) return;
+        const cameras = Object.values(streams);
+        // Initial connection already has its own startup timeout. Once video
+        // arrives, a frozen camera must not continue to be labeled as live.
+        if (!cameras.some(stream => stream.lastFrameAt > 0)) return;
+        const stale = cameras.some(stream => now - stream.lastFrameAt > 5000);
+        if (stale && !videoStalled) {
+            videoStalled = true;
+            setStatus("영상 수신 지연");
+            showMessage("영상 수신이 지연되고 있어요. 필요하면 다시 연결해 주세요.", true, false);
+        } else if (!stale && videoStalled) {
+            videoStalled = false;
+            setStatus("LIVE", true);
+            hideMessage();
+        }
     }
 
     function startHeartbeat(currentSocket) {
@@ -1621,6 +1643,7 @@
     setInterval(() => {
         if (!overlay.classList.contains("active")) return;
         const now = performance.now();
+        updateVideoFreshness(now);
         const elapsed = now - fpsStartedAt;
         if (elapsed >= 1000) {
             measuredFps = Math.round(frameCounter * 1000 / elapsed / 2);
