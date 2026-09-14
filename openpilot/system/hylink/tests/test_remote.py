@@ -43,6 +43,8 @@ def test_ssh_does_not_change_persistent_keys_or_expose_network_port(tmp_path, mo
   assert "ListenAddress=127.0.0.1" in args
   assert "PasswordAuthentication=no" in args and "AllowTcpForwarding=no" in args
   assert "HostKey=/data/etc/ssh/ssh_host_ed25519_key" in args
+  assert "HostKey=/data/etc/ssh/ssh_host_rsa_key" in args
+  assert not any("+ssh-rsa" in a for a in args)  # No SHA-1 algorithm downgrade.
   assert "UsePAM=no" in args  # Keep sessions in the cgroup that is stopped offroad->onroad.
   assert not any("GithubSshKeys" in a for a in args)
   args = remote.service_command()
@@ -64,3 +66,17 @@ def test_host_key_uses_agnos_key_without_starting_system_ssh(tmp_path, monkeypat
   monkeypatch.setattr(ssh_service, "AGNOS_HOST_KEY", existing)
   monkeypatch.setattr(ssh_service.subprocess, "run", lambda *a, **k: pytest.fail("Do not regenerate an existing key"))
   assert ssh_service.ensure_host_key() == existing
+
+
+def test_android_rsa_host_key_uses_existing_key_or_private_3072_bit_fallback(tmp_path, monkeypatch):
+  existing, private = tmp_path / "agnos-rsa", tmp_path / "hylink" / "rsa"
+  monkeypatch.setattr(ssh_service, "AGNOS_RSA_HOST_KEY", existing)
+  monkeypatch.setattr(ssh_service, "PRIVATE_RSA_HOST_KEY", private)
+  calls = []
+  monkeypatch.setattr(ssh_service.subprocess, "run", lambda args, **kwargs: calls.append(args))
+  existing.touch()
+  assert ssh_service.ensure_host_key("rsa") == existing
+  assert calls == []
+  existing.unlink()
+  assert ssh_service.ensure_host_key("rsa") == private
+  assert calls == [["/usr/bin/ssh-keygen", "-q", "-t", "rsa", "-b", "3072", "-N", "", "-f", str(private)]]

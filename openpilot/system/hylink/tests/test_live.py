@@ -15,6 +15,7 @@ from openpilot.system.hylink.live import (
   FRAME_HEADER,
   FRAME_MAGIC,
   FRAME_TYPE_METADATA,
+  FRAME_TYPE_STATUS,
   FRAME_TYPE_DRIVER,
   FRAME_TYPE_WIDE,
   bounded_number,
@@ -23,6 +24,7 @@ from openpilot.system.hylink.live import (
   pack_frame,
   read_client_control,
   stream_metadata,
+  send_stream_start,
 )
 
 
@@ -48,6 +50,19 @@ def test_json_frame_uses_compact_utf8_payload():
   frame = json_frame(FRAME_TYPE_METADATA, {"state": "live", "fps": 20})
   *_, payload = unpack_frame(frame)
   assert json.loads(payload) == {"state": "live", "fps": 20}
+
+
+def test_live_start_includes_separate_status_after_metadata():
+  packets = []
+  send_stream_start(SimpleNamespace(sendall=packets.append), {"width": 1344, "height": 760})
+  wire = packets[0]
+  *_, payload = unpack_frame(wire)
+  assert FRAME_HEADER.unpack(wire[:FRAME_HEADER.size])[1] == FRAME_TYPE_METADATA
+  assert json.loads(payload) == {"width": 1344, "height": 760}
+  status = wire[FRAME_HEADER.size + len(payload):]
+  *_, body = unpack_frame(status)
+  assert FRAME_HEADER.unpack(status[:FRAME_HEADER.size])[1] == FRAME_TYPE_STATUS
+  assert json.loads(body) == {"state": "live"}
 
 
 def test_encoded_payload_prepends_codec_header_on_key_frame():
