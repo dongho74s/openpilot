@@ -239,7 +239,6 @@ document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{recordFilte
 $('recent-trip').onclick=()=>showTrip();
 $('photos-button').onclick=()=>{document.querySelector('[data-filter="photos"]').click();navigate('records')};
 $('locate-button').onclick=openFullMap;
-window.addEventListener('wayon-live-capture-saved',()=>setTimeout(refresh,1200));
 // Update age labels locally; do not increase cloud traffic.
 setInterval(()=>{if(!document.hidden)render()},30000);
 let phoneCallback;

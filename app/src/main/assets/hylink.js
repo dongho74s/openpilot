@@ -126,10 +126,9 @@ $('btn-save-key').addEventListener('click',()=>{const key=$('wayon-cloud-key-inp
 $('btn-clear-key').addEventListener('click',()=>{if(confirm('이 휴대폰의 차량 연결을 해제할까요? 다시 연결하려면 차량의 연결 키가 필요합니다. 차량에 저장된 기록은 삭제되지 않습니다.'))window.Android?.clearWayonCloudKey?.()});
 $('btn-close-trip').addEventListener('click',()=>{$('trip-overlay').classList.remove('visible')});
 $('btn-close-image').addEventListener('click',closeImage);
-window.addEventListener('wayon-live-capture-saved',()=>setTimeout(()=>window.Android?.refreshWayonData?.(),1200));
 window.addEventListener('beforeunload',()=>{closeImage();for(const url of hylink.mediaUrls.values())URL.revokeObjectURL(url)});
 // Accessible names for icon-only controls; do not change their action handlers.
-const controlLabels={'btn-close-settings':'연결 설정 닫기','btn-close-trip':'주행 상세 닫기','btn-close-image':'사진 닫기','btn-close-terminal':'터미널 닫기','btn-terminal-send':'명령 보내기','btnWayonLiveClose':'라이브 닫기','btnWayonLiveCenter':'라이브 시점 가운데로','btnWayonLivePhoto':'현재 장면 저장','btnWayonLiveClip10':'10초 영상 저장','btnWayonLiveClip30':'30초 영상 저장','btnWayonLivePlaybackToggle':'저장 영상 재생 또는 일시정지'};
+const controlLabels={'btn-close-settings':'연결 설정 닫기','btn-close-trip':'주행 상세 닫기','btn-close-image':'사진 닫기','btn-close-terminal':'터미널 닫기','btn-terminal-send':'명령 보내기','btnWayonLiveClose':'라이브 닫기','btnWayonLiveCenter':'라이브 시점 가운데로','btnWayonLivePlaybackToggle':'저장 영상 재생 또는 일시정지'};
 Object.entries(controlLabels).forEach(([id,label])=>$(id)?.setAttribute('aria-label',label));
 $('settings-sheet').setAttribute('role','dialog');$('settings-sheet').setAttribute('aria-modal','true');$('settings-sheet').setAttribute('aria-label','차량 연결 설정');$('toast').setAttribute('role','status');$('toast').setAttribute('aria-live','polite');$('terminal-command-input').setAttribute('aria-label','원격 터미널 명령');
 document.addEventListener('keydown',event=>{if(event.key==='Escape'){window.handleHylinkBack();return}if(event.key==='Tab'&&$('settings-sheet').classList.contains('visible')){const controls=[...$('settings-sheet').querySelectorAll('button:not(:disabled),input,a[href]')],first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}}});

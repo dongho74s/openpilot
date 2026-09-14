@@ -21,9 +21,6 @@
     const DRIVER_BLEND_RAMP_MS = 3500;
     const FRAME_SYNC_TOLERANCE_US = 100_000;
     const SINGLE_CAMERA_STARTUP_MS = 250;
-    const CONTROL_MAGIC = [87, 76, 67, 49];
-    const CONTROL_PHOTO = 1;
-    const CONTROL_CLIP = 2;
 
     const overlay = document.getElementById("wayon-live-overlay");
     const canvas = document.getElementById("wayon-live-canvas");
@@ -39,10 +36,6 @@
     const impactForce = document.getElementById("wayon-live-impact-force");
     const impactLocation = document.getElementById("wayon-live-impact-location");
     const impactLock = document.getElementById("wayon-live-impact-lock");
-    const saveToast = document.getElementById("wayon-live-save-toast");
-    const photoButton = document.getElementById("btnWayonLivePhoto");
-    const clip10Button = document.getElementById("btnWayonLiveClip10");
-    const clip30Button = document.getElementById("btnWayonLiveClip30");
     const playbackBar = document.getElementById("wayon-live-playback-bar");
     const playbackToggle = document.getElementById("btnWayonLivePlaybackToggle");
     const playbackProgress = document.getElementById("wayon-live-playback-progress");
@@ -59,8 +52,6 @@
     let videoStalled = false;
     let nativeRefreshSuspended = false;
     let impactRequestSequence = 0;
-    let saveToastTimer = 0;
-    let photoCaptureBusy = false;
     let receiveBuffer = new Uint8Array(0);
     let metadata = null;
     let glState = null;
@@ -675,111 +666,6 @@
         gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
 
-    function sendClientControl(commandType, payload = new Uint8Array(0)) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
-            showSaveToast("Live 연결 후 저장할 수 있습니다.");
-            return false;
-        }
-        const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
-        const packet = new Uint8Array(9 + body.length);
-        packet.set(CONTROL_MAGIC, 0);
-        packet[4] = commandType;
-        new DataView(packet.buffer).setUint32(5, body.length, false);
-        packet.set(body, 9);
-        socket.send(packet.buffer);
-        return true;
-    }
-
-    function jpegBlob(sourceCanvas) {
-        return new Promise((resolve, reject) => {
-            sourceCanvas.toBlob(
-                (blob) => blob ? resolve(blob) : reject(new Error("JPEG encoding failed")),
-                "image/jpeg",
-                1.0,
-            );
-        });
-    }
-
-    async function capturePanoramaPhoto() {
-        if (photoCaptureBusy) return;
-        if (!glState || !streams.wide.ready || !streams.driver.ready) {
-            showSaveToast("두 카메라 준비 후 저장할 수 있습니다.");
-            return;
-        }
-
-        photoCaptureBusy = true;
-        photoButton.disabled = true;
-        showSaveToast("360° 사진 생성 중", 6000);
-        const { gl } = glState;
-        let framebuffer = null;
-        let captureTexture = null;
-        try {
-            const cameraWidth = Math.max(1, Number(metadata?.width) || 1344);
-            const cameraFov = Math.max(1, Number(metadata?.panorama?.wideFovDeg) || 205);
-            const sourceDensityWidth = Math.ceil(cameraWidth * 360 / cameraFov);
-            const width = Math.min(sourceDensityWidth, gl.getParameter(gl.MAX_TEXTURE_SIZE));
-            const height = Math.max(1, Math.round(width * 128 / 360));
-            framebuffer = gl.createFramebuffer();
-            captureTexture = gl.createTexture();
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, captureTexture);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, captureTexture, 0);
-            if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-                throw new Error("Panorama framebuffer incomplete");
-            }
-
-            drawPanorama(0, 0, Math.PI * 2, width, height, 1);
-            const pixels = new Uint8Array(width * height * 4);
-            gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-            const outputCanvas = document.createElement("canvas");
-            outputCanvas.width = width;
-            outputCanvas.height = height;
-            const outputContext = outputCanvas.getContext("2d");
-            if (!outputContext) throw new Error("Panorama canvas unavailable");
-            const image = outputContext.createImageData(width, height);
-            const rowBytes = width * 4;
-            for (let row = 0; row < height; row += 1) {
-                const sourceOffset = (height - row - 1) * rowBytes;
-                image.data.set(pixels.subarray(sourceOffset, sourceOffset + rowBytes), row * rowBytes);
-            }
-            outputContext.putImageData(image, 0, 0);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.deleteFramebuffer(framebuffer);
-            framebuffer = null;
-            gl.deleteTexture(captureTexture);
-            captureTexture = null;
-            gl.activeTexture(gl.TEXTURE0);
-            drawPanorama(yaw, pitch, viewFov, canvas.width, canvas.height);
-            const blob = await jpegBlob(outputCanvas);
-            const payload = new Uint8Array(await blob.arrayBuffer());
-            if (sendClientControl(CONTROL_PHOTO, payload)) showSaveToast("360° 사진 업로드 중", 6000);
-        } catch (error) {
-            console.error("Wayon panorama capture failed", error);
-            showSaveToast("360° 사진 생성에 실패했습니다.");
-        } finally {
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            if (framebuffer) gl.deleteFramebuffer(framebuffer);
-            if (captureTexture) gl.deleteTexture(captureTexture);
-            gl.activeTexture(gl.TEXTURE0);
-            drawPanorama(yaw, pitch, viewFov, canvas.width, canvas.height);
-            photoCaptureBusy = false;
-            photoButton.disabled = false;
-        }
-    }
-
-    function requestClip(durationSeconds) {
-        if (sendClientControl(CONTROL_CLIP, new Uint8Array([durationSeconds]))) {
-            showSaveToast(`최근 ${durationSeconds}초 클립 준비 중`, 5000);
-        }
-    }
-
     function parseStoredZip(buffer) {
         const bytes = new Uint8Array(buffer);
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -931,7 +817,6 @@
         overlay.classList.add("active", "playback");
         overlay.setAttribute("aria-hidden", "false");
         playbackBar.hidden = false;
-        hideSaveToast();
         hideImpactPanel();
         yaw = 0;
         pitch = 0;
@@ -1076,19 +961,6 @@
     function hideImpactPanel() {
         impactRequestSequence += 1;
         impactPanel.hidden = true;
-    }
-
-    function showSaveToast(text, durationMs = 2800) {
-        clearTimeout(saveToastTimer);
-        saveToast.textContent = text;
-        saveToast.hidden = false;
-        saveToastTimer = setTimeout(() => { saveToast.hidden = true; }, durationMs);
-    }
-
-    function hideSaveToast() {
-        clearTimeout(saveToastTimer);
-        saveToastTimer = 0;
-        saveToast.hidden = true;
     }
 
     function impactDateTime(value) {
@@ -1245,31 +1117,11 @@
         }));
     }
 
-    function handleCaptureStatus(data) {
-        const duration = Math.max(0, Math.round(Number(data.durationSeconds) || 0));
-        const label = data.kind === "photo" ? "360° 사진" : `${duration || ""}초 클립`.trim();
-        if (data.captureState === "saved") {
-            showSaveToast(`${label}이 Wayon Cloud에 저장됐습니다.`, 4200);
-            window.dispatchEvent(new CustomEvent("wayon-live-capture-saved", { detail: data }));
-        } else if (data.captureState === "uploading") {
-            showSaveToast(`${label} 업로드 중`, 6000);
-        } else if (data.captureState === "buffering") {
-            showSaveToast(`클립 버퍼 준비 중 · 현재 ${duration}초`, 3600);
-        } else {
-            showSaveToast(`${label || "Live 기록"} 저장에 실패했습니다.`, 3600);
-        }
-    }
-
     function handleControl(frameType, payload) {
         const data = JSON.parse(new TextDecoder().decode(payload));
         if (frameType === FRAME_METADATA) {
             metadata = data;
             setStatus("카메라 준비 중");
-            return;
-        }
-
-        if (data.state === "capture") {
-            handleCaptureStatus(data);
             return;
         }
 
@@ -1503,7 +1355,6 @@
         yawVelocity = 0;
         pitchVelocity = 0;
         metadata = null;
-        hideSaveToast();
         driverColorGain = [1, 1, 1];
         resetStartupExposureState();
         nextColorSampleAt.wide = 0;
@@ -1537,7 +1388,6 @@
         overlay.classList.remove("active");
         overlay.setAttribute("aria-hidden", "true");
         status.classList.remove("live");
-        hideSaveToast();
         hideImpactPanel();
         suspendNativeRefresh(false);
     };
@@ -1594,9 +1444,6 @@
     canvas.addEventListener("pointercancel", releasePointer);
     document.getElementById("btnWayonLive").addEventListener("click", window.startWayonLiveView);
     document.getElementById("btnWayonLiveClose").addEventListener("click", window.stopWayonLiveView);
-    photoButton.addEventListener("click", capturePanoramaPhoto);
-    clip10Button.addEventListener("click", () => requestClip(10));
-    clip30Button.addEventListener("click", () => requestClip(30));
     playbackToggle.addEventListener("click", () => {
         if (!savedPlayback) return;
         if (savedPlayback.finished) {
