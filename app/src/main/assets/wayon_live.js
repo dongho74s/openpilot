@@ -1337,7 +1337,9 @@
         const sendHeartbeat = () => {
             if (socket !== currentSocket || currentSocket.readyState !== WebSocket.OPEN) return;
             try {
-                currentSocket.send("WLP1");
+                // Cloud relay reserves text for its own control messages.
+                // Viewer heartbeats must use the binary camera protocol.
+                currentSocket.send(new Uint8Array([0x57, 0x4c, 0x50, 0x31]));
             } catch (error) {
                 console.warn("Wayon Live heartbeat failed", error);
             }

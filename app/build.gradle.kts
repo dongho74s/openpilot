@@ -34,8 +34,8 @@ android {
         applicationId = "app.hylink.mobile"
         minSdk = 24
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.6.1-wip-connect"
+        versionCode = 10
+        versionName = "1.6.2-wip-parking"
 
         buildConfigField(
             "String",
