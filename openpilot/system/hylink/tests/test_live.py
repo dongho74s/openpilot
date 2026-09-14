@@ -3,12 +3,10 @@ import socket
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from openpilot.system.hylink.live import (
   CLIENT_HEARTBEAT_MAGIC,
-  CLIENT_CONTROL_CLIP,
-  CLIENT_CONTROL_HEADER,
-  CLIENT_CONTROL_MAGIC,
-  ClipFrameStore,
   ClientHeartbeatMonitor,
   ClientControlState,
   FRAME_FLAG_KEY,
@@ -16,8 +14,6 @@ from openpilot.system.hylink.live import (
   FRAME_MAGIC,
   FRAME_TYPE_METADATA,
   FRAME_TYPE_STATUS,
-  FRAME_TYPE_DRIVER,
-  FRAME_TYPE_WIDE,
   bounded_number,
   encoded_payload,
   json_frame,
@@ -118,31 +114,6 @@ def test_client_control_accepts_fragmented_heartbeat():
   assert not state.buffer
 
 
-def test_client_control_preserves_binary_command_payload():
-  state = ClientControlState()
-  payload = b"clip-contains-" + CLIENT_HEARTBEAT_MAGIC
-  packet = CLIENT_CONTROL_HEADER.pack(CLIENT_CONTROL_MAGIC, CLIENT_CONTROL_CLIP, len(payload)) + payload
-
-  state.feed(packet[:7])
-  assert state.pop_commands() == []
-  state.feed(packet[7:])
-  assert state.pop_commands() == [(CLIENT_CONTROL_CLIP, payload)]
-  assert not state.heartbeat_seen
-
-
-def test_clip_frame_store_preserves_full_stream_and_prunes_old_frames():
-  store = ClipFrameStore(max_buffer_s=12)
-  for second in range(21):
-    store.append(FRAME_TYPE_WIDE, (second, f"w{second}".encode(), second % 5 == 0, second * 1_000_000))
-    store.append(FRAME_TYPE_DRIVER, (second, f"d{second}".encode(), second % 5 == 0, second * 1_000_000))
-
-  wide, driver = store.recent_pair(duration_s=10, now_s=20)
-
-  assert [item[1] for item in wide] == [f"w{second}".encode() for second in range(10, 21)]
-  assert [item[1] for item in driver] == [f"d{second}".encode() for second in range(10, 21)]
-  assert store.buffers[FRAME_TYPE_WIDE][0][0] == 8
-
-
 def test_read_client_control_detects_heartbeat_and_disconnect():
   client, peer = socket.socketpair()
   state = ClientControlState()
@@ -174,3 +145,27 @@ def test_heartbeat_monitor_closes_stale_client():
     monitor.stop()
     peer.close()
     client.close()
+
+
+@pytest.mark.parametrize("command", [bytes.fromhex("574c433101000000046a706567"), bytes.fromhex("574c433102000000011e")])
+def test_removed_capture_commands_are_rejected(command):
+  state = ClientControlState()
+  with pytest.raises(ValueError, match="Unsupported live control"):
+    state.feed(command)
+  assert not state.heartbeat_seen
+
+
+def test_heartbeat_buffer_is_bounded_and_multiple_heartbeats_are_accepted():
+  state = ClientControlState()
+  state.feed(CLIENT_HEARTBEAT_MAGIC * 100 + b"WL")
+  assert state.heartbeat_seen
+  assert state.buffer == b"WL"
+  state.feed(b"P1")
+  assert not state.buffer
+
+
+def test_live_module_has_no_recording_buffer_or_upload_worker():
+  from openpilot.system.hylink import live
+  for name in ("ClipFrameStore", "ClipFrameCollector", "ARCHIVE_EXECUTOR",
+               "process_capture_commands", "upload_live_capture"):
+    assert not hasattr(live, name)

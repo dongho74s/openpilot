@@ -4,7 +4,6 @@ import pytest
 from websocket import ABNF, WebSocketTimeoutException
 
 from openpilot.system.hylink.relay import Relay, TARGET
-from openpilot.system.hylink.live import BoundedArchiveExecutor, ClipFrameStore, FRAME_TYPE_WIDE
 
 
 class WebSocket:
@@ -68,27 +67,3 @@ def test_peer_close_and_ignition_closes_local():
     assert peer.recv(1) == b""
   finally:
     peer.close()
-
-
-def test_clip_buffer_memory_is_bounded():
-  store = ClipFrameStore()
-  for i in range(40):
-    store.append(FRAME_TYPE_WIDE, (i, b"x" * (1024 * 1024), i % 10 == 0, i))
-  assert sum(len(frame[1]) for frame in store.buffers[FRAME_TYPE_WIDE]) <= 16 * 1024 * 1024
-
-
-def test_archive_queue_bounded_across_multiple_sessions():
-  import threading
-  executor = BoundedArchiveExecutor()
-  done = threading.Event()
-  try:
-    futures = [executor.submit(done.wait, 1) for _ in range(3)]
-    with pytest.raises(RuntimeError, match="archive_queue_full"):
-      executor.submit(lambda: None)
-    done.set()
-    for future in futures:
-      future.result(timeout=2)
-    assert executor.submit(lambda: True).result(timeout=2)
-  finally:
-    done.set()
-    executor.pool.shutdown(wait=True, cancel_futures=True)
