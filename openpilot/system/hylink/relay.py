@@ -4,7 +4,7 @@ import socket
 import threading
 import time
 
-from websocket import ABNF, WebSocketException, WebSocketTimeoutException, create_connection
+from websocket import ABNF, WebSocket, WebSocketException, WebSocketTimeoutException, create_connection
 
 from openpilot.common.params import Params
 from openpilot.system.hylink.policy import UploadBackoff
@@ -16,7 +16,41 @@ TARGET = ("127.0.0.1", 8765)
 def relay_event(target, event, **fields):
   # Metadata only: never include auth headers, commands, media or exception text.
   kind = "live" if target == TARGET else "ssh"
-  print("Hylink relay " + kind + ": " + json.dumps({"event": event, **fields}, separators=(",", ":")), flush=True)
+  print("Hylink relay " + kind + ": " + json.dumps({"event": event, "at_s": round(time.monotonic(), 3), **fields}, separators=(",", ":")), flush=True)
+
+
+class RelayRetry:
+  """Three quick attempts for a lost live viewer, then the usual quiet backoff."""
+  def __init__(self, backoff=None):
+    self.backoff = backoff or UploadBackoff()
+    self.fast_attempt = 0
+    self.recovering_viewer = False
+
+  def delay(self, had_live_viewer, connected_s):
+    if connected_s > 60:
+      self.backoff.success()
+      self.fast_attempt = 0
+      self.recovering_viewer = False
+    self.recovering_viewer = self.recovering_viewer or had_live_viewer
+    if self.recovering_viewer and self.fast_attempt < 3:
+      delay = (1, 2, 4)[self.fast_attempt]
+      self.fast_attempt += 1
+      return delay * (1 + 0.2 * self.backoff.jitter())
+    return self.backoff.failure_delay()
+
+
+class ObservedWebSocket(WebSocket):
+  def __init__(self, *args, relay_target=TARGET, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.relay_target = relay_target
+
+  def recv_frame(self):
+    frame = super().recv_frame()
+    if frame is not None and frame.opcode == ABNF.OPCODE_CLOSE:
+      # Observe before websocket-client's automatic close reply can itself fail.
+      code = int.from_bytes(frame.data[:2], "big") if len(frame.data) >= 2 else None
+      relay_event(self.relay_target, "cloud_close_frame", code=code)
+    return frame
 
 
 class Relay:
@@ -25,6 +59,7 @@ class Relay:
     self.target = target
     self.local = None
     self.lock = threading.Lock()
+    self.peer_opened = False
 
   def close_local(self, expected=None):
     with self.lock:
@@ -46,6 +81,7 @@ class Relay:
     local.settimeout(0.5)
     with self.lock:
       self.local = local
+    self.peer_opened = True
     relay_event(self.target, "peer_open")
 
     def forward():
@@ -106,6 +142,7 @@ class Relay:
           if command == "wayon-peer-open":
             self.open_local(ws)
           elif command == "wayon-peer-close":
+            self.peer_opened = False
             relay_event(self.target, "peer_close_command")
             self.close_local()
           else:
@@ -127,15 +164,17 @@ class Relay:
 
 def run_relay(relay, params, kind="live"):
   allowed = relay.allowed
-  backoff = UploadBackoff()
+  retry = RelayRetry()
   while allowed():
     ws = None
+    relay.peer_opened = False
     connected_at = time.monotonic()
     try:
       config = read_config(params)
       ws = create_connection(ENDPOINT.replace("https://", "wss://") + "/api/device/relay/" + kind,
                              header=["Authorization: Bearer " + config["token"]],
-                             timeout=5, enable_multithread=True, redirect_limit=0)
+                             timeout=5, enable_multithread=True, redirect_limit=0,
+                             class_=ObservedWebSocket, relay_target=relay.target)
       relay.connected(ws)
     except (OSError, WebSocketException, ValueError) as exc:
       relay_event(relay.target, "connection_error", reason=type(exc).__name__,
@@ -144,9 +183,9 @@ def run_relay(relay, params, kind="live"):
       relay.close_local()
       if ws:
         ws.close(timeout=0.5)
-    if time.monotonic() - connected_at > 60:
-      backoff.success()
-    retry_at = time.monotonic() + backoff.failure_delay()
+    delay = retry.delay(kind == "live" and relay.peer_opened, time.monotonic() - connected_at)
+    relay_event(relay.target, "retry_scheduled", delay_s=round(delay, 2))
+    retry_at = time.monotonic() + delay
     while allowed() and time.monotonic() < retry_at:
       time.sleep(0.5)
 
