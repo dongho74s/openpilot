@@ -1,5 +1,10 @@
 # Hylink Dev 1.6.6 — 2026-09-14
 
+**검증 중:** 실제 앱 내 설치와 데이터 보존은 확인했지만, 설치 후 삼성의
+‘잠재적으로 유해한 앱 감지됨 / 피싱 시도 후에 설치되었습니다’ 경고가 재현됐습니다.
+Google Play Protect의 APK 검사 결과는 ‘안전한 앱으로 판단됨’이었으나 삼성 판정의
+원인은 미해결입니다. 보안 경고가 해소된 일반 배포용 버전으로 보지 마세요.
+
 [1.6.6 APK 다운로드](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.6.apk)
 
 1.6.5에서 실제 앱 내 업데이트 경로를 다시 확인하기 위한 버전입니다.

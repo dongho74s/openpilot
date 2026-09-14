@@ -1,4 +1,4 @@
-# Hylink Dev 앱 업데이트 — 1.6.5
+# Hylink Dev 앱 업데이트 — 1.6.5 / 1.6.6 검증
 
 ## 사용 방법
 
@@ -90,11 +90,50 @@ Wayon/Sunnypilot이나 차량용 wip에 앱 소스/APK를 덮어쓰지 않습니
   보안 설정의 자동 변경을 하지 않았습니다.
 - 설치 후 차량 탭의 업데이트 확인 버튼으로 공개 피드를 다시 조회했고, 현재 1.6.5와
   **최신 버전이에요.** 상태를 확인했습니다.
-- **미확인 사항:** 사용자가 설치 과정에서 보안 경고를 보고했으나 정확한 문구/화면은
-  확보하지 못했습니다. 설치·실행은 확인됐지만 경고 분류와 원인은 아직 확정하지 않았습니다.
-  다음 경고 화면이나 Play Protect 검사 결과를 확인해야 하며 보안 경고가 해결됐다고 보고하지 않습니다.
+- **당시 미확인 사항:** 사용자가 설치 과정에서 보안 경고를 보고했으나 해당 순간의
+  정확한 문구/화면은 확보하지 못했습니다. 이후 직접 실행한 Play Protect 검사에서는
+  ‘유해한 앱 없음’과 최근 검사 목록의 Hylink 아이콘을 확인했습니다. Google 검사 결과만으로
+  삼성 경고까지 해소된 것으로 볼 수는 없습니다. 다음 1.6.6 재시험에서 별도 경고를 포착했습니다.
+
+### 1.6.6 재시험 — 설치 성공, 삼성 경고 미해결
+
+2026-09-14, 기존 1.6.5가 설치된 동일 갤럭시에서 시행했습니다. 앱 기능·권한은 변경하지
+않고 `versionCode=14`, `versionName=1.6.6-app-updates-debug`로 올렸습니다.
+차량 `wip`과 My Traverse New는 변경하지 않았습니다.
+
+1. 공개 GitHub 피드에서 1.6.6이 표시됐고 앱의 다운로드 버튼으로 APK를 받았습니다.
+   앱의 파일 크기·해시·패키지·서명 검증 후 ‘검증 완료’ 상태를 확인했습니다.
+2. 앱의 설치 버튼 → Android의 ‘업데이트’를 눌렀습니다. PC의 `adb install`이나
+   로컬 bootstrap 덮어 설치를 사용하지 않은 실제 앱 내 업데이트입니다.
+3. 삼성 `UnknownSourceConfirmActivity`가 **‘앱 설치가 권장되지 않음’**을 표시했습니다.
+   본문은 Play/갤럭시 스토어와 달리 **인증되지 않은 출처**라는 안내였습니다.
+   이 APK 한 건의 설치 확인만 진행했으며 보호 기능을 끄지 않았습니다.
+4. Google Play Protect가 **‘앱 검사 권장됨’**을 표시했습니다. 검사를 건너뛰지 않고
+   **앱 검사**를 실행했고 **‘안전한 앱으로 판단됨 / 계속해서 설치할 수 있습니다’**라는
+   결과를 확인한 다음 설치를 진행했습니다.
+5. 실제 설치 패키지가 1.6.6/code 14로 바뀌었습니다. 설치 APK를 다시 읽어 로컬 배포본 및
+   공개 GitHub 다운로드와 바이트 단위로 일치하는 것을 확인했습니다.
+   연결 설정 파일의 SHA-256도 전후 동일합니다. 앱 데이터 삭제/초기화는 없었습니다.
+6. **설치 직후 삼성의 별도 경고가 발생했습니다.** `SuspiciousAppAlertActivity`의 문구는
+   **‘잠재적으로 유해한 앱 감지됨’**, **‘피싱 시도 후에 설치되었습니다’**였습니다.
+   상세 화면은 `com.samsung.android.securitybrief`의 `PhishingAppActivity`이며
+   Hylink Dev가 잠재적으로 유해한 앱 목록에 표시됐습니다.
+7. 해당 목록에서 Hylink를 누르면 **‘앱을 실행하면, 위험 알림은 더 이상 제공되지 않습니다’**와
+   **열기** 버튼이 나타났습니다. 경고를 지우는 결과로 검증을 대신하지 않기 위해 열기는
+   누르지 않았습니다. 설치 후 Hylink의 재실행/UI 확인은 이 지점에서 중단했습니다.
+
+검증된 APK SHA-256은 `654fab6761f4f80150f89f76538e3b6ac23cc64e6aa5f0ecb968f88118271ff2`입니다.
+기기 빌드는 `CP2A.260605.016.F966NKSUCZZI6`, 삼성 보안 알림 앱은 `1.0.01.1`입니다.
+공유 문서에는 연결 키·개인 알림·기기 식별자·서명 개인키를 포함하지 않습니다.
+
+**결론:** 다운로드·무결성/서명 검증·Android 설치·설정 보존은 통과했습니다. 그러나
+삼성 보안 판정은 미해결입니다. 위 문구는 시스템이 표시한 판정이지 실제 피싱이 있었다는
+독립적인 증거는 아닙니다. Google의 안전 판정과 해시 일치만으로 삼성의 오탐을 확정하지
+않습니다. 경고 원인을 분석하기 전 일반 사용자 배포 검증 완료로 보고하지 않습니다.
+자동 확인의 6시간 간격, 사용자 다운로드/설치 확인도 유지되므로 무인 자동 설치는 아닙니다.
 
 API 근거: [Android 설치 권한](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls()),
 [FileProvider](https://developer.android.com/reference/androidx/core/content/FileProvider),
 [앱 서명과 업데이트](https://developer.android.com/studio/publish/app-signing#considerations),
-[Play Protect 경고 종류](https://support.google.com/work/android/answer/15162069?hl=en).
+[Play Protect 경고 종류](https://support.google.com/work/android/answer/15162069?hl=en),
+[Google의 새 앱 검사 안내](https://support.google.com/android/answer/2812853?hl=ko).

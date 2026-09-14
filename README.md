@@ -9,6 +9,12 @@ It is a separate application from My Traverse and uses a distinct package ID:
 
 ## Download: Hylink Dev 1.6.6
 
+**Validation warning:** The 1.6.5 → 1.6.6 in-app installation succeeded and Google
+Play Protect reported the APK safe, but Samsung subsequently flagged it as a
+potentially harmful app installed after a phishing attempt. The Samsung trigger
+is unresolved; this is not a security-cleared production release. See the
+[device test record](docs/APP_UPDATES.md#166-재시험--설치-성공-삼성-경고-미해결).
+
 [Download the APK](https://github.com/leehyuk1108/carrotpilot/raw/refs/heads/hylink-app/downloads/hylink-dev-1.6.6.apk)
 
 This is the existing Hylink Dev package (`app.hylink.mobile.debug`, versionCode 14),
