@@ -12,12 +12,17 @@ from openpilot.system.hylink.remote import SSH_REQUEST
 KEYS_PATH = runtime.RUNTIME_ROOT / "ssh_authorized_keys"
 AGNOS_HOST_KEY = Path("/data/etc/ssh/ssh_host_ed25519_key")
 PRIVATE_HOST_KEY = runtime.CONFIG_PATH.with_name("ssh_host_ed25519_key")
+AGNOS_RSA_HOST_KEY = Path("/data/etc/ssh/ssh_host_rsa_key")
+PRIVATE_RSA_HOST_KEY = runtime.CONFIG_PATH.with_name("ssh_host_rsa_key")
 
 
-def ssh_command(host_key=AGNOS_HOST_KEY):
+def ssh_command(host_key=AGNOS_HOST_KEY, rsa_host_key=AGNOS_RSA_HOST_KEY):
   return ["/usr/sbin/sshd", "-D", "-e", "-f", "/dev/null", "-p", "12222",
           "-o", "ListenAddress=127.0.0.1", "-o", "AllowUsers=comma",
           "-o", "HostKey=" + str(host_key), "-o", "PasswordAuthentication=no",
+          # Android's JSch may lack an Ed25519 provider. Offer RSA with the
+          # server's default SHA-2 signatures too; do not enable legacy SHA-1.
+          "-o", "HostKey=" + str(rsa_host_key),
           "-o", "UsePAM=no", "-o", "StrictModes=no", "-o", "PidFile=" + str(runtime.RUNTIME_ROOT / "sshd.pid"),
           "-o", "KbdInteractiveAuthentication=no", "-o", "AuthenticationMethods=publickey",
           "-o", "AuthorizedKeysFile=" + str(KEYS_PATH), "-o", "AllowTcpForwarding=no",
@@ -26,16 +31,20 @@ def ssh_command(host_key=AGNOS_HOST_KEY):
           "-o", "LoginGraceTime=15", "-o", "ClientAliveInterval=10", "-o", "ClientAliveCountMax=2"]
 
 
-def ensure_host_key():
+def ensure_host_key(key_type="ed25519"):
   # AGNOS stores its keys under /data/etc/ssh, not /etc/ssh. If system SSH
   # has never run, create a separate Hylink host key without enabling it.
-  if AGNOS_HOST_KEY.is_file():
-    return AGNOS_HOST_KEY
-  if not PRIVATE_HOST_KEY.is_file():
-    PRIVATE_HOST_KEY.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    subprocess.run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(PRIVATE_HOST_KEY)],
+  assert key_type in ("ed25519", "rsa")
+  existing = AGNOS_HOST_KEY if key_type == "ed25519" else AGNOS_RSA_HOST_KEY
+  private = PRIVATE_HOST_KEY if key_type == "ed25519" else PRIVATE_RSA_HOST_KEY
+  if existing.is_file():
+    return existing
+  if not private.is_file():
+    private.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    size = ["-b", "3072"] if key_type == "rsa" else []
+    subprocess.run(["/usr/bin/ssh-keygen", "-q", "-t", key_type, *size, "-N", "", "-f", str(private)],
                    check=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-  return PRIVATE_HOST_KEY
+  return private
 
 
 def main():
@@ -43,6 +52,7 @@ def main():
   if not runtime.remote_ready(False, params):
     return
   host_key = ensure_host_key()
+  rsa_host_key = ensure_host_key("rsa")
   Path("/run/sshd").mkdir(mode=0o755, exist_ok=True)
   process = None
   last_keys = None
@@ -65,7 +75,7 @@ def main():
           break
         # No PAM login scope: all children stay in the transient unit's cgroup.
         # StrictModes is disabled only for this private, 0600 tmpfs key file.
-        process = subprocess.Popen(ssh_command(host_key), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(ssh_command(host_key, rsa_host_key), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
       if process.poll() is not None:
         break
       time.sleep(0.25)

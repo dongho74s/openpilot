@@ -349,6 +349,12 @@ def send_terminal(client: socket.socket, state: str, message: str = "") -> None:
   time.sleep(0.25)
 
 
+def send_stream_start(client, metadata):
+  # The Android viewer treats metadata and live status as separate frame types.
+  # Send this only after both cameras have yielded a decodable key frame.
+  client.sendall(json_frame(FRAME_TYPE_METADATA, metadata) + json_frame(FRAME_TYPE_STATUS, {"state": "live"}))
+
+
 def send_capture_status(client: socket.socket, capture_state: str, kind: str,
                         message: str = "", duration_s: float | None = None,
                         capture_id: str | None = None) -> None:
@@ -506,7 +512,7 @@ def run_stream(client):
         return
       width, height = next(iter(sizes))
       metadata = {**stream_metadata(LIVE_BITRATE, max_session_s), "width": width, "height": height, "state": "live"}
-      client.sendall(json_frame(FRAME_TYPE_METADATA, metadata))
+      send_stream_start(client, metadata)
       store = ClipFrameStore()
       collector = ClipFrameCollector(messaging, store)
       collector.start()
