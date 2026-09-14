@@ -21,6 +21,9 @@
 앱 설치는 Android의 정상 사용자 확인을 거칩니다. `UPDATE_PACKAGES_WITHOUT_USER_ACTION`,
 특권 설치 권한, 루트 권한, 앱 설치 허용의 강제 변경을 사용하지 않습니다.
 기기 정책/자동 차단 기능이 외부 APK 설치를 막으면 사용자가 정책을 확인해야 합니다.
+보안 경고가 나오면 먼저 정확한 문구를 확인합니다. **검사 권장**과 **유해 앱 탐지/차단**은
+다른 결과입니다. 파일 해시·서명 일치나 설치/실행 성공만으로 보안 경고가 오탐이라고
+판단하지 않으며, Play Protect 등 보호 기능을 끄도록 안내하지 않습니다.
 
 1.6.4에는 업데이트 코드가 없으므로 **1.6.5를 한 번 수동 설치**해야 합니다.
 이후 GitHub에 새 APK와 업데이트 정보를 함께 게시하면 앱에서 발견할 수 있습니다.
@@ -75,6 +78,23 @@ Wayon/Sunnypilot이나 차량용 wip에 앱 소스/APK를 덮어쓰지 않습니
 - 실기기 검증은 별도로 기록합니다. 앱 업데이트 기능이 차량 주행 안전이나
   기존 라이브 간헐 끊김·전원 종료 문제를 해결했다는 뜻은 아닙니다.
 
+### 2026-09-14 실기기 검증
+
+- 기존 앱 데이터를 보존하는 로컬 테스트용 1.6.4 bootstrap에 업데이트 코드를 넣고,
+  실제 공개 GitHub 피드에서 1.6.5를 발견하는 것을 확인했습니다. bootstrap은 배포하지 않습니다.
+- 휴대폰 앱의 다운로드 버튼으로 실제 APK를 받고, 파일 크기·해시·패키지·서명 검증을
+  통과한 뒤 Android 설치 화면을 열었습니다. 사용자가 설치 허용/설치 화면을 직접 처리했습니다.
+- 설치 후 실제 패키지는 `versionCode=13`, `versionName=1.6.5-app-updates-debug`입니다.
+  설치된 APK를 다시 읽어 공개 배포 APK와 바이트 단위로 일치하는 것을 확인했습니다.
+- 연결 키가 존재하며 연결 설정 파일의 해시가 설치 전후 동일합니다. 앱 삭제/데이터 초기화나
+  보안 설정의 자동 변경을 하지 않았습니다.
+- 설치 후 차량 탭의 업데이트 확인 버튼으로 공개 피드를 다시 조회했고, 현재 1.6.5와
+  **최신 버전이에요.** 상태를 확인했습니다.
+- **미확인 사항:** 사용자가 설치 과정에서 보안 경고를 보고했으나 정확한 문구/화면은
+  확보하지 못했습니다. 설치·실행은 확인됐지만 경고 분류와 원인은 아직 확정하지 않았습니다.
+  다음 경고 화면이나 Play Protect 검사 결과를 확인해야 하며 보안 경고가 해결됐다고 보고하지 않습니다.
+
 API 근거: [Android 설치 권한](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls()),
 [FileProvider](https://developer.android.com/reference/androidx/core/content/FileProvider),
-[앱 서명과 업데이트](https://developer.android.com/studio/publish/app-signing#considerations).
+[앱 서명과 업데이트](https://developer.android.com/studio/publish/app-signing#considerations),
+[Play Protect 경고 종류](https://support.google.com/work/android/answer/15162069?hl=en).
