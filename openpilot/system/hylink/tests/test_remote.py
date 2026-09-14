@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import time
 
 import pytest
@@ -46,6 +47,15 @@ def test_ssh_does_not_change_persistent_keys_or_expose_network_port(tmp_path, mo
   assert not any("GithubSshKeys" in a for a in args)
   args = remote.service_command()
   assert "--property=KillMode=control-group" in args and "--property=RuntimeMaxSec=300" in args
+
+
+def test_ssh_unit_uses_checkout_dependencies_without_inheriting_arbitrary_pythonpath(monkeypatch):
+  monkeypatch.setattr(remote, "BASEDIR", "/data/openpilot")
+  monkeypatch.setenv("PYTHONPATH", "/untrusted/path")
+  args = remote.service_command()
+  paths = [a for a in args if a.startswith("--setenv=PYTHONPATH=")]
+  assert paths == ["--setenv=PYTHONPATH=" + os.pathsep.join(("/data/openpilot/pydeps", "/data/openpilot"))]
+  assert not any("/untrusted/path" in a for a in args)
 
 
 def test_host_key_uses_agnos_key_without_starting_system_ssh(tmp_path, monkeypatch):

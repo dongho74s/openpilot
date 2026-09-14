@@ -47,7 +47,10 @@ def service_command():
   return ["sudo", "-n", "systemd-run", "--quiet", "--collect", "--unit=" + UNIT,
           "--property=RuntimeMaxSec=300", "--property=KillMode=control-group",
           "--property=TimeoutStopSec=1", "--working-directory=" + BASEDIR,
-          "--setenv=PYTHONPATH=" + BASEDIR, sys.executable, "-m", "openpilot.system.hylink.ssh_service"]
+          # Transient systemd services do not inherit the launcher's pydeps path.
+          # AGNOS keeps optional wheels (including pyserial) in this checkout.
+          "--setenv=PYTHONPATH=" + os.pathsep.join((os.path.join(BASEDIR, "pydeps"), BASEDIR)),
+          sys.executable, "-m", "openpilot.system.hylink.ssh_service"]
 
 
 class SshRelay(Relay):
