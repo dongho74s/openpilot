@@ -144,6 +144,8 @@ STATIONARY_CLOSER_HANDOFF_MAX_DREL_DELTA_M = 5.0
 STATIONARY_CLOSER_HANDOFF_MAX_YREL_DELTA_M = 0.75
 STATIONARY_CLOSER_HANDOFF_MAX_VLEAD_DELTA_MPS = 2.0
 STATIONARY_CLOSER_HANDOFF_MIN_COST_GAIN = 0.10
+STATIONARY_CLOSER_HANDOFF_COST_HOLD_MIN_S = 0.15
+STATIONARY_CLOSER_HANDOFF_HOLD_COST_GAIN = 0.05
 STATIONARY_CLOSER_HANDOFF_RANGE_MAX_YREL_DELTA_M = 1.25
 STATIONARY_CLOSER_HANDOFF_MAX_DPATH_M = 1.0
 STATIONARY_CLOSER_HANDOFF_MAX_VISION_YREL_ERROR_M = 1.0
@@ -1706,12 +1708,28 @@ class VisionRadarMatcher:
     ):
       self._moving_vision_evidence.clear()
       return set()
+    # At queue speeds a stopped reflection and the real moving lead can be
+    # separated by less than the broad 6 m/s stationary tolerance. Consider
+    # that disagreement only with precise close-range vision; below, require
+    # a separate continuously observed moving radar target to corroborate it.
+    low_speed_conflicts = {
+      self._identity(point) for point in points
+      if point.source == "frontRadar"
+      and abs(point.v_lead) <= STATIONARY_MAX_ABS_VLEAD_MPS
+      and point.d_rel < STATIONARY_FRONT_POSITION_LOCK_MIN_DREL_M
+      and vision.probability >= VISION_RADAR_FAR_MIN_SEED_PROB
+      and abs(point.v_lead - vision.velocity) > max(
+        STATIONARY_MOVING_VISION_MAX_SPEED_ERROR_MPS, 3.0 * abs(vision.v_std),
+      )
+    }
     stationary_fronts = tuple(
       point for point in points
       if point.source == "frontRadar"
       and abs(point.v_lead) <= STATIONARY_MAX_ABS_VLEAD_MPS
-      and abs(point.v_lead - vision.velocity)
-      > STATIONARY_MOVING_VISION_MIN_SPEED_DELTA_MPS
+      and (
+        abs(point.v_lead - vision.velocity) > STATIONARY_MOVING_VISION_MIN_SPEED_DELTA_MPS
+        or self._identity(point) in low_speed_conflicts
+      )
     )
     if not stationary_fronts:
       self._moving_vision_evidence.clear()
@@ -1779,6 +1797,10 @@ class VisionRadarMatcher:
     return near_velocity_conflicts | {
       self._identity(point) for point in stationary_fronts
       if self._identity(point) not in independently_supported
+      and (
+        abs(point.v_lead - vision.velocity) > STATIONARY_MOVING_VISION_MIN_SPEED_DELTA_MPS
+        or (self._identity(point) in low_speed_conflicts and continuous_moving_support)
+      )
       and (
         continuous_moving_support
         or self._stationary_anchored_front_cost(
@@ -3395,6 +3417,32 @@ class VisionRadarMatcher:
     time_s: float | None,
   ) -> bool:
     """Confirm a nearer vision-range match before replacing a held radar ID."""
+    continuing = (
+      moving is not None
+      and time_s is not None
+      and self._identity(moving.point) == self._stationary_closer_challenger_identity
+      and self._stationary_closer_challenger_since_s is not None
+      and self._stationary_closer_challenger_last_point is not None
+      and self._stationary_closer_challenger_last_time_s is not None
+      and self._stationary_position_continuous(
+        self._stationary_closer_challenger_last_point,
+        self._stationary_closer_challenger_last_time_s,
+        moving.point,
+        time_s,
+      )
+    )
+    # Preserve a well-supported challenger across small positive cost jitter.
+    # Require prior strict support before using hysteresis; a single strong
+    # sample cannot seed it. Neither the 250 ms confirmation nor any physical
+    # veto is relaxed, and reversed preference still clears the pending ID.
+    cost_gain = STATIONARY_CLOSER_HANDOFF_MIN_COST_GAIN
+    if (
+      continuing
+      and self._stationary_closer_challenger_last_time_s
+      - self._stationary_closer_challenger_since_s
+      >= STATIONARY_CLOSER_HANDOFF_COST_HOLD_MIN_S
+    ):
+      cost_gain = STATIONARY_CLOSER_HANDOFF_HOLD_COST_GAIN
     held_cost = (
       self._stationary_vision_base_cost(vision, stationary.point)
       if stationary is not None
@@ -3412,7 +3460,7 @@ class VisionRadarMatcher:
       <= STATIONARY_CLOSER_HANDOFF_MAX_YREL_DELTA_M
       and held_cost is not None
       and challenger_cost is not None
-      and challenger_cost + STATIONARY_CLOSER_HANDOFF_MIN_COST_GAIN
+      and challenger_cost + cost_gain
       <= held_cost
     )
     vision_range_supported = (
@@ -3459,18 +3507,6 @@ class VisionRadarMatcher:
       return False
 
     identity = self._identity(moving.point)
-    continuing = (
-      identity == self._stationary_closer_challenger_identity
-      and self._stationary_closer_challenger_since_s is not None
-      and self._stationary_closer_challenger_last_point is not None
-      and self._stationary_closer_challenger_last_time_s is not None
-      and self._stationary_position_continuous(
-        self._stationary_closer_challenger_last_point,
-        self._stationary_closer_challenger_last_time_s,
-        moving.point,
-        time_s,
-      )
-    )
     if not continuing:
       self._stationary_closer_challenger_identity = identity
       self._stationary_closer_challenger_since_s = time_s
