@@ -131,10 +131,12 @@ def test_missing_or_stale_state_never_allows_parking(configured, name):
   assert not guard.observed_offroad(state, params)
 
 
-@pytest.mark.parametrize("condition", ["started", "ignitionCan", "ignitionLine", "heartbeatLost", "unknown", "empty", "low_voltage", "fault", "heat", "params"])
-def test_offroad_rejects_every_unsafe_transition(configured, condition):
+@pytest.mark.parametrize("voltage", [11000, 12500])
+@pytest.mark.parametrize("condition", ["started", "ignitionCan", "ignitionLine", "heartbeatLost", "unknown", "empty", "fault", "heat", "max_temp", "params"])
+def test_offroad_rejects_every_unsafe_transition(configured, condition, voltage):
   params, _ = configured
   state = State()
+  state["pandaStates"][0].voltage = voltage
   if condition == "started":
     state["deviceState"].started = True
   elif condition in ("ignitionLine", "ignitionCan", "heartbeatLost"):
@@ -143,23 +145,30 @@ def test_offroad_rejects_every_unsafe_transition(configured, condition):
     state["pandaStates"][0].pandaType = "unknown"
   elif condition == "empty":
     state["pandaStates"] = []
-  elif condition == "low_voltage":
-    state["pandaStates"][0].voltage = 11499
   elif condition == "fault":
     state["pandaStates"][0].faultStatus = "faultTemp"
   elif condition == "heat":
     state["deviceState"].thermalStatus = "red"
+  elif condition == "max_temp":
+    state["deviceState"].maxTempC = 80
   elif condition == "params":
     params.put_bool("IsOnroad", True)
   assert not guard.observed_offroad(state, params)
 
 
-@pytest.mark.parametrize("voltage,allowed", [(11499, False), (11500, True), (12000, True)])
-def test_parking_voltage_boundary(configured, voltage, allowed):
-  params, _ = configured
+@pytest.mark.parametrize("voltage", [11000, 11499, 11500, 12000])
+def test_parking_features_do_not_apply_an_extra_voltage_cutoff(configured, voltage):
+  params, config = configured
   state = State()
   state["pandaStates"][0].voltage = voltage
-  assert guard.observed_offroad(state, params) is allowed
+  ready = guard.observed_offroad(state, params)
+  assert ready
+  config["remote_enabled"] = True
+  runtime.write_json(runtime.CONFIG_PATH, config)
+  runtime.write_json(runtime.STATE_PATH, {"pid": os.getpid(), "at": time.monotonic(), "offroad": ready})
+  for predicate in (runtime.offroad, runtime.media_ready, runtime.impact_ready, runtime.remote_ready):
+    assert predicate(False, params)
+    assert not predicate(True, params)
 
 
 @pytest.mark.parametrize("change", [{"at": -1}, {"at": float("nan")}, {"pid": -1}, {"pid": 99999999}, {"offroad": "true"}])

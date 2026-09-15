@@ -6,8 +6,6 @@ from openpilot.cereal import messaging
 from openpilot.common.params import Params
 from openpilot.system.hylink.runtime import STATE_PATH, service_fresh, write_json
 
-MIN_PARKING_VOLTAGE_MV = 11_500
-
 
 def observed_offroad(sm, params, now=None):
   if not params.get_bool("IsOffroad") or params.get_bool("IsOnroad"):
@@ -19,9 +17,9 @@ def observed_offroad(sm, params, now=None):
   if (device.started or not pandas or any(str(p.pandaType) == "unknown" for p in pandas)
       or any(p.ignitionLine or p.ignitionCan or p.heartbeatLost or str(p.faultStatus) != "none" for p in pandas)):
     return False
-  # Parking features must not hold the device awake through low voltage/thermal shutdown.
-  return (all(p.voltage >= MIN_PARKING_VOLTAGE_MV for p in pandas) and str(device.thermalStatus) == "green"
-          and device.maxTempC < 80)
+  # Voltage-based shutdown belongs to the device power manager, not this feature gate.
+  # Hylink does not override its shutdown policy; retain the local thermal guard.
+  return str(device.thermalStatus) == "green" and device.maxTempC < 80
 
 
 def main():
