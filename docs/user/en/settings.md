@@ -294,6 +294,15 @@ The 12 system settings cover recording, power, network, maps, sound, and softwar
 
 Check storage use for recording and network use, heat, and privacy before enabling live streaming.
 
+### Hylink parking features — `leehyuk1108/carrotpilot:wip` only
+
+From 2026-09-15, Hylink no longer applies its additional 11.5 V parking-feature cutoff.
+Voltage alone does not stop live viewing, automatic photos, impact detection, history uploads,
+or the Hylink remote terminal. Ignition, communication-state, and thermal guards remain.
+The comma device's own low-voltage shutdown code and power settings are unchanged; their
+existing delays and conditions still apply, so this is not an immediate shutdown guarantee.
+Install the vehicle's `wip` software update for this change; an app update is not required.
+
 ## Safe adjustment order
 
 1. Record the current value in Carrot Web.
