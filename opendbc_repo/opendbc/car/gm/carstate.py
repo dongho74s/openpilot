@@ -249,17 +249,26 @@ class CarState(CarStateBase):
     # Kans: 부팅초기 레이더/ACC 웜업 중 Cruise FAULT 무시
     cruise_faulted = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.FAULTED
     friction_brake_unavailable = pt_cp.vl["EBCMFrictionBrakeStatus"]["FrictionBrakeUnavailable"] == 1
-    startup_fault_ignore = (time.monotonic() - self.startup_time) < 60.0
-    ret.accFaulted = (cruise_faulted or friction_brake_unavailable) and not startup_fault_ignore
+
+    # Kans: debounce friction_brake_unavailable so a single noisy CAN frame
+    # doesn't immediately trip accFaulted. Require N consecutive frames.
+    FRICTION_BRAKE_DEBOUNCE_FRAMES = 5  # ~50ms at 100Hz, adjust if needed
+    if friction_brake_unavailable:
+        self._friction_brake_unavail_count = getattr(self, '_friction_brake_unavail_count', 0) + 1
+    else:
+        self._friction_brake_unavail_count = 0
+    friction_brake_unavailable_debounced = self._friction_brake_unavail_count >= FRICTION_BRAKE_DEBOUNCE_FRAMES
+
+    ret.accFaulted = ((cruise_faulted and not startup_fault_ignore) or friction_brake_unavailable_debounced)
 
     # Kans: diagnostic - log which condition actually tripped accFaulted, since
-    # "Cruise Fault: Restart the Car" doesn't say why on screen.
     if ret.accFaulted and not self._acc_faulted_last:
-      carlog.warning(
-        f"GM accFaulted rising edge: cruise_faulted={cruise_faulted} "
-        f"friction_brake_unavailable={friction_brake_unavailable} "
-        f"startup_fault_ignore={startup_fault_ignore}"
-      )
+        cloudlog.warning(
+            f"GM accFaulted rising edge: cruise_faulted={cruise_faulted} "
+            f"friction_brake_unavailable={friction_brake_unavailable} "            f"friction_brake_unavailable_debounced={friction_brake_unavailable_debounced} "
+            f"friction_brake_unavail_count={self._friction_brake_unavail_count} "
+            f"startup_fault_ignore={startup_fault_ignore}"
+        )
     self._acc_faulted_last = ret.accFaulted
 
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
