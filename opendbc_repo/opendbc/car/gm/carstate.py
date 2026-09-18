@@ -37,16 +37,6 @@ class CarState(CarStateBase):
     self.cam_lka_steering_cmd_counter = 0
     self.cam_ascm_2cb_counter = 0
     self.cam_ascm_2cb_counter_updated = False
-    self.cam_ascm_2cb_counter_ts_nanos = 0
-    self.cam_stock_long_active = None
-    self.cam_stock_long_cancel = False
-    self.cam_acc_status = None
-    self.buttons_counter = 0
-    self.single_pedal_mode = False
-    self.pedal_steady = 0.
-    self.cruise_buttons = 0
-    # GAP_DIST
-    self.distance_button = 0
     # Kans: ambient temperature (°C)
     self.ambient_c = 0.0
     # Kans: lead_car condition
@@ -72,6 +62,7 @@ class CarState(CarStateBase):
     # Kans: accFault delay
     self.startup_time = time.monotonic()
     self._acc_faulted_last = False
+    self._friction_brake_unavail_count = 0
 
     # Kans: TPMS
     self.KPA_TO_PSI = 0.1450377377
@@ -88,7 +79,6 @@ class CarState(CarStateBase):
     if not self.CP.pcmCruise:
       for b in buttonEvents:
         # The ECM allows enabling on falling edge of set, but only rising edge of resume
-        if (b.type == ButtonType.accelCruise and b.pressed) or \
           (b.type == ButtonType.decelCruise and not b.pressed):
           return True
     return False
@@ -249,27 +239,29 @@ class CarState(CarStateBase):
     # Kans: 부팅초기 레이더/ACC 웜업 중 Cruise FAULT 무시
     cruise_faulted = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.FAULTED
     friction_brake_unavailable = pt_cp.vl["EBCMFrictionBrakeStatus"]["FrictionBrakeUnavailable"] == 1
+    startup_fault_ignore = (time.monotonic() - self.startup_time) < 60.0
 
     # Kans: debounce friction_brake_unavailable so a single noisy CAN frame
     # doesn't immediately trip accFaulted. Require N consecutive frames.
     FRICTION_BRAKE_DEBOUNCE_FRAMES = 5  # ~50ms at 100Hz, adjust if needed
     if friction_brake_unavailable:
-        self._friction_brake_unavail_count = getattr(self, '_friction_brake_unavail_count', 0) + 1
+      self._friction_brake_unavail_count = self._friction_brake_unavail_count + 1
     else:
-        self._friction_brake_unavail_count = 0
+      self._friction_brake_unavail_count = 0
     friction_brake_unavailable_debounced = self._friction_brake_unavail_count >= FRICTION_BRAKE_DEBOUNCE_FRAMES
 
-    ret.accFaulted = ((cruise_faulted and not startup_fault_ignore) or friction_brake_unavailable_debounced)
+    ret.accFaulted = (cruise_faulted or friction_brake_unavailable_debounced) and not startup_fault_ignore
 
     # Kans: diagnostic - log which condition actually tripped accFaulted, since
+    # "Cruise Fault: Restart the Car" doesn't say why on screen.
     if ret.accFaulted and not self._acc_faulted_last:
-        cloudlog.warning(
-            f"GM accFaulted rising edge: cruise_faulted={cruise_faulted} "
-            f"friction_brake_unavailable={friction_brake_unavailable} "            
-            f"friction_brake_unavailable_debounced={friction_brake_unavailable_debounced} "
-            f"friction_brake_unavail_count={self._friction_brake_unavail_count} "
-            f"startup_fault_ignore={startup_fault_ignore}"
-        )
+      carlog.warning(
+        f"GM accFaulted rising edge: cruise_faulted={cruise_faulted} "
+        f"friction_brake_unavailable={friction_brake_unavailable} "
+        f"friction_brake_unavailable_debounced={friction_brake_unavailable_debounced} "
+        f"friction_brake_unavail_count={self._friction_brake_unavail_count} "
+        f"startup_fault_ignore={startup_fault_ignore}"
+      )
     self._acc_faulted_last = ret.accFaulted
 
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
