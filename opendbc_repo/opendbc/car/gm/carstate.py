@@ -265,7 +265,8 @@ class CarState(CarStateBase):
     if ret.accFaulted and not self._acc_faulted_last:
         cloudlog.warning(
             f"GM accFaulted rising edge: cruise_faulted={cruise_faulted} "
-            f"friction_brake_unavailable={friction_brake_unavailable} "            f"friction_brake_unavailable_debounced={friction_brake_unavailable_debounced} "
+            f"friction_brake_unavailable={friction_brake_unavailable} "            
+            f"friction_brake_unavailable_debounced={friction_brake_unavailable_debounced} "
             f"friction_brake_unavail_count={self._friction_brake_unavail_count} "
             f"startup_fault_ignore={startup_fault_ignore}"
         )
