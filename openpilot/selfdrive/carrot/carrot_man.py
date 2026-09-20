@@ -2256,7 +2256,7 @@ class CarrotMan:
       return web.json_response({
         "ok": True,
         "tmap_version": tmap_version
-      })
+      }, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
       print(f"[HTTP] dispatch error: {e}")
       traceback.print_exc()
@@ -2265,7 +2265,15 @@ class CarrotMan:
         "ok": False,
         "error": str(e),
         "tmap_version": tmap_version
-      }, status=500)
+      }, status=500, headers={"Access-Control-Allow-Origin": "*"})
+
+  async def carrot_remote_page(self, request: web.Request):
+    try:
+      with open("/data/carrot_remote.html", "r", encoding="utf-8") as f:
+        html = f.read()
+      return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
+    except Exception as e:
+      return web.Response(text=f"remote page not found: {e}", status=404)
 
   async def carrot_http_health(self, request: web.Request):
     with self._navi_event_lock:
@@ -2285,13 +2293,14 @@ class CarrotMan:
       "service": "carrot_navi_http",
       "lastEvent": last_summary,
       "receivedTypes": sorted(by_type.keys()),
-    })
+    }, headers={"Access-Control-Allow-Origin": "*"})
 
   async def carrot_navi_http_server(self, port: int = NAVI_HTTP_PORT):
     app = web.Application(client_max_size=NAVI_HTTP_MAX_BODY_SIZE)
 
     app.router.add_post("/api/navi/{tmap_version}", self.carrot_http_post)
     app.router.add_get("/health", self.carrot_http_health)
+    app.router.add_get("/remote", self.carrot_remote_page)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()

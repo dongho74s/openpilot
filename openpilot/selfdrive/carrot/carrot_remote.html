@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#06090c">
+<title>당근 리모컨</title>
+<style>
+  :root {
+    --bg: #06090c;
+    --face: #0e151b;
+    --line: #1f2a33;
+    --dim: #22303a;
+    --amber: #ff8a2a;
+    --ink: #e8f0f6;
+    --mute: #7d8a96;
+    --sig: #35e08a;
+    --bad: #ff5b5b;
+    --num: "sans-serif-condensed", "Roboto Condensed", "Bahnschrift", "Pretendard", system-ui, sans-serif;
+    --ui: "Pretendard", system-ui, -apple-system, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    font-family: var(--ui);
+    color: var(--ink);
+    background: radial-gradient(120% 60% at 50% 30%, #0e1820 0%, var(--bg) 65%);
+    touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
+    padding-top: env(safe-area-inset-top);
+  }
+  button { font-family: inherit; color: inherit; touch-action: none; -webkit-touch-callout: none; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+  /* 상단 바 */
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 6px; gap: 10px; }
+  .top h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+  .chips { display: flex; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--face); border: 1px solid var(--line); border-radius: 999px;
+    padding: 7px 12px; font-size: 13px; color: var(--mute); cursor: pointer;
+  }
+  .chip.on { border-color: var(--amber); color: var(--amber); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4d5058; }
+  .dot.ok { background: var(--sig); box-shadow: 0 0 6px var(--sig); }
+  .dot.bad { background: var(--bad); }
+
+  /* IP 설정 */
+  .host { margin: 6px 16px 0; padding: 12px; background: var(--face); border: 1px solid var(--line); border-radius: 14px; }
+  .host[hidden] { display: none; }
+  .host label { display: block; font-size: 12px; color: var(--mute); margin-bottom: 6px; }
+  .host input {
+    width: 100%; background: #080c10; border: 1px solid var(--line); color: var(--ink);
+    border-radius: 10px; padding: 9px 12px; font-size: 15px; -webkit-user-select: text; user-select: text;
+    transition: border-color .2s ease, color .2s ease;
+  }
+  .host input.host-ok { border-color: var(--sig); color: #b9f5cd; }
+  .detail { font-size: 12px; color: var(--bad); margin-top: 8px; word-break: break-all; }
+  .detail:empty { display: none; }
+
+  /* 당근비전 */
+  .vstatus { margin: 8px 16px 0; font-size: 12px; color: var(--mute); }
+  .vstatus:empty { display: none; }
+  .vision { display: none; margin: 8px 16px 0; border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--line); }
+  .vision.show { display: block; }
+  .vision video { width: 100%; display: block; }
+
+  /* 계기판 */
+  .cluster { flex: 1; display: grid; place-items: center; padding: 6px 14px; }
+  .gauge { width: min(100%, 420px); }
+  .gauge svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .track { fill: none; stroke: var(--dim); stroke-width: 10; stroke-linecap: round; }
+  .arc {
+    fill: none; stroke: var(--amber); stroke-width: 10; stroke-linecap: round;
+    filter: drop-shadow(0 0 6px rgba(255,138,42,.55));
+    transition: stroke-dasharray .12s linear;
+  }
+  #needle { transform-origin: 150px 150px; transition: transform .12s linear; }
+  .tick { stroke: #3a4854; stroke-width: 1.5; }
+  .tick.major { stroke-width: 2.5; }
+  .tick.lit { stroke: var(--amber); }
+  .tick-label { fill: var(--mute); font-family: var(--num); font-size: 11px; text-anchor: middle; dominant-baseline: middle; }
+  .cap { fill: var(--mute); font-size: 13px; text-anchor: middle; }
+  .num { fill: var(--ink); font-family: var(--num); font-weight: 700; font-size: 74px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+  .num.empty { fill: #33414d; }
+  .unit { fill: var(--mute); font-family: var(--num); font-size: 15px; text-anchor: middle; }
+  .ind { fill: var(--dim); }
+  .ind.on { animation: blink .52s steps(1, end) 3; }
+  @keyframes blink {
+    0%   { fill: var(--sig); filter: drop-shadow(0 0 5px var(--sig)); }
+    50%  { fill: var(--dim); filter: none; }
+  }
+  .sync {
+    display: block; margin: -6px auto 0; padding: 8px 16px; font-size: 13px; cursor: pointer;
+    background: var(--face); border: 1px solid var(--line); border-radius: 999px; color: var(--mute);
+  }
+
+  /* 조작부 */
+  .controls {
+    display: grid; grid-template-columns: 1fr 1.05fr 1fr; gap: 10px;
+    height: clamp(150px, 27dvh, 220px);
+    padding: 0 14px calc(16px + env(safe-area-inset-bottom));
+    box-sizing: content-box;
+  }
+  .rocker { display: grid; grid-template-rows: 1fr 1fr; gap: 6px; min-height: 0; }
+  .rock, .sig { cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+  .rock {
+    background: var(--face); border: 1.5px solid rgba(255,138,42,.55);
+    transition: background .08s ease, transform .08s ease;
+  }
+  .rock.up { border-radius: 28px 28px 8px 8px; }
+  .rock.down { border-radius: 8px 8px 28px 28px; }
+  .rock.active { background: var(--amber); color: #1a0f05; transform: scale(.97); }
+  .rock span { font-size: 12px; font-weight: 600; pointer-events: none; }
+  .rock svg, .sig svg { pointer-events: none; }
+
+  .sig {
+    --edge: #1f6d47; --fill: #0d1a15;
+    position: relative; background: var(--edge); border: 0; padding: 0;
+    transition: transform .08s ease;
+  }
+  .sig.left  { clip-path: polygon(0 50%, 42% 0, 100% 0, 100% 100%, 42% 100%); }
+  .sig.right { clip-path: polygon(100% 50%, 58% 0, 0 0, 0 100%, 58% 100%); }
+  .sig::before { content: ""; position: absolute; inset: 2px; background: var(--fill); clip-path: inherit; transition: background .08s ease; }
+  .sig > * { position: relative; }
+  .sig.left  { padding-left: 14%; }
+  .sig.right { padding-right: 14%; }
+  .sig .lbl { font-size: 14px; font-weight: 700; pointer-events: none; }
+  .sig.active { transform: scale(.97); color: #04170d; }
+  .sig.active::before { background: var(--sig); }
+  .sig:focus-visible { outline-offset: -8px; }
+
+  .toast {
+    position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 58px); transform: translateX(-50%);
+    background: var(--face); border: 1px solid var(--line); color: var(--ink);
+    padding: 8px 16px; border-radius: 999px; font-size: 13px; opacity: 0; transition: opacity .2s ease;
+    pointer-events: none; white-space: nowrap; z-index: 10;
+  }
+  .toast.show { opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+    .ind.on { animation: none; fill: var(--sig); }
+  }
+</style>
+</head>
+<body>
+
+  <header class="top">
+    <h1>당근 리모컨</h1>
+    <div class="chips">
+      <button class="chip" id="visionToggle" type="button">비전 보기</button>
+      <button class="chip" id="connChip" type="button" aria-expanded="false" aria-controls="hostPanel">
+        <span class="dot" id="dot"></span><span id="connText">대기중</span>
+      </button>
+    </div>
+  </header>
+
+  <section class="host" id="hostPanel" hidden>
+    <label for="hostInput">콤마 IP (필요하면 수정하세요)</label>
+    <input id="hostInput" type="text" value="10.175.134.10" inputmode="decimal">
+    <div class="detail" id="connDetail"></div>
+  </section>
+
+  <div class="vstatus" id="visionStatus"></div>
+  <div class="vision" id="visionWrap">
+    <video id="visionVideo" autoplay playsinline muted></video>
+  </div>
+
+  <main class="cluster">
+    <div class="gauge">
+      <svg viewBox="0 0 300 250" role="img" aria-label="크루즈 설정 속도">
+        <path id="track" class="track"/>
+        <path id="arc" class="arc" pathLength="100" stroke-dasharray="0 100" style="opacity:0"/>
+        <g id="ticks"></g>
+        <g id="needle" style="opacity:0"><circle cx="268" cy="150" r="6.5" fill="#fff"/></g>
+
+        <text class="cap" x="150" y="100">설정 속도</text>
+        <text class="num empty" id="speedNum" x="150" y="174">--</text>
+        <text class="unit" x="150" y="198">km/h</text>
+
+        <g transform="translate(14,14)"><path id="indL" class="ind" d="M0 12 L14 0 V7 H30 V17 H14 V24 Z"/></g>
+        <g transform="translate(286,14) scale(-1,1)"><path id="indR" class="ind" d="M0 12 L14 0 V7 H30 V17 H14 V24 Z"/></g>
+      </svg>
+      <button class="sync" id="syncBtn" type="button">현재값 동기화</button>
+    </div>
+  </main>
+
+  <nav class="controls">
+    <button class="sig left" id="btnLeft" type="button" aria-label="좌측 방향지시등">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+      <span class="lbl">좌</span>
+    </button>
+
+    <div class="rocker">
+      <button class="rock up" id="btnUp" type="button" aria-label="속도 올리기">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+        <span>속도 +</span>
+      </button>
+      <button class="rock down" id="btnDown" type="button" aria-label="속도 내리기">
+        <span>속도 −</span>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+
+    <button class="sig right" id="btnRight" type="button" aria-label="우측 방향지시등">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <span class="lbl">우</span>
+    </button>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const hostInput = document.getElementById('hostInput');
+  if (location.hostname && location.hostname !== 'localhost' && location.protocol === 'http:') {
+    hostInput.value = location.hostname;
+  }
+  const dot = document.getElementById('dot');
+  const connText = document.getElementById('connText');
+  const connDetail = document.getElementById('connDetail');
+  const connChip = document.getElementById('connChip');
+  const hostPanel = document.getElementById('hostPanel');
+  const speedNum = document.getElementById('speedNum');
+  const toast = document.getElementById('toast');
+  const syncBtn = document.getElementById('syncBtn');
+
+  let setSpeed = null; // unknown until synced or first adjusted
+  let holdTimeout = null;
+  let repeatInterval = null;
+
+  // ---- 계기판 그리기 ----
+  const CX = 150, CY = 150, R = 118, A0 = 135, SWEEP = 270, VMIN = 20, VMAX = 180;
+  const rad = (d) => d * Math.PI / 180;
+  const pt = (r, a) => [CX + r * Math.cos(rad(a)), CY + r * Math.sin(rad(a))];
+  const angleFor = (v) => A0 + (v - VMIN) / (VMAX - VMIN) * SWEEP;
+
+  const [x0, y0] = pt(R, A0);
+  const [x1, y1] = pt(R, A0 + SWEEP);
+  const arcD = 'M' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A' + R + ' ' + R + ' 0 1 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2);
+  document.getElementById('track').setAttribute('d', arcD);
+  const arc = document.getElementById('arc');
+  arc.setAttribute('d', arcD);
+  const needle = document.getElementById('needle');
+
+  const ticksG = document.getElementById('ticks');
+  let ticksHtml = '';
+  for (let v = VMIN; v <= VMAX; v += 10) {
+    const major = v % 20 === 0;
+    const a = angleFor(v);
+    const [ax, ay] = pt(major ? 98 : 103, a);
+    const [bx, by] = pt(108, a);
+    ticksHtml += '<line class="tick' + (major ? ' major' : '') + '" data-v="' + v + '" x1="' + ax.toFixed(2) + '" y1="' + ay.toFixed(2) + '" x2="' + bx.toFixed(2) + '" y2="' + by.toFixed(2) + '"/>';
+    if (major) {
+      const [lx, ly] = pt(86, a);
+      ticksHtml += '<text class="tick-label" x="' + lx.toFixed(2) + '" y="' + ly.toFixed(2) + '">' + v + '</text>';
+    }
+  }
+  ticksG.innerHTML = ticksHtml;
+  const tickEls = Array.from(ticksG.querySelectorAll('.tick'));
+
+  function renderSpeed() {
+    if (setSpeed === null) {
+      speedNum.textContent = '--';
+      speedNum.classList.add('empty');
+      arc.style.opacity = 0;
+      needle.style.opacity = 0;
+      tickEls.forEach((t) => t.classList.remove('lit'));
+      return;
+    }
+    speedNum.textContent = setSpeed;
+    speedNum.classList.remove('empty');
+    const pct = (setSpeed - VMIN) / (VMAX - VMIN) * 100;
+    arc.setAttribute('stroke-dasharray', pct.toFixed(2) + ' 100');
+    arc.style.opacity = 1;
+    needle.style.opacity = 1;
+    needle.style.transform = 'rotate(' + (A0 + pct / 100 * SWEEP).toFixed(2) + 'deg)';
+    tickEls.forEach((t) => t.classList.toggle('lit', Number(t.dataset.v) <= setSpeed));
+  }
+
+  // ---- 공통 ----
+  function getUrl() {
+    const host = hostInput.value.trim();
+    return 'http://' + host + ':7713/api/navi/v1';
+  }
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('show'), 1200);
+  }
+
+  function buzz() {
+    if (navigator.vibrate) navigator.vibrate(8);
+  }
+
+  // 콤마의 {"ok": true/false} 응답을 토스트로 보여주고, 성공 여부를 반환합니다.
+  function sendCmd(carrotCmd, carrotArg) {
+    return fetch(getUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ carrotCmd, carrotArg: String(carrotArg), carrotIndex: 0 }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const ok = !!(data && data.ok);
+        showToast(ok ? '콤마 수신 확인' : '응답 없음');
+        return ok;
+      })
+      .catch((e) => {
+        showToast('전송 실패: ' + (e.message || e.name || ''));
+        return false;
+      });
+  }
+
+  function bumpSpeed(delta) {
+    if (setSpeed === null) {
+      showToast('먼저 "현재값 동기화"로 속도를 맞춰주세요');
+      return;
+    }
+    setSpeed = Math.max(VMIN, Math.min(VMAX, setSpeed + delta));
+    renderSpeed();
+    sendCmd('SPEED', setSpeed);
+  }
+
+  function clearHold() {
+    if (holdTimeout) { clearTimeout(holdTimeout); holdTimeout = null; }
+    if (repeatInterval) { clearInterval(repeatInterval); repeatInterval = null; }
+  }
+
+  function startPress(el, dir) {
+    el.classList.add('active');
+    const delta = dir === 'up' ? 1 : -1;
+    clearHold();
+    buzz();
+    bumpSpeed(delta);
+    holdTimeout = setTimeout(() => {
+      repeatInterval = setInterval(() => bumpSpeed(delta), 130);
+    }, 350);
+  }
+
+  function endPress(el) {
+    el.classList.remove('active');
+    clearHold();
+  }
+
+  const btnUp = document.getElementById('btnUp');
+  const btnDown = document.getElementById('btnDown');
+  const btnLeft = document.getElementById('btnLeft');
+  const btnRight = document.getElementById('btnRight');
+
+  ['mousedown', 'touchstart'].forEach(ev => {
+    btnUp.addEventListener(ev, (e) => { e.preventDefault(); startPress(btnUp, 'up'); });
+    btnDown.addEventListener(ev, (e) => { e.preventDefault(); startPress(btnDown, 'down'); });
+  });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev => {
+    btnUp.addEventListener(ev, () => endPress(btnUp));
+    btnDown.addEventListener(ev, () => endPress(btnDown));
+  });
+  [btnUp, btnDown, btnLeft, btnRight].forEach(b => b.addEventListener('contextmenu', (e) => e.preventDefault()));
+
+  // 깜빡이 효과음 (Web Audio). 소리는 폰에서 납니다.
+  let ac = null;
+  function unlockAudio() {
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+      if (ac.state === 'suspended') ac.resume();
+    } catch (e) { /* 소리 없이 진행 */ }
+  }
+  function tick(t, f) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'square'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.15, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+    o.connect(g); g.connect(ac.destination);
+    o.start(t); o.stop(t + 0.05);
+  }
+  function blinkSound() {
+    if (!ac) return;
+    const t = ac.currentTime;
+    for (let i = 0; i < 3; i++) {
+      tick(t + i * 0.52, 1800);        // 틱
+      tick(t + i * 0.52 + 0.26, 1200); // 톡
+    }
+  }
+
+  // 콤마가 명령을 받으면 계기판 화살표가 3번 깜빡입니다.
+  function flashIndicator(ind) {
+    ind.classList.remove('on');
+    ind.getBoundingClientRect(); // 애니메이션 재시작
+    ind.classList.add('on');
+    clearTimeout(ind._t);
+    ind._t = setTimeout(() => ind.classList.remove('on'), 1700);
+  }
+
+  async function tapBlinker(el, dir, ind) {
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 160);
+    buzz();
+    unlockAudio(); // 소리는 터치 직후에만 허용되므로 여기서 미리 준비
+    const ok = await sendCmd('LANECHANGE', dir);
+    if (ok) { flashIndicator(ind); blinkSound(); }
+  }
+  btnLeft.addEventListener('click', () => tapBlinker(btnLeft, 'LEFT', document.getElementById('indL')));
+  btnRight.addEventListener('click', () => tapBlinker(btnRight, 'RIGHT', document.getElementById('indR')));
+
+  syncBtn.addEventListener('click', () => {
+    const v = prompt('계기판에 표시된 현재 크루즈 설정속도(km/h)를 입력하세요:', setSpeed ?? '');
+    const n = parseInt(v, 10);
+    if (!isNaN(n) && n > 0 && n < 200) {
+      setSpeed = Math.max(VMIN, Math.min(VMAX, n));
+      renderSpeed();
+      showToast('동기화 완료: ' + n + ' km/h');
+    }
+  });
+
+  // ---- 당근비전: 전방 카메라 WebRTC ----
+  // 설정 서버(7000 포트)의 POST /stream 으로 WebRTC 연결을 열어 <video>에 재생합니다.
+  const visionToggle = document.getElementById('visionToggle');
+  const visionWrap = document.getElementById('visionWrap');
+  const visionVideo = document.getElementById('visionVideo');
+  const visionStatus = document.getElementById('visionStatus');
+  let visionPc = null;
+  const visionClientId = 'carrot_remote_' + Math.random().toString(36).slice(2, 10);
+
+  function waitIceComplete(pc) {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') { resolve(); return; }
+      const check = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', check);
+      setTimeout(resolve, 3000);
+    });
+  }
+
+  async function startVision() {
+    visionStatus.textContent = '연결 중...';
+    const host = hostInput.value.trim();
+    const pc = new RTCPeerConnection();
+    visionPc = pc;
+    pc.ontrack = (e) => { visionVideo.srcObject = e.streams[0]; };
+    pc.addTransceiver('video', { direction: 'recvonly' });
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitIceComplete(pc);
+
+      const res = await fetch('http://' + host + ':7000/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sdp: pc.localDescription.sdp,
+          cameras: ['road'],
+          client_id: visionClientId,
+          takeover: false,
+          carrot_state: false,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || ('HTTP ' + res.status));
+      }
+
+      const answer = await res.json();
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      visionStatus.textContent = '';
+      visionWrap.classList.add('show');
+      visionToggle.textContent = '비전 끄기';
+      visionToggle.classList.add('on');
+    } catch (e) {
+      visionStatus.textContent = '연결 실패: ' + (e.message || e.name || '');
+      stopVision();
+    }
+  }
+
+  function stopVision() {
+    if (visionPc) { visionPc.close(); visionPc = null; }
+    visionVideo.srcObject = null;
+    visionWrap.classList.remove('show');
+    visionToggle.textContent = '비전 보기';
+    visionToggle.classList.remove('on');
+  }
+
+  visionToggle.addEventListener('click', () => {
+    if (visionPc) { stopVision(); visionStatus.textContent = ''; } else { startVision(); }
+  });
+
+  // ---- 연결 상태 ----
+  function setHostPanel(open) {
+    hostPanel.hidden = !open;
+    connChip.setAttribute('aria-expanded', String(open));
+  }
+  connChip.addEventListener('click', () => setHostPanel(hostPanel.hidden));
+
+  renderSpeed();
+
+  // 3초마다 /health 를 확인해서 연결 상태를 갱신합니다.
+  let healthAbort = null;
+  let autoOpened = false;
+  async function checkHost() {
+    const host = hostInput.value.trim();
+    if (!host) {
+      hostInput.classList.remove('host-ok');
+      connText.textContent = '대기중';
+      dot.className = 'dot';
+      return;
+    }
+    if (healthAbort) healthAbort.abort();
+    healthAbort = new AbortController();
+    const timeoutId = setTimeout(() => healthAbort.abort(), 4000);
+    try {
+      const res = await fetch('http://' + host + ':7713/health', { cache: 'no-store', signal: healthAbort.signal });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      hostInput.classList.add('host-ok');
+      dot.className = 'dot ok';
+      connText.textContent = '연결됨';
+      connDetail.textContent = '';
+    } catch (e) {
+      hostInput.classList.remove('host-ok');
+      dot.className = 'dot bad';
+      connText.textContent = '연결 안됨';
+      connDetail.textContent = (e.name || 'Error') + ': ' + (e.message || '');
+      if (!autoOpened) { autoOpened = true; setHostPanel(true); } // 처음 실패하면 IP 입력칸을 열어줍니다.
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  hostInput.addEventListener('input', () => { hostInput.classList.remove('host-ok'); checkHost(); });
+  setInterval(checkHost, 3000);
+  checkHost();
+})();
+</script>
+</body>
+</html>
