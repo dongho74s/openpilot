@@ -2,6 +2,7 @@
 import os
 import selectors
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -47,6 +48,65 @@ def build_usbgpu_model(spinner: Spinner) -> bool:
     "downloaded_bytes": manifest.size,
     "total_bytes": manifest.size,
   }
+  # Only ONNX models can fall back to local SCons compilation.
+  fallback = 'internal model' if manifest.precompiled_only else 'local compiler'
+  from openpilot.selfdrive.modeld.precompiled_model import ensure_precompiled, record_failure
+  from openpilot.selfdrive.modeld.precompiled_validation import camera_sizes, device_context, validation_key, validation_cached, save_validation
+  precompiled = None
+  try:
+    spinner.update("USB eGPU big model\nChecking precompiled model")
+    def download_progress(done, total):
+      spinner.update(f"USB eGPU big model\nDownloading precompiled model {done * 100 // total}%")
+      write_big_model_status(model_cache_dir(), "downloading", model_id=manifest.model_id, sha256=manifest.sha256,
+                             downloaded_bytes=done, total_bytes=total, detail="precompiled model")
+    precompiled = ensure_precompiled(manifest, progress=download_progress)
+  except Exception as exc:
+    print(f"Precompiled eGPU model unavailable; using {fallback}: {exc}")
+  if precompiled is not None:
+    try:
+      if usbgpu_present():
+        sizes, key = camera_sizes(''), None
+        try:
+          device = device_context()
+          sizes = camera_sizes(device['device'])
+          key = validation_key(precompiled, device, sizes)
+        except (OSError, ValueError, KeyError, TypeError, ImportError):
+          print('Precompiled validation identity unavailable; running smoke test without cache')
+        if validation_cached(precompiled, key):
+          print('Reusing successful precompiled eGPU validation for this device/runtime')
+        else:
+          spinner.update("USB eGPU big model\nValidating precompiled model")
+          command = [sys.executable, '-m', 'openpilot.selfdrive.modeld.precompiled_runner', str(precompiled)]
+          for width, height in sizes:
+            command += ['--camera', f'{width}x{height}']
+          validation = subprocess.run(command, cwd=BASEDIR, check=True, timeout=300, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+          print(validation.stdout, end='')
+          try:
+            save_validation(precompiled, key)
+          except OSError as exc:
+            print(f'Could not cache successful precompiled validation: {exc}')
+      write_big_model_status(model_cache_dir(), "compiled", detail="downloaded precompiled model", **status_values)
+      print(f"Using precompiled eGPU model without SCons compilation: {precompiled}")
+      return True
+    except Exception as exc:
+      output = getattr(exc, 'output', '') or ''
+      if isinstance(output, bytes):
+        output = output.decode('utf-8', 'replace')
+      if output:
+        print(output, end='')
+      failure = TimeoutError(output or str(exc)) if isinstance(exc, subprocess.TimeoutExpired) else output or exc
+      if not record_failure(precompiled, failure, 'boot_validation'):
+        # USB enumeration can succeed with ignition off while the GPU's 12V
+        # supply is absent. Keep the verified artifact for the next model start.
+        detail = 'precompiled model verified; waiting for eGPU readiness or validation retry'
+        write_big_model_status(model_cache_dir(), 'waiting_for_ignition', detail=detail, **status_values)
+        print(f'Precompiled eGPU validation deferred: {detail}')
+        return True
+      print(f"Precompiled eGPU validation failed; using {fallback}: {exc}")
+  if manifest.precompiled_only:
+    write_big_model_status(model_cache_dir(), "error", detail="precompiled model unavailable; using internal model", **status_values)
+    return False
   present = usbgpu_present()
   if not present:
     wait_started = time.monotonic()
@@ -68,7 +128,15 @@ def build_usbgpu_model(spinner: Spinner) -> bool:
 
   pkl_path = Path(modeld_pkl_path(usbgpu=True))
   manifest_path = Path(get_manifest_path(pkl_path))
-  if manifest_path.is_file():
+  env = os.environ.copy()
+  env['BUILD_USB_GPU_MODEL'] = '1'
+  env['PYTHONUNBUFFERED'] = '1'
+  target = os.path.relpath(manifest_path, BASEDIR)
+  # A model hash alone does not cover compiler/serialization/tinygrad changes.
+  # Query SCons before reusing the existing artifact, without compiling it.
+  if manifest_path.is_file() and subprocess.run(
+    ["scons", "-q", target], cwd=BASEDIR, env=env, check=False,
+  ).returncode == 0:
     write_big_model_status(model_cache_dir(), "compiled", **status_values)
     return True
 
@@ -99,10 +167,6 @@ def build_usbgpu_model(spinner: Spinner) -> bool:
     write_big_model_status(model_cache_dir(), "waiting_for_ignition", detail=readiness_error, **status_values)
     return False
 
-  env = os.environ.copy()
-  env['BUILD_USB_GPU_MODEL'] = '1'
-  env['PYTHONUNBUFFERED'] = '1'
-  target = os.path.relpath(manifest_path, BASEDIR)
   all_output: list[bytes] = []
   compile_started_at = time.time()
   for attempt in range(1, USBGPU_BUILD_ATTEMPTS + 1):

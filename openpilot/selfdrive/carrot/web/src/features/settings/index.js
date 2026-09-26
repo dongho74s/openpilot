@@ -49,6 +49,10 @@ import { renderFingerprintSummary } from "./fingerprint/fingerprint_summary.js";
 import { collectRestoredValues, selectProfileApplyValues } from "./profiles/apply_plan.js";
 import { getSettingRiskLevel, renderSettingRiskBadge } from "./risk.js";
 import { highlightSearchText } from "./search/highlight.js";
+import { filterSettingSearchEntries, isProfileSearchScope, normalizeSearchScope } from "./search/entries.js";
+import { renderSettingSearchResults } from "./search/results.js";
+import { createSettingSearchPanelView } from "./search/panel.js";
+import { createSettingInlineSearchView } from "./search/inline.js";
 import {
   appendSettingsItemSection,
   createSettingsGroupRenderPlan,
@@ -58,6 +62,8 @@ import {
 } from "./dom_renderer.js";
 import { createSettingsStore } from "./store.js";
 import { createSettingValueCache } from "./value_cache.js";
+import { installSettingsExtensionRegistry } from "./extensions/registry.js";
+import { registerOnnxVisionSettingsExtension } from "./extensions/onnx_vision/index.js";
 
 const installedTargets = new WeakMap();
 
@@ -79,6 +85,8 @@ export function installSettingsRuntimeFacade(target = globalThis, options = {}) 
     now: options.now,
   });
   const aux = createSettingsAuxState(options.auxLoaders || createSettingsAuxLoaders(normalizedTarget));
+  const extensions = installSettingsExtensionRegistry(normalizedTarget);
+  registerOnnxVisionSettingsExtension(extensions);
   const documentation = createSettingDocumentationClient({
     fetchImpl: typeof normalizedTarget.fetch === "function" ? normalizedTarget.fetch.bind(normalizedTarget) : null,
     indexUrl: resolveSettingDocumentationIndexUrl(),
@@ -120,7 +128,15 @@ export function installSettingsRuntimeFacade(target = globalThis, options = {}) 
       selectApplyValues: selectProfileApplyValues,
       collectRestoredValues,
     }),
-    search: Object.freeze({ highlight: highlightSearchText }),
+    search: Object.freeze({
+      highlight: highlightSearchText,
+      filterEntries: filterSettingSearchEntries,
+      isProfileScope: isProfileSearchScope,
+      normalizeScope: normalizeSearchScope,
+      renderResults: renderSettingSearchResults,
+      createPanel: createSettingSearchPanelView,
+      createInline: createSettingInlineSearchView,
+    }),
     fingerprint: Object.freeze({ renderSummary: renderFingerprintSummary }),
     risk: Object.freeze({ level: getSettingRiskLevel, renderBadge: renderSettingRiskBadge }),
     popular: Object.freeze({
@@ -148,6 +164,7 @@ export function installSettingsRuntimeFacade(target = globalThis, options = {}) 
       renderGroupList: renderSettingsGroupList,
     }),
     values: createSettingValueCache(),
+    extensions,
   });
   const installation = Object.freeze({ store, runtime });
 

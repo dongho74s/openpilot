@@ -12,6 +12,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
 from openpilot.common.swaglog import cloudlog
+from openpilot.common.runtime_diagnostics import communication_snapshot
 from openpilot.common.gps import get_gps_location_service
 
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
@@ -135,6 +136,7 @@ class SelfdriveD:
     self.dm_lockout_set = False
     self.cutin_audio_tracker = CutinAlertTracker()
     self.dm_uncertain_alerted = False
+    self.update_reboot_alerted = False
     self.big_model_loading = False
     self.big_model_active = False
     self.big_model_ready_t = 0.0
@@ -201,6 +203,8 @@ class SelfdriveD:
     if not self.initialized:
       self.events.add(EventName.selfdriveInitializing)
       return
+
+    self.update_reboot_alert()
 
     # Check for user bookmark press (bookmark button or end of LKAS button feedback)
     if self.sm.updated['userBookmark']:
@@ -431,17 +435,21 @@ class SelfdriveD:
         'not_freq_ok': [s for s, freq_ok in self.sm.freq_ok.items() if not freq_ok],
       }
       if logs != self.logged_comm_issue:
-        cloudlog.event("commIssue", error=True, **logs)
+        services = list(dict.fromkeys(logs['not_freq_ok'] + logs['not_alive'] + logs['invalid'] +
+                                      ['modelV2', 'driverAssistance', 'longitudinalPlan']))
+        cloudlog.event("commIssue", error=True, **logs, timing=communication_snapshot(self.sm, services))
         self.logged_comm_issue = logs
     else:
       self.logged_comm_issue = None
 
     if not self.CP.notCar:
-      if not self.sm['livePose'].posenetOK:
+      # Defaults before the first message must not hide the actual startup failure.
+      if self.sm.seen['livePose'] and not self.sm['livePose'].posenetOK:
         self.events.add(EventName.posenetInvalid)
-      if not self.sm['livePose'].inputsOK:
+      if self.sm.seen['livePose'] and not self.sm['livePose'].inputsOK:
         self.events.add(EventName.locationdTemporaryError)
-      if not self.sm['liveParameters'].valid and cal_status == log.LiveCalibrationData.Status.calibrated and not TESTING_CLOSET and (not SIMULATION or REPLAY):
+      if (self.sm.seen['liveParameters'] and not self.sm['liveParameters'].valid and cal_status == log.LiveCalibrationData.Status.calibrated
+          and not TESTING_CLOSET and (not SIMULATION or REPLAY)):
         self.events.add(EventName.paramsdTemporaryError)
 
     # conservative HW alert. if the data or frequency are off, locationd will throw an error
@@ -500,6 +508,15 @@ class SelfdriveD:
     #    self.personality = (self.personality - 1) % 3
     #    self.params.put_nonblocking('LongitudinalPersonality', str(self.personality))
     #    self.events.add(EventName.personalityChanged)
+
+  def update_reboot_alert(self):
+    # One NNFF-style notice per onroad session, after startup alerts finish.
+    # Use the manager's fixed startup identity across ignition cycles.
+    if (not REPLAY and not SIMULATION and not self.update_reboot_alerted
+        and self.sm.frame * DT_CTRL >= 15.0 and self.sm.all_checks(['managerState'])
+        and self.sm['managerState'].rebootRequired):
+      self.events.add(EventName.updateRebootRequired)
+      self.update_reboot_alerted = True
 
   def data_sample(self):
     car_state = messaging.recv_one(self.car_state_sock)
@@ -631,7 +648,9 @@ class SelfdriveD:
 
 
 def main():
-  config_realtime_process(4, Priority.CTRL_HIGH)
+  # Pair short 100Hz state/control work on core6, leaving core4 for planning
+  # and radar preprocessing. Camerad remains SCHED_OTHER on the same core.
+  config_realtime_process(6, Priority.CTRL_HIGH)
   s = SelfdriveD()
   s.run()
 

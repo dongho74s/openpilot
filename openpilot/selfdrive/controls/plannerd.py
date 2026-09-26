@@ -5,6 +5,7 @@ from openpilot.cereal import car
 from openpilot.common.params import Params
 from openpilot.common.realtime import Priority, config_realtime_process
 from openpilot.common.swaglog import cloudlog
+from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
 from openpilot.selfdrive.controls.lib.ldw import LaneDepartureWarning
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 from openpilot.selfdrive.controls.lib.longitudinal_fast_radar import (
@@ -16,6 +17,7 @@ from openpilot.selfdrive.controls.lib.lateral_planner import LateralPlanner
 import openpilot.cereal.messaging as messaging
 from openpilot.selfdrive.carrot.carrot_functions import CarrotPlanner
 from openpilot.selfdrive.carrot.radar import effective_radar_track_mode
+from openpilot.selfdrive.carrot.radar_motion.timing import front_radar_distance_delay_s
 
 
 LIVE_TRACKS_FALLBACK_TIMEOUT_S = 0.10
@@ -23,7 +25,9 @@ MIN_LONGITUDINAL_PLAN_INTERVAL_NS = 25_000_000
 
 
 def main():
-  config_realtime_process(7, Priority.CTRL_LOW)
+  # Keep planning off camera/model cores and away from card's FIFO53 on core5.
+  # Planner and radarcan share core4/FIFO51; controlsd/selfdrived use core6.
+  config_realtime_process(4, Priority.CTRL_LOW)
 
   cloudlog.info("plannerd is waiting for CarParams")
   params = Params()
@@ -45,7 +49,7 @@ def main():
   longitudinal_planner = LongitudinalPlanner(CP)
   lateral_planner = LateralPlanner(CP, debug=False)
   fast_radar = FastRadarOverlay(
-    front_radar_delay_s=float(CP.radarDelay),
+    front_radar_delay_s=front_radar_distance_delay_s(CP),
   )
   stopping_lead_filter = StoppingLeadFilter()
 
@@ -61,9 +65,13 @@ def main():
   carrot = CarrotPlanner()
   model_frame = 0
   last_longitudinal_trigger_mono_ns = 0
+  diagnostics = RuntimeDiagnostics('plannerd', cloudlog.event)
 
   while True:
+    wait_start = time.monotonic()
     sm.update()
+    loop_start, cpu_start = time.monotonic(), time.thread_time()
+    timings = {'poll_ms': (loop_start - wait_start) * 1000}
 
     if sm.updated['radarState']:
       fast_radar.observe_radar_state(
@@ -155,8 +163,11 @@ def main():
         fast_radar_execution_time=fast_radar_execution_time,
         fast_lead_reason=(fast_result.lead_one_reason if fast_result is not None else 'inactive'),
       )
+      timings['longitudinal_ms'] = (time.monotonic() - planner_start) * 1000
 
     if sm.updated['modelV2']:
+      lateral_start = time.monotonic()
+      timings['model_age_at_lateral_ms'] = (lateral_start - sm.logMonoTime['modelV2'] * 1e-9) * 1000
       model_frame += 1
       lateral_planner.update(sm, carrot)
       lateral_planner.publish(sm, pm, carrot)
@@ -167,6 +178,13 @@ def main():
       msg.driverAssistance.leftLaneDeparture = ldw.left
       msg.driverAssistance.rightLaneDeparture = ldw.right
       pm.send('driverAssistance', msg)
+      timings['lateral_and_assistance_ms'] = (time.monotonic() - lateral_start) * 1000
+
+    diagnostics.record(
+      context={'planning_trigger': planning_trigger, 'model_frame_id': int(sm['modelV2'].frameId)},
+      work_ms=(time.monotonic() - loop_start) * 1000, thread_cpu_ms=(time.thread_time() - cpu_start) * 1000,
+      model_updated=int(sm.updated['modelV2']), longitudinal_run=int(run_longitudinal and sm.seen['modelV2']), **timings,
+    )
 
 
 if __name__ == "__main__":

@@ -140,6 +140,23 @@ def test_large_declared_front_radar_delay_is_supported():
   assert result.radar_state.leadOne.dRel == pytest.approx(19.2)
 
 
+def test_fast_control_speed_uses_each_current_measurement_without_filter_lag():
+  state = make_radar_state()
+  overlay = FastRadarOverlay(front_radar_delay_s=.05)
+  radar_mono_ns = confirm_selection(overlay, state)
+  for i, v_rel in enumerate([-2., -1.8, -1.5, -1.5, -1.7, -2.1, -2.5]):
+    now = radar_mono_ns+i*50_000_000
+    overlay.observe_radar_state(state, now, True)
+    # Deliberately keep the selected radard speed stale: the live measurement
+    # must replace it on this update, independently of acceleration smoothing.
+    data = make_radar_data({'v_rel': v_rel, 'a_lead': -.1*i})
+    result = build(overlay, state, data, now)
+    assert result.lead_mask == LEAD_ONE_MASK
+    assert result.radar_state.leadOne.vRel == pytest.approx(v_rel)
+    assert result.radar_state.leadOne.vLead == pytest.approx(10.+v_rel)
+    assert result.radar_state.leadOne.vLeadK == pytest.approx(10.+v_rel)
+
+
 @pytest.mark.parametrize(
   ("data", "reason"),
   [
@@ -237,3 +254,41 @@ def test_radar_state_timestamp_uses_deprecated_schema_group():
   plan = log.LongitudinalPlan.new_message()
   plan.deprecated.radarStateMonoTime = 123
   assert plan.deprecated.radarStateMonoTime == 123
+
+
+def test_fast_radar_shares_confirmed_braking_policy_and_changes_only_tau():
+  from openpilot.selfdrive.carrot.radar_motion.controller import RadarLeadDynamics
+  from openpilot.selfdrive.carrot.radar_motion.primary import RadarPointSnapshot
+
+  state = make_radar_state()
+  overlay = FastRadarOverlay(front_radar_delay_s=.05)
+  start = confirm_selection(overlay, state)
+  dynamics = RadarLeadDynamics()
+  first_lead = None
+  for i in range(6):
+    now = start + i * 50_000_000
+    overlay.observe_radar_state(state, now, True)
+    data = make_radar_data({'a_lead': -2., 'j_lead': -4.})
+    result = build(overlay, state, data, now)
+    point = RadarPointSnapshot(35, 'frontRadar', 19., .3, -2., -.5, 0., 8., -2., -4., True)
+    dynamics.update((point,), (now + 50_000_000) * 1e-9)
+    lead = result.radar_state.leadOne.to_dict()
+    assert lead.pop('aLeadTau') == pytest.approx(dynamics.a_lead_tau(point))
+    if first_lead is None:
+      first_lead = lead
+    assert lead == first_lead
+  assert result.radar_state.leadOne.aLeadTau < .05
+
+
+@pytest.mark.parametrize('interruption', ['invalid', 'missing', 'unmeasured'])
+def test_fast_braking_confirmation_does_not_bridge_rejected_measurements(interruption):
+  state = make_radar_state()
+  overlay = FastRadarOverlay(front_radar_delay_s=.05)
+  start = confirm_selection(overlay, state)
+  data = make_radar_data({'a_lead': -2., 'j_lead': -4.})
+  assert build(overlay, state, data, start).radar_state.leadOne.aLeadTau == pytest.approx(1.35)
+  interrupted_data = (make_radar_data() if interruption == 'missing' else
+                      make_radar_data({'measured': False}) if interruption == 'unmeasured' else data)
+  build(overlay, state, interrupted_data, start + 50_000_000, live_tracks_valid=interruption != 'invalid')
+  result = build(overlay, state, data, start + 100_000_000)
+  assert result.radar_state.leadOne.aLeadTau == pytest.approx(1.215)
