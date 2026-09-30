@@ -1387,9 +1387,9 @@ class PlotRenderer:
     self._plot_queue = [[0.0] * self.PLOT_MAX for _ in range(3)]
     self._plot_min = 0.0
     self._plot_max = 0.0
-    self._plot_x = 350.0
+    self._plot_x = 550.0
     self._plot_width = 1000.0
-    self._plot_y = 40.0
+    self._plot_y = 580.0
     self._plot_height = 300.0
     self._plot_dx = 2.0
     self._show_plot_mode_prev = -1
