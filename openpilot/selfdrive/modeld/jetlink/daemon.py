@@ -13,8 +13,9 @@ import time
 import numpy as np
 
 from openpilot.selfdrive.modeld.jetlink import VENDOR
-from openpilot.selfdrive.modeld.jetlink.link import (SPEC, SOCKET, STATUS, REQUEST, REPLY, PacketReader, send, send_parts, validate_spec)
+from openpilot.selfdrive.modeld.jetlink.link import (SPEC, SOCKET, STATUS, REQUEST, REPLY, PacketReader, send, send_parts)
 from openpilot.selfdrive.modeld.jetlink.phase import Publisher as PhasePublisher
+from openpilot.selfdrive.modeld.jetlink.mac import prepare, PreparationDeferred
 from jetlink.client import JetlinkClient
 from jetlink.transport.ffs import FfsTransport
 
@@ -100,7 +101,10 @@ def serve_local(listener, client, peer, wifi=None):
 
 def _serve_local(listener, client, peer, publisher, phase, wifi=None):
   from openpilot.common.params import Params
+  from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
+  from openpilot.common.swaglog import cloudlog
   params = Params()
+  diagnostics = RuntimeDiagnostics('jetlinkd', cloudlog.event)
   last_status = 0.
   last_ping = time.monotonic()
   telemetry_updated = 0.
@@ -126,6 +130,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
       try:
         send(connection, json.dumps({'spec': SPEC.to_dict(), 'peer': peer}).encode())
         while host_attached():
+          loop_started, cpu_started = time.monotonic(), time.thread_time()
           if time.monotonic() - last_status >= 1:
             update_affinity()
             if publisher is not None:
@@ -134,6 +139,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
                     telemetry=client.last_state, telemetry_updated=telemetry_updated,
                     navigation_tail=getattr(publisher, 'tail_stats', {}))
             last_status = time.monotonic()
+          receive_started = time.monotonic()
           try:
             request = reader.receive(connection)
           except TimeoutError:
@@ -143,6 +149,7 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
             client.last_state = client.state()
             telemetry_updated = time.monotonic()
             continue
+          received = time.monotonic()
           if len(request) != REQUEST.size + SPEC.warped_nbytes + SPEC.packed_nbytes:
             raise ValueError('invalid local inference request')
           frame, reset, source_sof = REQUEST.unpack_from(request)
@@ -157,8 +164,10 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
           sent = time.monotonic()
           if peer.get('carrot_host') == 'jetson':
             phase.sent(source_sof)
+          phase_done = time.monotonic()
           if peer.get(NAVI_CAPABILITY):
             publish_hud(client, publisher)
+          hud_done = time.monotonic()
           previous_state = client.last_state
           output = client.infer_end(seq)
           if client.last_state is not previous_state:
@@ -172,14 +181,37 @@ def _serve_local(listener, client, peer, publisher, phase, wifi=None):
             if completed - started > .05:
               log.warning('USB frame %d: send %.1f response %.1f IPC %.1f ms', frame,
                           (sent-started)*1000, (completed-sent)*1000, (time.monotonic()-completed)*1000)
+          replied = time.monotonic()
           if not peer.get(NAVI_CAPABILITY):
             publish_hud(client, publisher)
           else:
             # modeld already has its reply. Drain only a bounded ready tail;
             # never add these fragments before infer_end or delay its reply.
             send_ready_after_reply(client, publisher, fast_receiver=peer.get(PUMP_CAPABILITY) is True)
+          tail_done = time.monotonic()
           if wifi is not None:
             wifi.send(client)
+          finished = time.monotonic()
+          # Record in rlog as well as stderr. Receive time includes normal idle
+          # waiting; the reply tail may delay admission of the NEXT request.
+          diagnostics.record(
+            context={'frame_id': frame, 'usb_seq': seq},
+            housekeeping_ms=(receive_started-loop_started)*1000,
+            ipc_receive_ms=(received-receive_started)*1000,
+            request_parse_ms=(started-received)*1000,
+            usb_send_ms=(sent-started)*1000,
+            phase_ms=(phase_done-sent)*1000,
+            hud_ms=(hud_done-phase_done)*1000,
+            usb_response_ms=(completed-hud_done)*1000,
+            ipc_reply_ms=(replied-completed)*1000,
+            display_tail_ms=(tail_done-replied)*1000,
+            wifi_tail_ms=(finished-tail_done)*1000,
+            server_gpu_ms=client.last_timings[0]/1000,
+            server_queue_ms=client.last_timings[1]/1000,
+            server_total_ms=client.last_timings[2]/1000,
+            loop_ms=(finished-loop_started)*1000,
+            thread_cpu_ms=(time.thread_time()-cpu_started)*1000,
+          )
       except (ConnectionError, BrokenPipeError, ValueError) as exc:
         log.info('local client ended: %s', exc)
     last_ping = time.monotonic()
@@ -227,12 +259,26 @@ def main():
           # fetch its first model. This is outside every model frame deadline.
           wifi.send(client, initial=True)
         publish('loading', peer=peer)
-        validate_spec(client.ensure_engine(SPEC.sha256, SPEC.nbytes, frame_skip=SPEC.frame_skip, build_timeout=30))
+        from openpilot.common.params import Params
+        params = Params()
+        last_progress = 0.
+
+        def progress(stage, fraction, message):
+          nonlocal last_progress
+          if time.monotonic() - last_progress >= 1:
+            publish('loading', peer=peer, preparation={'stage': stage, 'fraction': fraction, 'message': str(message)[:160]})
+            last_progress = time.monotonic()
+
+        prepare(client, peer, lambda: params.get_bool('IsOffroad') and not params.get_bool('IsOnroad'),
+                host_attached, progress)
         # Warm independently of camera/modeld; every real session resets state.
         for frame in range(10):
           client.infer(np.zeros(SPEC.warped_shape, np.uint8), np.zeros(SPEC.packed_nelem, np.float32), frame, reset=True)
         log.info('Jetlink ready: %s', peer)
         serve_local(listener, client, peer, wifi)
+      except PreparationDeferred as exc:
+        log.info('%s', exc)
+        publish('loading', peer=peer, preparation={'stage': 'waiting', 'message': str(exc)})
       except Exception as exc:
         log.exception('Jetlink connection failed')
         publish('retrying', peer=peer, error=str(exc)[:300])
