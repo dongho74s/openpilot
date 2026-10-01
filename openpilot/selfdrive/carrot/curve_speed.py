@@ -21,6 +21,9 @@ TARGET_LAT_ACCEL = 1.9
 APPROACH_DECEL = 1.0
 APPROACH_JERK = 0.8
 RESPONSE_TIME = 1.0
+# User request (2026-10-01): halve the deceleration start distance for turns.
+# The approach distance is scaled by this factor (0.5 = start braking at half the distance).
+APPROACH_DISTANCE_FACTOR = 0.5
 RELEASE_HOLD = 0.35
 GEOMETRY_RELEASE_WINDOW = 0.25
 GEOMETRY_MIN_SPAN = 0.20
@@ -68,7 +71,7 @@ def curve_speed(model, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, speed_ra
   # Include time to unwind acceleration and build gentle braking, as well as
   # controller/actuator response. The downstream planner still enforces jerk.
   response_time = RESPONSE_TIME + (max(0.0, a_ego) + APPROACH_DECEL) / (2.0 * APPROACH_JERK)
-  response_distance = v_ego * response_time
+  response_distance = v_ego * response_time * APPROACH_DISTANCE_FACTOR
   floor_ms = max(5.0, lower_limit_kph) * ratio / 3.6
   lateral_budget = TARGET_LAT_ACCEL / float(np.clip(sensitivity, 0.5, 3.0))
   best = CurveSpeed()
