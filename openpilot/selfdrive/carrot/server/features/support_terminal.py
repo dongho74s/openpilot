@@ -31,7 +31,10 @@ async def api_stop(request: web.Request) -> web.Response:
 
 
 async def api_status(request: web.Request) -> web.Response:
-  return web.json_response(manager.snapshot())
+  # Owner-facing: include the PIN so the local web UI can display the share
+  # URL + PIN in the remote-support dialog. The local web UI already grants
+  # full terminal access on the LAN, so this does not widen the trust boundary.
+  return web.json_response(manager.snapshot(include_secret=True))
 
 
 async def api_approve(request: web.Request) -> web.Response:

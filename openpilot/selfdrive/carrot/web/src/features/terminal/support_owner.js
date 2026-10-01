@@ -561,6 +561,7 @@
           <div class="support-terminal-status">${escapeHtml(status)}</div>
           ${actionButton}
         </div>
+        ${renderShareHtml(active, snapshot)}
         <label class="support-terminal-issue">
           <span>${escapeHtml(t("support_terminal_issue", "Issue"))}</span>
           <input id="supportTerminalIssue" type="text" autocomplete="off" value="${escapeHtml(state.issueDraft)}" placeholder="${escapeHtml(t("support_terminal_issue_placeholder", "Optional issue note"))}" ${issueDisabled}>
@@ -568,6 +569,50 @@
         ${renderSupportSettingsHtml(active)}
       </div>
     `;
+  }
+
+  function renderShareHtml(active, snapshot) {
+    if (!active) return "";
+    const url = String(snapshot?.url || "");
+    const pin = String(snapshot?.pin || "");
+    const row = (kind, label, value) => `
+      <div class="support-terminal-shareRow">
+        <div class="support-terminal-shareRow__copy">
+          <div class="support-terminal-shareRow__label">${escapeHtml(label)}</div>
+          <div class="support-terminal-shareRow__value">${escapeHtml(value || t("support_terminal_detail_preparing", "Preparing..."))}</div>
+        </div>
+        <button class="smallBtn" type="button" data-support-copy="${kind}" ${value ? "" : "disabled"}>${escapeHtml(t("support_terminal_copy", "Copy"))}</button>
+      </div>`;
+    return `
+      <div class="support-terminal-share">
+        ${row("url", t("support_terminal_link", "Link"), url)}
+        ${row("pin", t("support_terminal_pin", "PIN"), pin)}
+      </div>`;
+  }
+
+  async function copyShareValue(kind, button) {
+    const snapshot = state.snapshot || {};
+    const value = kind === "pin" ? String(snapshot.pin || "") : String(snapshot.url || "");
+    if (!value) return;
+    const original = button.textContent;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+      button.textContent = t("support_terminal_copied", "Copied");
+      setTimeout(() => { button.textContent = original; }, 1200);
+    } catch (err) {
+      toast(String(err?.message || err), { tone: "error" });
+    }
   }
 
   function busyLabel() {
@@ -646,6 +691,11 @@
     document.querySelectorAll("[data-support-setting-kind]").forEach((select) => {
       select.addEventListener("change", () => {
         updateSetting(select.dataset.supportSettingKind || "", select.value || "");
+      });
+    });
+    document.querySelectorAll("[data-support-copy]").forEach((button) => {
+      button.addEventListener("click", () => {
+        copyShareValue(button.dataset.supportCopy || "", button);
       });
     });
   }

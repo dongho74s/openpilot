@@ -74,6 +74,8 @@ window.CarrotTranslations.register("zh", {
     support_terminal_detail_failed: "启动失败",
     support_terminal_link: "链接",
     support_terminal_pin: "PIN",
+    support_terminal_copy: "复制",
+    support_terminal_copied: "已复制",
     support_terminal_issue: "问题",
     support_terminal_issue_placeholder: "可选问题备注",
     support_terminal_guest_count: "访客 {count}",

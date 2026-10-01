@@ -83,6 +83,8 @@ window.CarrotTranslations.register("en", {
     support_terminal_detail_failed: "Start failed",
     support_terminal_link: "Link",
     support_terminal_pin: "PIN",
+    support_terminal_copy: "Copy",
+    support_terminal_copied: "Copied",
     support_terminal_issue: "Issue",
     support_terminal_issue_placeholder: "Optional issue note",
     support_terminal_guest_count: "Guest {count}",

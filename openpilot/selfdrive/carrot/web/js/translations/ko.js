@@ -83,6 +83,8 @@ window.CarrotTranslations.register("ko", {
     support_terminal_detail_failed: "시작 실패",
     support_terminal_link: "링크",
     support_terminal_pin: "PIN",
+    support_terminal_copy: "복사",
+    support_terminal_copied: "복사됨",
     support_terminal_issue: "증상",
     support_terminal_issue_placeholder: "증상 메모(선택)",
     support_terminal_guest_count: "접속자 {count}",

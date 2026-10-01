@@ -62,7 +62,7 @@
       "kind": "bundle",
       "source": "src/entries/terminal_support.js",
       "path": "js/generated/terminal-support.js",
-      "hash": "47ea0f582a4f40c53349213a7f99776d35f7d1bb44ab0f6bb5ccff2169787023"
+      "hash": "ece6baf11950a15cf7c559f9c89f68671e9da0c764ecbb5dddd03ce56c8c7b3c"
     },
     {
       "id": "terminal.guest",
@@ -132,7 +132,7 @@
       "kind": "bundle",
       "source": "src/entries/terminal.css",
       "path": "css/generated/terminal.css",
-      "hash": "a9aecb2203d8fa58852a4a0a3dfb46f9cd95eca263ba428d105fe635caa9758f"
+      "hash": "4e7f7d4a30f77064a3ce4040741520d66cd24a089b358adbe3f3aa3d09833ff7"
     },
     {
       "id": "terminal.guest-styles",
