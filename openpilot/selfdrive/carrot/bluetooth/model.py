@@ -9,7 +9,7 @@ import uuid
 
 CONFIG_PATH = Path('/data/carrot/bluetooth.json')
 RUNTIME = Path('/dev/shm/carrot-bluetooth')
-REMOTE_BUTTONS = ('accelCruise', 'decelCruise', 'gapAdjustCruise', 'lfaButton', 'cancel')
+REMOTE_BUTTONS = ('accelCruise', 'decelCruise', 'gapAdjustCruise', 'lfaButton', 'cancel', 'resumeCruise', 'setCruise')
 ACTIONS = ('none', *REMOTE_BUTTONS, *(button + 'Long' for button in REMOTE_BUTTONS),
            'laneLeft', 'laneRight', 'paddleDecel', 'carrotCruise')
 DOUBLE_SECONDS = 0.35
