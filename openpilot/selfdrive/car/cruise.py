@@ -104,12 +104,13 @@ class VCruiseHelper:
       return
 
     # Don't adjust speed when pressing resume to exit standstill
-    cruise_standstill = self.button_change_states[button_type]["standstill"] or CS.cruiseState.standstill
+    _btn_state = self.button_change_states.get(button_type, {"standstill": False, "enabled": True})
+    cruise_standstill = _btn_state["standstill"] or CS.cruiseState.standstill
     if button_type == ButtonType.accelCruise and cruise_standstill:
       return
 
     # Don't adjust speed if we've enabled since the button was depressed (some ports enable on rising edge)
-    if not self.button_change_states[button_type]["enabled"]:
+    if not _btn_state["enabled"]:
       return
 
     v_cruise_delta = v_cruise_delta * (5 if long_press else 1)
