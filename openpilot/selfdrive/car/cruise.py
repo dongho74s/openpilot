@@ -725,7 +725,9 @@ class VCruiseCarrot:
       v_cruise_kph = updated_speed
     if remote in ('cancel', 'cancelLong'):
       self._cruise_control(BLUETOOTH_CANCEL, -1, 'Cruise off (Bluetooth cancel)', allow_cancel_state=True, manual=True)
-    elif remote_enable and not CS.brakePressed and not CS.gasPressed and self._activate_cruise >= 0:
+    elif remote_enable and not CS.brakePressed and not CS.gasPressed and self._activate_cruise >= 0 and CS.vEgo > 1.0:
+      # Safety: Bluetooth remote must not engage cruise from standstill.
+      # vEgo > 1.0 m/s ensures the vehicle is moving before remote can activate cruise.
       self._cruise_control(1, -1, 'Cruise on (Bluetooth button)', manual=True)
       if self._activate_cruise > 0:
         self._lat_enabled = True
