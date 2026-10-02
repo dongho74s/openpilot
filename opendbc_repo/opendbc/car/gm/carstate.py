@@ -256,10 +256,6 @@ class CarState(CarStateBase):
       ("BCMBlindSpotMonitor", 10),
     ]
     cam_messages = []
-    body_messages = [
-      ("Side_Blind_Zone_Alert_Status", 10),
-      ("SBZA_Right_Status_LS", 10),
-    ]
     if CP.networkLocation == NetworkLocation.fwdCamera:
       pt_messages += [
         ("ASCMLKASteeringCmd", float('nan')),
@@ -274,12 +270,8 @@ class CarState(CarStateBase):
       ("ASCMLKASteeringCmd", float('nan')),
     ]
 
-    parsers = {
+    return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, 2),
       Bus.loopback: CANParser(DBC[CP.carFingerprint][Bus.pt], loopback_messages, 128),
     }
-    # Body (lowspeed) bus for SBZA - may not be available on all harnesses
-    if Bus.body in DBC[CP.carFingerprint]:
-      parsers[Bus.body] = CANParser(DBC[CP.carFingerprint][Bus.body], body_messages, 1)
-    return parsers
