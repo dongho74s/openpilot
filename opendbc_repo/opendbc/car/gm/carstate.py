@@ -88,14 +88,22 @@ class CarState(CarStateBase):
     if self.cruise_buttons in [CruiseButtons.UNPRESS, CruiseButtons.INIT] and self.distance_button:
       self.cruise_buttons = CruiseButtons.GAP_DIST
 
-    # BSM: always try to read, parser has the message
+    # BSM: check both pt and cam buses (0x142 can be on either)
     # If not received, defaults to 0 (False) - safe
     try:
-      ret.leftBlindspot = pt_cp.vl["BCMBlindSpotMonitor"]["LeftBSM"] == 1
-      ret.rightBlindspot = pt_cp.vl["BCMBlindSpotMonitor"]["RightBSM"] == 1
+      left_bsm_pt = pt_cp.vl["BCMBlindSpotMonitor"]["LeftBSM"] == 1
+      right_bsm_pt = pt_cp.vl["BCMBlindSpotMonitor"]["RightBSM"] == 1
     except (KeyError, AttributeError):
-      # Message not in parser or not received yet
-      pass
+      left_bsm_pt = False
+      right_bsm_pt = False
+    try:
+      left_bsm_cam = cam_cp.vl["BCMBlindSpotMonitor"]["LeftBSM"] == 1
+      right_bsm_cam = cam_cp.vl["BCMBlindSpotMonitor"]["RightBSM"] == 1
+    except (KeyError, AttributeError):
+      left_bsm_cam = False
+      right_bsm_cam = False
+    ret.leftBlindspot = left_bsm_pt or left_bsm_cam
+    ret.rightBlindspot = right_bsm_pt or right_bsm_cam
 
     # Variables used for avoiding LKAS faults
     self.loopback_lka_steering_cmd_updated = len(loopback_cp.vl_all["ASCMLKASteeringCmd"]["RollingCounter"]) > 0
@@ -260,7 +268,9 @@ class CarState(CarStateBase):
     pt_messages = [
       ("BCMBlindSpotMonitor", float('nan')),
     ]
-    cam_messages = []
+    cam_messages = [
+      ("BCMBlindSpotMonitor", float('nan')),
+    ]
     if CP.networkLocation == NetworkLocation.fwdCamera:
       pt_messages += [
         ("ASCMLKASteeringCmd", float('nan')),
