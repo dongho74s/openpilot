@@ -17,18 +17,17 @@ def find_recent_logs():
         print("로그 디렉토리 없음")
         return []
     
-    routes = sorted(base.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
+    # 세그먼트 디렉토리 직접 찾기 (0000002a--xxx--N 형식)
+    segments = [d for d in base.iterdir() if d.is_dir() and '--' in d.name]
+    segments = sorted(segments, key=lambda x: x.stat().st_mtime, reverse=True)
+    
     logs = []
-    for route in routes[:3]:  # 최근 3개 route
-        if route.is_dir():
-            for seg in sorted(route.iterdir()):
-                rlog = seg / 'rlog.zst'
-                if rlog.exists():
-                    logs.append(rlog)
-                    if len(logs) >= 3:
-                        break
-        if len(logs) >= 3:
-            break
+    for seg in segments[:5]:  # 최근 5개 세그먼트
+        rlog = seg / 'rlog.zst'
+        if rlog.exists():
+            logs.append(rlog)
+            if len(logs) >= 3:
+                break
     return logs
 
 def check_log(log_path):
