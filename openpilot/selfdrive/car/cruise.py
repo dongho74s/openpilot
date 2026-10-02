@@ -559,7 +559,7 @@ class VCruiseCarrot:
     if getattr(self.bluetooth_commands, 'is_repeat', False) and not CC.enabled:
       remote = None  # Holding a remote must never re-engage after disengagement.
     button_kph, button_type, long_pressed = self._prepare_buttons(CS, v_cruise_kph, remote)
-    remote_enable = remote in ('accelCruise', 'decelCruise', 'accelCruiseLong', 'decelCruiseLong', 'resumeCruise', 'setCruise', 'resumeCruiseLong', 'setCruiseLong') and not CC.enabled
+    remote_enable = remote in ('accelCruise', 'decelCruise', 'accelCruiseLong', 'decelCruiseLong') and not CC.enabled
     # SET during soft hold retains its existing cancel behavior.
     if remote == 'decelCruise' and self._soft_hold_active > 0:
       remote_enable = False
