@@ -252,7 +252,9 @@ class CarState(CarStateBase):
 
   @staticmethod
   def get_can_parsers(CP):
-    pt_messages = []
+    pt_messages = [
+      ("BCMBlindSpotMonitor", float('nan')),
+    ]
     cam_messages = []
     if CP.networkLocation == NetworkLocation.fwdCamera:
       pt_messages += [
