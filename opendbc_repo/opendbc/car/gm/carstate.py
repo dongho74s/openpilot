@@ -88,9 +88,14 @@ class CarState(CarStateBase):
     if self.cruise_buttons in [CruiseButtons.UNPRESS, CruiseButtons.INIT] and self.distance_button:
       self.cruise_buttons = CruiseButtons.GAP_DIST
 
-    if self.CP.enableBsm:
+    # BSM: always try to read, parser has the message
+    # If not received, defaults to 0 (False) - safe
+    try:
       ret.leftBlindspot = pt_cp.vl["BCMBlindSpotMonitor"]["LeftBSM"] == 1
       ret.rightBlindspot = pt_cp.vl["BCMBlindSpotMonitor"]["RightBSM"] == 1
+    except (KeyError, AttributeError):
+      # Message not in parser or not received yet
+      pass
 
     # Variables used for avoiding LKAS faults
     self.loopback_lka_steering_cmd_updated = len(loopback_cp.vl_all["ASCMLKASteeringCmd"]["RollingCounter"]) > 0
