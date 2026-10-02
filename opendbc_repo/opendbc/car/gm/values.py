@@ -107,6 +107,7 @@ class GMPlatformConfig(PlatformConfig):
     Bus.pt: 'gm_global_a_powertrain_volt',
     Bus.radar: 'gm_global_a_object',
     Bus.chassis: 'gm_global_a_chassis',
+    Bus.body: 'gm_global_a_lowspeed_1818125',
   })
 
 
