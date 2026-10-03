@@ -1,53 +1,59 @@
 #!/usr/bin/env python3
-"""BSM 파서 진단 - bsm-test2 브랜치에서 실행"""
-import sys
-sys.path.insert(0, '/data/openpilot')
+"""BSM 파서 진단 - 간단 버전 (import 없이 파일 직접 확인)"""
+import subprocess
+from pathlib import Path
 
-try:
-    from opendbc_repo.opendbc.car.gm.carstate import CarState
-    from opendbc_repo.opendbc.car.gm.values import GMPlatformConfig
-    from opendbc_repo.opendbc.car.structs import CarParams
-    from opendbc_repo.opendbc.car import Bus
+print("=== BSM 파서 진단 ===")
+print()
+
+# 1. DBC에 메시지가 있는지 확인
+print("1. DBC 확인:")
+result = subprocess.run(
+    ['grep', '-c', 'BCMBlindSpotMonitor',
+     '/data/openpilot/opendbc_repo/opendbc/dbc/gm_global_a_powertrain_volt.dbc'],
+    capture_output=True, text=True
+)
+count = result.stdout.strip()
+print(f"   BCMBlindSpotMonitor in DBC: {count}회")
+if count != "0":
+    print("   ✓ DBC에 메시지 정의 있음")
+else:
+    print("   ✗ DBC에 없음!")
+
+print()
+
+# 2. carstate.py에 파서 추가되어 있는지 확인
+print("2. 파서 설정 확인:")
+carstate_path = Path('/data/openpilot/opendbc_repo/opendbc/car/gm/carstate.py')
+content = carstate_path.read_text()
+
+if 'BCMBlindSpotMonitor' in content:
+    print("   ✓ carstate.py에 BCMBlindSpotMonitor 언급됨")
     
-    print("=== BSM 파서 진단 ===")
-    print()
-    
-    # 1. DBC에 메시지가 있는지 확인
-    from opendbc_repo.opendbc.dictionary import DBC
-    dbc_name = 'gm_global_a_powertrain_volt'
-    # DBC 파일에서 직접 확인
-    import subprocess
-    result = subprocess.run(
-        ['grep', '-c', 'BCMBlindSpotMonitor', 
-         f'/data/openpilot/opendbc_repo/opendbc/dbc/{dbc_name}.dbc'],
-        capture_output=True, text=True
-    )
-    count = result.stdout.strip()
-    print(f"1. DBC에 BCMBlindSpotMonitor 존재: {count}회")
-    
-    # 2. 파서 설정 확인
-    print()
-    print("2. get_can_parsers 확인:")
-    import inspect
-    src = inspect.getsource(CarState.get_can_parsers)
-    if 'BCMBlindSpotMonitor' in src:
-        print("   ✓ BCMBlindSpotMonitor가 파서에 추가됨")
-        # pt_messages에 있는지 확인
-        if 'pt_messages = [' in src and 'BCMBlindSpotMonitor' in src.split('pt_messages')[1].split('cam_messages')[0]:
-            print("   ✓ pt_messages (버스 0)에 있음")
+    # get_can_parsers 섹션 찾기
+    if 'def get_can_parsers' in content:
+        # get_can_parsers부터 다음 def까지의 섹션 추출
+        start = content.find('def get_can_parsers')
+        end = content.find('\n  def ', start + 1)
+        section = content[start:end]
+        
+        if 'BCMBlindSpotMonitor' in section:
+            print("   ✓ get_can_parsers에 추가됨")
+            if '"BCMBlindSpotMonitor"' in section or "'BCMBlindSpotMonitor'" in section:
+                print("   ✓ 파서 메시지 목록에 있음")
         else:
-            print("   ✗ pt_messages에 없음!")
-    else:
-        print("   ✗ 파서에 없음!")
-    
-    print()
-    print("3. 결론:")
-    print("   파서 설정은 올바름.")
-    print("   실제 주행 중 0x142 메시지가 버스 0으로 오는지 확인 필요.")
-    print("   노란 장벽이 안 뜨면 메시지가 다른 버스에 있거나,")
-    print("   신호 값이 0으로 고정되어 있을 가능성.")
-    
-except Exception as e:
-    print(f"오류: {e}")
-    import traceback
-    traceback.print_exc()
+            print("   ✗ get_can_parsers에 없음!")
+else:
+    print("   ✗ carstate.py에 없음!")
+
+print()
+
+# 3. update()에서 읽는지 확인
+print("3. 데이터 읽기 확인:")
+if 'pt_cp.vl["BCMBlindSpotMonitor"]' in content or "pt_cp.vl['BCMBlindSpotMonitor']" in content:
+    print("   ✓ update()에서 BCMBlindSpotMonitor 읽음")
+else:
+    print("   ✗ update()에서 읽지 않음!")
+
+print()
+print("=== 진단 완료 ===")
