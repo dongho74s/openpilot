@@ -31,7 +31,7 @@ def apply_accel_jerk_limit(a_raw: float, a_value_last: float, jerk_u: float, jer
 
 
 def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, jerk_l):
-  """Apply the stopping/re-entry sequence after the normal SCC interlocks."""
+  """Apply the zero-aReq stopping sequence after the normal SCC interlocks."""
   if controller is None:
     return
 
@@ -47,8 +47,8 @@ def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, 
              or str(CS.out.gearShifter) != "drive" or longitudinal_interlock_active(CS))
   previous_phase = controller.phase
   command = controller.update(
-    active=values["ACCMode"] == 1 and not blocked, requested=bool(values["StopReq"]), speed=speed, a_ego=CS.out.aEgo,
-    held=CS.canfdSccHoldActive, accel=accel, value=values["aReqValue"], previous_value=previous_value,
+    active=values["ACCMode"] == 1 and not blocked, requested=bool(values["StopReq"]), speed=speed,
+    held=CS.canfdSccHoldActive, accel=accel, previous_value=previous_value,
     jerk_u=max(0.0, min(jerk_u, 5.0)), jerk_l=max(1.0, min(jerk_l, 5.0)),
   )
   if blocked or values["ACCMode"] != 1:
@@ -59,10 +59,14 @@ def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, 
     values.update(StopReq=command.stop_req, aReqRaw=command.raw, aReqValue=command.value,
                   AccelLimitBandUpper=0.0, AccelLimitBandLower=command.lower)
 
+  # Apply only to the final packet, after approach and interlocks select StopReq.
+  # The first StopReq frame already carries zero Raw/Value; Upper may rise next.
+  values["JerkUpperLimit"] = controller.limit_scc_jerk_upper(values["StopReq"], values["JerkUpperLimit"])
+
   if controller.phase != previous_phase:
     carlog.warning({"event": "carrot_stopping", "from": str(previous_phase), "phase": str(controller.phase),
                     "reason": controller.reason, "speed": speed, "aEgo": CS.out.aEgo,
-                    "held": CS.canfdSccHoldActive, "retry_used": controller.retried,
+                    "held": CS.canfdSccHoldActive,
                     "soft_hold": soft_hold,
                     "StopReq": values["StopReq"], "aReqRaw": values["aReqRaw"], "aReqValue": values["aReqValue"]})
 
@@ -351,13 +355,14 @@ def create_lfahda_cluster(packer, CS, CAN, long_active, lat_active, *, suppress_
     values["HDA_OptUsmSta"] = 2
   values["HDA_CntrlModSta"] = 2 if long_active else 0
   values["HDA_LFA_SymSta"] = 2 if lat_active else 0
-  # GV70's blocked stock camera can request this popup during lateral-only
-  # control. Suppress only the observed signature in the outgoing cluster copy;
+  # The scoped GV70/Sorento HEV stock cameras can request this popup with lateral control,
+  # including while longitudinal control is active. Suppress only the observed
+  # signature in the outgoing cluster copy;
   # retain raw camera evidence and all fault / hands-off popup identities.
   lfa = CS.lfa if suppress_camera_auto_disengage else None
   mdps = CS.mdps if suppress_camera_auto_disengage else None
   scc = CS.scc_control if suppress_camera_auto_disengage else None
-  if (suppress_camera_auto_disengage and lat_active and not long_active
+  if (suppress_camera_auto_disengage and lat_active
       and values.get("HDA_InfoPUDis") == 3 and values.get("HDA_InfoPUDis1") == 0
       and values.get("HDA_LFA_WrnSnd") == 0
       and lfa is not None and lfa.get("FCA_SYSWARN") == 1 and lfa.get("VALUE63") == 15
@@ -372,17 +377,18 @@ def _apply_driver_monitoring_alert(values, hud_control, stock):
   level = getattr(hud_control, "driverMonitoringAlert", 0)
   if level not in (1, 2, 3):
     return
-  # Use the documented DAW/break reminder, escalating to takeover at terminal
-  # DM. Apply after the legacy stock-warning filter, on a fresh copy each tick.
-  # Do not replace another OEM popup or add a second, unsynchronised chime.
-  if values["DAW_ICON"] == 0:
-    values["DAW_ICON"] = 1
+  # Use the documented hands-on warning, red at terminal DM. Apply after the
+  # legacy stock-warning filter, on a fresh copy each tick.
+  # Keep OEM popup/sound precedence. The reported stock terminal-warning pair
+  # is ALERTS_2=2 with SOUNDS_2=3 (DBC: constant chime).
   if stock["ALERTS_2"] in (7, 8, 9, 10, 14, 21):
     values["ALERTS_2"] = stock["ALERTS_2"]
     for i in range(1, 5):
       values[f"SOUNDS_{i}"] = stock[f"SOUNDS_{i}"]
   if values["ALERTS_2"] == 0:
-    values["ALERTS_2"] = 9 if level == 3 else 5
+    values["ALERTS_2"] = 2 if level == 3 else 1
+    if level == 3 and all(values[f"SOUNDS_{i}"] == 0 for i in range(1, 5)):
+      values["SOUNDS_2"] = 3
 
 
 def create_lfa_icon_non_camera_scc(packer, CS, CAN, CC):
@@ -1084,6 +1090,9 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
 
       if CS.ccnc_0x162 is not None:
         values = copy.copy(CS.ccnc_0x162)
+        # Seed once from RX; the packer owns the per-message TX counter after that.
+        # RX-paced Panda forwarding replaces it with the original RX counter.
+        rx_counter = values.pop("COUNTER", None)
 
         _normalize_cluster_corner_objects(values, ccnc=True)
         _convert_ccnc_front_box_to_car(values)
@@ -1098,7 +1107,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           values["FAULT_LSS"] = 0
           values["FAULT_DAS"] = 0
 
-        ret.append(packer.make_can_msg("CCNC_0x162", CAN.ECAN, values))
+        ret.append(packer.make_can_msg("CCNC_0x162", CAN.ECAN, values, rx_counter=rx_counter))
 
     # --- NEW_MSG_4B9 (corner radar keep-alive?) ---
     if enable_corner_radar > 0:

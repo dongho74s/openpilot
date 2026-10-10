@@ -211,6 +211,7 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
+    self.steering_template_ready = False
     self.lkas_max_torque = 0
     self.angle_max_torque = 250
     self.steering_pressed_prev = False
@@ -223,7 +224,6 @@ class CarController(CarControllerBase):
     self.driver_torque_filtered_prev = 0.0
     self.pre_override_frames = 0
 
-    self.steer_handover_mode = 0
     self.steer_handover = SteeringHandover()
     self.handover_model_frame = None
     self.handover_model_time = 0
@@ -244,6 +244,17 @@ class CarController(CarControllerBase):
     self.steerDeltaDownOrg = self.steerDeltaDown = self.steerDeltaDownLC = self.params.STEER_DELTA_DOWN
 
   def update(self, CC, CS, now_nanos):
+
+    if not self.steering_template_ready and self.CP.flags & HyundaiFlags.CANFD and self.CP.flags & HyundaiFlags.CAMERA_SCC:
+      template = CS.lfa_alt if self.CP.flags & HyundaiFlags.ANGLE_CONTROL else CS.lfa
+      self.steering_template_ready = template is not None
+      if not self.steering_template_ready and CC.latActive:
+        # Do not run an invisible steering ramp while camera TX discovery is
+        # pending. Inactive handling below tracks the wheel and clears torque
+        # and handover history, so the first emitted command starts bounded.
+        CC = CC.as_builder()
+        CC.latActive = False
+        CC = CC.as_reader()
 
     if self.frame % 50 == 0:
       params = Params()
@@ -287,11 +298,6 @@ class CarController(CarControllerBase):
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
-      handover_mode = params.get_int("SteerHandoverMode")
-      handover_mode = handover_mode if handover_mode in (1, 2, 3) else 0
-      if handover_mode != self.steer_handover_mode:
-        carlog.info("SteeringHandover mode=%d", handover_mode)
-      self.steer_handover_mode = handover_mode
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -463,7 +469,8 @@ class CarController(CarControllerBase):
                      0 <= model.position.yStd[10] <= 0.3)
       previous_handover_state = self.steer_handover.state
       steering_authority = self.steer_handover.update(
-        mode=self.steer_handover_mode, now=now_nanos * 1e-9, baseline=self.lkas_max_torque,
+        # Combined convergence/release recovery is standard for angle control.
+        mode=3, now=now_nanos * 1e-9, baseline=self.lkas_max_torque,
         minimum=self.params.ANGLE_MIN_TORQUE, maximum=self.angle_max_torque,
         driver=driver_torque, threshold=torque_threshold, pressed=CS.out.steeringPressed,
         target_error=actuators.steeringAngleDeg - CS.out.steeringAngleDeg,
@@ -471,9 +478,9 @@ class CarController(CarControllerBase):
         wheelbase=self.CP.wheelbase, steer_ratio=self.CP.steerRatio, active=CC.latActive,
         valid=bool(CS.out.canValid and not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent and model_valid),
       )
-      if self.steer_handover_mode and (self.frame % 100 == 0 or previous_handover_state != self.steer_handover.state):
-        carlog.info("SteeringHandover mode=%d state=%s effort=%.3f error=%.3f legacy=%.1f cap=%.1f",
-                    self.steer_handover_mode, self.steer_handover.state, self.steer_handover.effort or 0.0,
+      if self.frame % 100 == 0 or previous_handover_state != self.steer_handover.state:
+        carlog.info("SteeringHandover mode=3 state=%s effort=%.3f error=%.3f legacy=%.1f cap=%.1f",
+                    self.steer_handover.state, self.steer_handover.effort or 0.0,
                     self.steer_handover.error, self.lkas_max_torque, steering_authority)
 
     self.apply_angle_last = apply_angle
@@ -552,7 +559,9 @@ class CarController(CarControllerBase):
       if self.frame % 5 == 0 and (not hda2 or hda2_long or camera_scc):
         can_sends.extend(hyundaicanfd.create_lfahda_cluster(
           self.packer, CS, self.CAN, CC.longActive, CC.latActive,
-          suppress_camera_auto_disengage=bool(camera_scc and self.car_fingerprint == CAR.GENESIS_GV70_1ST_GEN),
+          suppress_camera_auto_disengage=bool(camera_scc and self.car_fingerprint in (
+            CAR.GENESIS_GV70_1ST_GEN, CAR.KIA_SORENTO_HEV_4TH_GEN,
+          )),
           dm_alert=hud_control.driverMonitoringAlert if (CS.adrv_0x161 is None or
                    (camera_scc and not self.CP.openpilotLongitudinalControl)) else 0,
         ))

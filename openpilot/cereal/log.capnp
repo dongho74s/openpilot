@@ -597,6 +597,7 @@ struct PandaState @0xa7649e2575e4591e {
   # reserved for forks building alternate experiences.
   controlsAllowedRESERVED1 @38 :Bool;
   controlsAllowedRESERVED2 @39 :Bool;
+  wakeOnCan @40 :Bool;
 
   enum FaultStatus {
     none @0;
@@ -1505,6 +1506,7 @@ struct ProcLog {
     memPss @17 :UInt64;        # Pss — shared pages split by mapper count
     memPssAnon @18 :UInt64;    # Pss_Anon — private anonymous (heap, stack)
     memPssShmem @19 :UInt64;   # Pss_Shmem — proportional MSGQ/tmpfs share
+    memPssMonoTime @20 :UInt64; # scan start in monotonic ns; 0 means unavailable (also older logs)
   }
 
   struct CPUTimes {
@@ -2716,6 +2718,7 @@ struct Event {
     customReservedRawData0 @124 :Data;
     navRouteNavd @125 :NavRoute;
     navInstructionCarrot @126 :NavInstruction;
+    customReservedRawData1 @154 :Data;
 
     # DO change the name of the field and struct
     # DON'T change the ID (e.g. @107)
