@@ -174,7 +174,7 @@ class DriverMonitoring2(DriverMonitoring):
       # 기존 고개 방향 완화 조건 유지
       if self.relax_pose and self.alert_level not in (AlertLevel.two, AlertLevel.three):
         for field, value in zip(fields, previous, strict=True):
-          setattr(self.settings, field, value * 1.2)
+          setattr(self.settings, field, value * 1.2) #2.0 감지완화
 
       # Temporary standard monitoring also restores the stock phone threshold.
       if self.experimental_active:
