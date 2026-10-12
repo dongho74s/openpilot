@@ -6,7 +6,7 @@ from openpilot.selfdrive.monitoring.policy import DriverMonitoring, AlertLevel, 
 
 
 class DriverMonitoring2(DriverMonitoring):
-  INTERACTION_TIMEOUTS = (15.0, 30.0, 45.0)
+  INTERACTION_TIMEOUTS = (99999.0, 99999.0, 99999.0)
 
   def __init__(self, *args, experimental=False, **kwargs):
     super().__init__(*args, **kwargs)
