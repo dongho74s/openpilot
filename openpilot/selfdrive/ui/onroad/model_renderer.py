@@ -300,6 +300,108 @@ class ModelRenderer(Widget):
       )
       draw_polygon(self._rect, self._path.projected_points, gradient=gradient)
 
+    # Tire trajectory overlay (port from carrotpilot)
+    self._draw_tire_trajectory(sm)
+
+  @staticmethod
+  def _tire_grad_color(d: float, a: int) -> rl.Color:
+    # danger 0(center)->1(lane touch): green -> yellow -> red
+    d = max(0.0, min(1.5, d))
+    if d <= 0.10:
+      r, g = 0.0, 200.0
+    elif d <= 0.60:
+      f = (d - 0.10) / 0.50
+      r, g = f * 255.0, 200.0
+    elif d <= 1.00:
+      f = (d - 0.60) / 0.40
+      r, g = 255.0, 200.0 - f * 200.0
+    else:
+      r, g = 255.0, 0.0
+    return rl.Color(int(r), int(g), 0, a)
+
+  def _draw_tire_trajectory(self, sm):
+    """Tire trajectory: draw tire tracks (±0.9m) as gradient bands on model path.
+    Color changes green->red based on deviation from lane center. Pulses when close to lane departure.
+    Controlled by TireTrajectory param (1=on, 0=off)."""
+    try:
+      enabled = int(Params().get("TireTrajectory", encoding='utf8') or "0")
+    except (ValueError, TypeError):
+      enabled = 0
+    if enabled <= 0:
+      return
+    if not sm.valid['modelV2']:
+      return
+
+    model = sm['modelV2']
+    lane_lines = model.laneLines
+    probs = model.laneLineProbs
+    if len(lane_lines) < 3 or len(probs) < 3:
+      return
+
+    left_y, right_y = lane_lines[1].y, lane_lines[2].y
+    if len(left_y) == 0 or len(right_y) == 0:
+      return
+
+    # Distance from vehicle center to left/right lane (m). Model +Y=left, so invert for right.
+    left_m = float(left_y[0])
+    right_m = -float(right_y[0])
+    # If one lane is weakly detected, estimate from the other with default 3.0m width.
+    if probs[1] < 0.3 and probs[2] > 0.3:
+      left_m = 3.0 - right_m
+    elif probs[2] < 0.3 and probs[1] > 0.3:
+      right_m = 3.0 - left_m
+    total = left_m + right_m
+    if total < 0.5:
+      total = 3.0
+
+    # drift>0 => vehicle shifted toward left lane (left tire close to left lane).
+    drift = (right_m - left_m) / 2.0
+    limit = max(0.1, total / 2.0 - 0.9)   # tire (half width 0.9m) touching lane = 1.0
+    danger = abs(drift) / limit
+
+    # Model predicted path. Limit to lead distance if present, else 40m max.
+    path = self._path.raw_points
+    if path.shape[0] < 5:
+      return
+    max_dist = 40.0
+    radar_state = sm['radarState'] if sm.valid['radarState'] else None
+    if radar_state is not None and radar_state.leadOne.status:
+      d_rel = float(radar_state.leadOne.dRel)
+      if 3.0 < d_rel < max_dist:
+        max_dist = d_rel
+    max_idx = self._get_path_length_idx(path[:, 0], max_dist)
+    if max_idx < 5:
+      return
+
+    # Colors: deviated side = danger gradient, other side = green. Pulse on severe departure.
+    green = rl.Color(0, 200, 0, 255)
+    warn = abs(drift) >= 0.5
+    pulse = warn and (int(rl.get_time() * 1000) % 800 < 400)
+    if warn:
+      side = rl.Color(255, 0, 0, 255) if pulse else rl.Color(255, 100, 0, 220)
+      color_left = side if drift > 0.0 else green
+      color_right = side if drift < 0.0 else green
+    elif drift > 0.02:
+      color_left, color_right = self._tire_grad_color(danger, 255), green
+    elif drift < -0.02:
+      color_left, color_right = green, self._tire_grad_color(danger, 255)
+    else:
+      color_left = color_right = green
+
+    # Tire track bands: thin ribbons at ±0.9m from path center. Fade with distance.
+    band_half = 0.16
+    for y_shift, col in ((0.9, color_left), (-0.9, color_right)):
+      ribbon = self._map_line_to_polygon(path, band_half, 1.22, max_idx, max_dist, True, y_shift)
+      if ribbon.size == 0:
+        continue
+      grad = Gradient(
+        start=(0.0, 1.0),  # bottom of path (near vehicle)
+        end=(0.0, 0.0),    # top of path (far)
+        colors=[rl.Color(col.r, col.g, col.b, col.a), rl.Color(col.r, col.g, col.b, 0)],
+        stops=[0.0, 1.0],
+      )
+      draw_polygon(self._rect, ribbon, gradient=grad)
+
   def _draw_lead_indicator(self):
     # Draw lead vehicles if available
     for lead in self._lead_vehicles:
@@ -333,7 +435,7 @@ class ModelRenderer(Widget):
 
     return (x, y)
 
-  def _map_line_to_polygon(self, line: np.ndarray, y_off: float, z_off: float, max_idx: int, max_distance: float, allow_invert: bool = True) -> np.ndarray:
+  def _map_line_to_polygon(self, line: np.ndarray, y_off: float, z_off: float, max_idx: int, max_distance: float, allow_invert: bool = True, y_shift: float = 0.0) -> np.ndarray:
     """Convert 3D line to 2D polygon for rendering."""
     if line.shape[0] == 0:
       return np.empty((0, 2), dtype=np.float32)
@@ -357,7 +459,8 @@ class ModelRenderer(Widget):
 
     N = points.shape[0]
     # Generate left and right 3D points in one array using broadcasting
-    offsets = np.array([[0, -y_off, z_off], [0, y_off, z_off]], dtype=np.float32)
+    # y_shift offsets the band laterally (for tire tracks)
+    offsets = np.array([[0, -y_off + y_shift, z_off], [0, y_off + y_shift, z_off]], dtype=np.float32)
     points_3d = points[None, :, :] + offsets[:, None, :]  # Shape: 2xNx3
     points_3d = points_3d.reshape(2 * N, 3)  # Shape: (2*N)x3
 
