@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from openpilot.common import repo_update, startup_recovery
+from openpilot.common import rebuild_request, repo_update, startup_recovery
 from openpilot.common import text_window
 
 
@@ -97,6 +97,7 @@ def test_repeated_taps_do_not_start_concurrent_updates(monkeypatch, tmp_path):
   update = startup_recovery.RecoveryUpdate(tmp_path)
   assert update.start() and entered.wait(2)
   assert not update.start()
+  assert not update.start_rebuild()
   finish.set()
   assert len(calls) == 1
 
@@ -191,3 +192,136 @@ def test_startup_capture_is_bounded_and_keeps_the_last_error(tmp_path):
   assert destination.getvalue() == data
   assert path.stat().st_size <= 65536
   assert path.read_bytes().endswith(b'last error\n')
+
+
+def test_error_log_prioritizes_diagnostic_without_losing_context(tmp_path):
+  path = tmp_path / 'failure.log'
+  path.write_text('Compiling file.cc\n\x1b[31mfile.cc:12: error: missing header\x1b[0m\n' +
+                  '#include <missing.h>\nscons: building terminated because of errors.\n')
+  text = startup_recovery.read_startup_error(path)
+  assert text.startswith('file.cc:12: error: missing header\n#include <missing.h>')
+  assert 'Compiling file.cc' in text and '\x1b' not in text
+
+
+def test_error_log_handles_tracebacks_missing_and_large_logs(tmp_path):
+  path = tmp_path / 'failure.log'
+  assert startup_recovery.read_startup_error(path) == ''
+  assert startup_recovery.read_startup_error(None) == ''
+  path.write_bytes(b'old output\n' * 10000 + b'Traceback (most recent call last):\n' +
+                   b'  File "manager.py", line 1\nModuleNotFoundError: missing_native\n')
+  text = startup_recovery.read_startup_error(path)
+  assert text.startswith('ModuleNotFoundError: missing_native')
+  assert 'File "manager.py"' in text and len(text) <= 65536
+
+
+def test_rebuild_request_is_written_atomically(tmp_path):
+  path = tmp_path / 'rebuild_all.request'
+  rebuild_request.request_full_rebuild(path)
+  assert path.read_text().strip()
+  assert [p.name for p in tmp_path.iterdir()] == ['rebuild_all.request']
+
+
+@pytest.mark.parametrize('request_fails', [False, True])
+def test_rebuild_requests_boot_reset_and_reboots_only_on_success(tmp_path, monkeypatch, request_fails):
+  monkeypatch.setattr(repo_update, 'LOCK_PATH', str(tmp_path / 'update.lock'))
+  repo, request = tmp_path / 'repo', tmp_path / 'rebuild_all.request'
+  repo.mkdir()
+  (repo / 'prebuilt').touch()
+  (repo / 'source.txt').write_text('local source changes')
+  calls = []
+
+  def write_request():
+    # The request must own the same lock used by Git and the launcher.
+    with pytest.raises(repo_update.RepoBusyError), repo_update.repo_lock():
+      pytest.fail('rebuild request did not hold repository lock')
+    calls.append('request')
+    if request_fails:
+      raise OSError('read-only file system')
+    rebuild_request.request_full_rebuild(request)
+
+  monkeypatch.setattr(startup_recovery, 'request_full_rebuild', write_request)
+  update = startup_recovery.RecoveryUpdate(repo, reboot=lambda: calls.append('reboot'))
+  update._rebuild()
+  # Nothing is cleaned here; the launcher resets build state on the next boot.
+  assert (repo / 'source.txt').read_text() == 'local source changes'
+  assert (repo / 'prebuilt').exists()
+  assert request.exists() != request_fails
+  assert calls == (['request'] if request_fails else ['request', 'reboot'])
+  assert update.state[0] == ('failed' if request_fails else 'rebuild_rebooting')
+  if request_fails:
+    assert 'read-only file system' in update.state[1]
+
+
+def test_rebuild_and_git_exclude_each_other(tmp_path, monkeypatch):
+  entered, finish, done = threading.Event(), threading.Event(), threading.Event()
+
+  def rebuild(self):
+    entered.set()
+    finish.wait(3)
+    self._set('failed', 'Retry available')
+    done.set()
+
+  monkeypatch.setattr(startup_recovery.RecoveryUpdate, '_rebuild', rebuild)
+  update = startup_recovery.RecoveryUpdate(tmp_path)
+  assert update.start_rebuild() and entered.wait(2)
+  try:
+    assert not update.start_rebuild()
+    assert not update.start(automatic=True)
+    assert not update.start()
+  finally:
+    finish.set()
+  assert done.wait(2)
+
+
+@pytest.mark.parametrize('failure', ['busy', 'write', 'reboot'])
+def test_rebuild_failure_is_retryable(tmp_path, monkeypatch, failure):
+  monkeypatch.setattr(repo_update, 'LOCK_PATH', str(tmp_path / 'update.lock'))
+  calls = []
+
+  def write_request():
+    calls.append('request')
+    if failure == 'write':
+      raise OSError('disk full')
+
+  def reboot():
+    calls.append('reboot')
+    raise OSError('reboot failed')
+
+  monkeypatch.setattr(startup_recovery, 'request_full_rebuild', write_request)
+  update = startup_recovery.RecoveryUpdate(tmp_path, reboot=reboot)
+  if failure == 'busy':
+    with repo_update.repo_lock():
+      update._rebuild()
+  else:
+    update._rebuild()
+  assert update.state[0] == 'failed' and update.state[1]
+  assert calls == {'busy': [], 'write': ['request'], 'reboot': ['request', 'reboot']}[failure]
+
+
+def test_error_pages_wrap_without_losing_long_paths(monkeypatch):
+  pytest.importorskip('pyray')
+  from openpilot.system.ui import startup_recovery as ui
+  monkeypatch.setattr(ui.rl, 'measure_text_ex', lambda font, text, size, spacing: ui.rl.Vector2(len(text) * 8, 12))
+  error = '/long/path/' * 50 + ': error: missing header'
+  pages = ui.error_pages(None, error, 1)
+  assert len(pages) > 1
+  assert ''.join(line for page in pages for line in page) == error
+  assert all(len(page) <= 4 and all(len(line) <= 63 for line in page) for page in pages)
+
+
+@pytest.mark.parametrize('status', startup_recovery.BUSY_STATES + ('idle', 'waiting', 'failed'))
+def test_display_keeps_original_error_in_every_update_state(monkeypatch, status):
+  pytest.importorskip('pyray')
+  from openpilot.system.ui import startup_recovery as ui
+  drawn = []
+  monkeypatch.setattr(ui.rl, 'measure_text_ex', lambda font, text, size, spacing: ui.rl.Vector2(len(text) * size / 2, size))
+  monkeypatch.setattr(ui.rl, 'draw_text_ex', lambda font, text, *args: drawn.append(text))
+  monkeypatch.setattr(ui.rl, 'clear_background', lambda *args: None)
+  monkeypatch.setattr(ui.rl, 'draw_rectangle_rounded', lambda *args: None)
+  rebuild, update, error = ui.draw_screen(None, 536, 240, (status, 'Update status'), 'Build failed', 'host:6999',
+                                         [['fatal error: missing header']])
+  assert 'fatal error: missing header' in drawn and 'Update status' in drawn
+  assert ui.REBUILD_KO in drawn and ui.BUTTON_KO in drawn
+  assert error.y + error.height <= rebuild.y
+  assert rebuild.x + rebuild.width < update.x
+  assert update.x + update.width <= 536 and update.y + update.height <= 240

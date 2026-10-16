@@ -3,6 +3,7 @@ import cffi
 import math
 import os
 import queue
+import re
 import time
 import signal
 import sys
@@ -135,9 +136,19 @@ class TextAlignmentVertical(IntEnum):
   BOTTOM = 2
 
 
-def font_fallback(font: rl.Font) -> rl.Font:
-  """Fall back to unifont for languages that require it."""
-  if multilang.requires_unifont() and gui_app.has_font(FontWeight.DISPLAY):
+_KOREAN_TEXT_RE = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]")
+
+
+def font_fallback(font: rl.Font, text: str | bytes | None = None) -> rl.Font:
+  """Keep locale fallback and also render Korean text in other locales."""
+  if not gui_app.has_font(FontWeight.DISPLAY):
+    return font
+  if multilang.requires_unifont():
+    return gui_app.font(FontWeight.DISPLAY)
+  if isinstance(text, bytes):
+    text = text.decode("utf-8", errors="replace")
+  # Non-ASCII punctuation, Latin accents and emoji do not require a font change.
+  if isinstance(text, str) and _KOREAN_TEXT_RE.search(text):
     return gui_app.font(FontWeight.DISPLAY)
   return font
 
@@ -264,8 +275,30 @@ class MouseState:
       self._prev_mouse_event[slot] = ev
 
 
+def _make_framebuffer_reader():
+  if PC:
+    return rl.rl_get_active_framebuffer
+
+  # The ES2 raylib build stubs rlGetActiveFramebuffer to zero. Allocate once;
+  # the real ES2 binding query then needs no per-frame allocation or API lookup.
+  ffi = cffi.FFI()
+  ffi.cdef('void glGetIntegerv(unsigned int pname, int *data);')
+  gles = ffi.dlopen('libGLESv2.so')
+  binding = ffi.new('int *')
+
+  def read_framebuffer():
+    gles.glGetIntegerv(0x8CA6, binding)  # GL_FRAMEBUFFER_BINDING (ES2)
+    return binding[0]
+
+  return read_framebuffer
+
+
 class GuiApplication:
   def __init__(self, width: int | None = None, height: int | None = None):
+    # Capture the actual target after BeginDrawing: PLATFORM_COMMA binds its
+    # internal rotated_fb even when screen recording is disabled.
+    self.render_framebuffer = 0
+    self._read_framebuffer = rl.rl_get_active_framebuffer
     self._set_log_callback()
 
     self._fonts: dict[FontWeight, rl.Font] = {}
@@ -360,6 +393,13 @@ class GuiApplication:
     if self._render_texture is None:
       self._render_texture = rl.load_render_texture(self._width, self._height)
       rl.set_texture_filter(self._render_texture.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+
+  def _release_unused_render_texture(self):
+    # Only at a frame boundary: a widget can stop recording inside texture mode.
+    # Preserve targets required by scaling, burn-in visualization or CLI recording.
+    if self._render_texture is not None and not (self._record_enabled or RECORD or BURN_IN_MODE or self._scale != 1.0):
+      rl.unload_render_texture(self._render_texture)
+      self._render_texture = None
 
   def _init_ffmpeg(self, out_path: Path):
     self.close_ffmpeg()
@@ -476,6 +516,7 @@ class GuiApplication:
       rl.set_config_flags(flags)
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
+      self._read_framebuffer = _make_framebuffer_reader()
 
       needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
       if self._scale != 1.0:
@@ -792,6 +833,10 @@ class GuiApplication:
       rl.unload_texture(texture)
     self._textures = {}
 
+    from openpilot.system.ui.lib import native_text, text_measure
+    native_text.clear()
+    text_measure._cache.clear()
+
     for font in self._fonts.values():
       rl.unload_font(font)
     self._fonts = {}
@@ -847,11 +892,17 @@ class GuiApplication:
           yield False
           continue
 
-        if self._render_texture:
-          rl.begin_texture_mode(self._render_texture)
+        self._release_unused_render_texture()
+        # Start/stop can happen during widget rendering. Pair begin/end with the
+        # target selected at frame start, never a newly allocated recording one.
+        render_texture = self._render_texture
+        if render_texture:
+          rl.begin_texture_mode(render_texture)
+          self.render_framebuffer = render_texture.id
           rl.clear_background(rl.BLACK)
         else:
           rl.begin_drawing()
+          self.render_framebuffer = self._read_framebuffer()
           rl.clear_background(rl.BLACK)
 
         if self._scale != 1.0:
@@ -871,13 +922,13 @@ class GuiApplication:
         if self._scale != 1.0:
           rl.rl_pop_matrix()
 
-        if self._render_texture:
+        if render_texture:
           rl.end_texture_mode()
           rl.begin_drawing()
           rl.clear_background(rl.BLACK)
           src_rect = rl.Rectangle(0, 0, float(self._scaled_width), -float(self._scaled_height))
           dst_rect = rl.Rectangle(0, 0, float(self._scaled_width), float(self._scaled_height))
-          texture = self._render_texture.texture
+          texture = render_texture.texture
           if texture:
             if BURN_IN_MODE and self._burn_in_shader:
               rl.begin_shader_mode(self._burn_in_shader)
@@ -897,10 +948,12 @@ class GuiApplication:
 
         rl.end_drawing()
 
-        if RECORD or self._record_enabled:
+        if (RECORD or self._record_enabled) and render_texture is not None:
           self._record_frame_idx += 1
-          if self._record_frame_idx % self._record_every_n == 0:
-            image = rl.load_image_from_texture(self._render_texture.texture)
+          # A saturated encoder queue cannot use another frame. Skip the costly
+          # synchronous GPU readback and copy rather than discarding it afterward.
+          if self._record_frame_idx % self._record_every_n == 0 and self._ffmpeg_queue is not None and not self._ffmpeg_queue.full():
+            image = rl.load_image_from_texture(render_texture.texture)
             data_size = image.width * image.height * 4
             data = bytes(rl.ffi.buffer(image.data, data_size))
             try:
@@ -980,8 +1033,12 @@ class GuiApplication:
 
   def _font_codepoints(self, font_weight: FontWeight) -> list[int]:
     codepoints = set(range(32, 127))
+    # Match the common symbols in the generated atlases (fonts/process.py).
+    codepoints.update(map(ord, "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–‑✓×°§•€£¥"))
     if font_weight in (FontWeight.DISPLAY, FontWeight.UNIFONT):
       codepoints.update(range(0xAC00, 0xD7A4))
+      codepoints.update(range(0x1100, 0x1200))
+      codepoints.update(range(0x3130, 0x3190))
       codepoints.update(range(0x4E00, 0xA000))
       codepoints.update(range(0x3400, 0x4DC0))
     return sorted(codepoints)
@@ -994,12 +1051,15 @@ class GuiApplication:
       return False
 
   def _patch_text_functions(self):
+    from openpilot.system.ui.lib import native_text
     # Wrap pyray text APIs to apply a global text size scale so our px sizes match Qt
     if not hasattr(rl, "_orig_draw_text_ex"):
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font)
+      font = font_fallback(font, text)
+      if native_text.try_plain_text(rl, font, text, position, font_size * FONT_SCALE, spacing, tint):
+        return
       return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)
 
     rl.draw_text_ex = _draw_text_ex_scaled

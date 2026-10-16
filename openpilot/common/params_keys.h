@@ -90,6 +90,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ObdMultiplexingEnabled", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BOOL}},
     {"Offroad_CarUnrecognized", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_CarrotAutoUpdateFailed", {PERSISTENT, JSON}},
+    // Retired manual wait: clear saved holds when the updated manager starts.
+    {"JetsonLegacyUpdatePending", {CLEAR_ON_MANAGER_START, BOOL}},
+    {"Offroad_JetsonLegacyUpdate", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeeded", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeededPrompt", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ExcessiveActuation", {CLEAR_ON_MANAGER_START, JSON}},
@@ -210,9 +213,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ClusterHudRadarDisplay", {PERSISTENT, INT, "0"}},
     {"ClusterHudRadarSourceColor", {PERSISTENT, INT, "0"}},
     {"RecordRoadCam", {PERSISTENT, INT, "0"}},
-    {"CarrotYouTubeLive", {PERSISTENT, INT, "0"}},
-    {"CarrotYouTubeQuality", {PERSISTENT, INT, "0"}},
-    {"CarrotYouTubeTimestamp", {PERSISTENT, INT, "0"}},
     {"HDPuse", {PERSISTENT, INT, "0"}},
 
     {"AutoCruiseControl", {PERSISTENT, INT, "0"}},
@@ -242,6 +242,13 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoNaviSpeedCtrlMode", {PERSISTENT, INT, "2"}},
     {"VehicleNaviCanControl", {PERSISTENT, INT, "0"}},
     {"VehicleNaviSchoolZoneControl", {PERSISTENT, BOOL, "0"}},
+    {"VehicleNaviDecelCancel", {PERSISTENT, BOOL, "0"}},
+    {"VehicleNaviDecelCancelBox", {PERSISTENT, BOOL, "1"}},
+    {"VehicleNaviDecelCancelMobileZone", {PERSISTENT, BOOL, "1"}},
+    {"VehicleNaviDecelCancelBump", {PERSISTENT, BOOL, "1"}},
+    {"VehicleNaviDecelCancelUnknown", {PERSISTENT, BOOL, "0"}},
+    {"VehicleNaviDecelCancelEarlyWarning", {PERSISTENT, BOOL, "0"}},
+    {"VehicleNaviSectionAvgControl", {PERSISTENT, BOOL, "0"}},
     {"VehicleSpeedCameraControlMode", {PERSISTENT, INT, "1"}},
     {"VehicleSpeedCameraDistanceTime", {PERSISTENT, INT, "60"}},
     {"AutoRoadSpeedLimitOffset", {PERSISTENT, INT, "-1"}},
@@ -279,10 +286,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"MyDrivingMode", {PERSISTENT, INT, "3"}},
     {"MyDrivingModeAuto", {PERSISTENT, INT, "0"}},
     {"TrafficLightDetectMode", {PERSISTENT, INT, "2"}},
+    {"SignalAssistMode", {PERSISTENT, INT, "0"}},
 
     {"SteerActuatorDelay", {PERSISTENT, INT, "0"}},
     {"LatSmoothSec", {PERSISTENT, INT, "13"}},
-    {"SteerHandoverMode", {PERSISTENT, INT, "0"}},
     {"LatSuspendAngleDeg", {PERSISTENT, INT, "300"}},
     {"CruiseOnDist", {PERSISTENT, INT, "400"}},
 
@@ -313,6 +320,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SoftwareMenu", {PERSISTENT, INT, "1"}},
 
     {"HyundaiCameraSCC", {PERSISTENT, INT, "0"}},
+    {"HyundaiCanfdClusterDirectTx", {PERSISTENT, BOOL, "0"}},
     {"FingerPrints", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING}},
     {"IsLdwsCar", {PERSISTENT, INT, "0"}},
     {"CanfdHDA2", {PERSISTENT, INT, "0"}},
@@ -348,6 +356,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneChangeDelay", {PERSISTENT, INT, "0"}},
     {"LaneChangeBsd", {PERSISTENT, INT, "0"}},
     {"LaneLineCheck", {PERSISTENT, INT, "0"}},
+    {"BlinkerLatchedTurn", {PERSISTENT, INT, "0"}},
+    {"LaneChangeLeverWait", {PERSISTENT, BOOL, "0"}},
     {"MaxAngleFrames", {PERSISTENT, INT, "89"}},
 
     {"LatMpcPathCost", {PERSISTENT, INT, "200"}},
@@ -376,6 +386,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     {"SpeedFromPCM", {PERSISTENT, INT, "2"}},
     {"MaxTimeOffroadMin", {PERSISTENT, INT, "60"}},
+    {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "1"}},
 
     {"DisableDM", {PERSISTENT, INT, "0"}},  // retired; read only for one-time streaming migration
     {"DriverMonitoringEnabled", {PERSISTENT, BOOL, "1"}},
@@ -410,7 +421,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ShareData", {PERSISTENT, INT, "0"}},
     {"OnnxLaneThreshold", {PERSISTENT, INT, "25"}},
     {"OnnxLaneIntervalMs", {PERSISTENT, INT, "400"}},
-    {"OnnxBsdThreshold", {PERSISTENT, INT, "45"}},
+    {"OnnxBsdThreshold", {PERSISTENT, INT, "94"}},
     {"OnnxBsdSmoothingMs", {PERSISTENT, INT, "200"}},
     {"OnnxBsdIntervalMs", {PERSISTENT, INT, "250"}},
 };

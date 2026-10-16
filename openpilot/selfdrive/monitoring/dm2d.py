@@ -11,6 +11,7 @@ from openpilot.common.realtime import DT_DMON, Ratekeeper, config_realtime_proce
 from openpilot.selfdrive.monitoring.config import experimental_mode
 from openpilot.selfdrive.carrot.bluetooth.model import CommandReader
 from openpilot.selfdrive.monitoring.dm2 import DriverMonitoring2
+from openpilot.selfdrive.monitoring.dm2_cadence import DmRatekeeper
 from openpilot.selfdrive.monitoring.dm2_context import (AutomaticCancelFilter, CameraAvailability, CancelPressSequence,
                                                        InteractionEdges, ObjectObservation, SteeringTouchEvidence, TrafficContext)
 
@@ -70,6 +71,20 @@ def parked_reset_eligible(sm, now, demo=False):
   return (cs.canValid and cs.gearShifter == car.CarState.GearShifter.park and cs.standstill and
           cs.vEgoRaw == 0 and math.isfinite(cs.vEgo) and abs(cs.vEgo) < 0.01 and
           not state.enabled and not state.active)
+
+
+def soft_hold_pause_eligible(sm, now, demo=False):
+  """A current, stationary soft hold pauses assessment, not the camera process."""
+  services = ['carState', 'selfdriveState']
+  if demo or not sm.all_checks(services):
+    return False
+  if not all(input_packet_fresh(now, sm.logMonoTime.get(service, 0) / 1e9) for service in services):
+    return False
+  cs = sm['carState']
+  return (cs.canValid and cs.softHoldActive > 0 and cs.standstill and not cs.gasPressed and
+          cs.gearShifter in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low) and
+          math.isfinite(cs.vEgo) and math.isfinite(cs.vEgoRaw) and
+          abs(cs.vEgo) < 0.1 and abs(cs.vEgoRaw) < 0.1)
 
 
 def new_driver_monitor(params, experimental):
@@ -170,7 +185,7 @@ def run_dm2(params, experimental, initial_car_params=None):
   bluetooth = CommandReader('attention')
   camera_health = CameraAvailability()
   touch_evidence = SteeringTouchEvidence()
-  rk = Ratekeeper(int(1 / DT_DMON), print_delay_threshold=None)
+  rk = Ratekeeper(int(1 / DT_DMON), print_delay_threshold=None) if replay else DmRatekeeper(DT_DMON)
   strict, clear = True, False
   covered = False
   allow_speed_buttons = False
@@ -281,6 +296,15 @@ def run_dm2(params, experimental, initial_car_params=None):
       preview_monitor = dm if demo_mode and camera_ok else None
       pm.send('driverMonitoringState', disabled_state_packet(rhd_saved, dm.experimental, preview_monitor,
                                                              camera_unavailable=demo_mode and not camera_ok))
+      rk.keep_time()
+      continue
+    if soft_hold_pause_eligible(sm, now, demo_mode):
+      # Publish at normal cadence so health/consumer checks keep working. The
+      # existing disabled output suppresses DM alerts/HUD/forced deceleration;
+      # the monitor itself is retained, with awareness and lockout counts frozen.
+      # Do not write either enable Param or turn a hold into a parking reset.
+      dm.update_parked_reset(now, False)
+      pm.send('driverMonitoringState', disabled_state_packet(rhd_saved, dm.experimental, dm, valid=valid))
       rk.keep_time()
       continue
     road_services = ['modelV2', 'radarState']
