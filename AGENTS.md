@@ -1,5 +1,48 @@
 # Repository memory
 
+- On 2026-10-16, user reported repeated blank S3 H.264 output after initial pass.
+  250ms queue-full shutdown magnified short stalls: retain three ordered slots,
+  apply HUD-encoder backpressure with close/error checks and a3s dead-sender cap.
+  This alone did NOT fix it: actual TCP timeouts and confirmed S3 idle-off remain.
+  C4->S3 loses14/30 packets, PC11/15; router0/30. PC cannot connect even with HUD
+  stopped. UART shows no association loss/reset/USB failures. Earlier successful
+  boot selected channel6/-48dBm; failing boot another AP channel1/-68dBm. Replace
+  first-match fast scan with all-channel RSSI-ranked connection; add BSSID status.
+  App-only flash preserves pairing and selects channel6/-50dBm; PC detailed601
+  frames/60.076s passes and user confirms restored actual C4 HUD stays normal.
+  No router changes, AP lock, ongoing-roaming or general radio root-cause claim.
+  Final180s UART has no close/off/USB failure;300s model/DM6000 consecutive valid
+  each at19.9999977/19.9998398Hz (approximately20, not strict>=20).115 tests pass,
+  one skip. See docs/s3_h264_release_20261016.md for observation/distribution.
+
+- On 2026-10-16, user requested implementing and deploying H.264 for S3 Wi-Fi.
+  Firmware1.2.0 authenticates capability discovery and keeps video chunks awake;
+  C4 targets1Mbps/GOP10, preserves reference order in bounded queues, and retains
+  legacy/auto-initialization JPEG fallback. PC physical simple601/60.06s and
+  detailed589/60.11s pass; user confirms smooth test and normal native C4 HUD.
+  AP channel/RSSI changed, so do not attribute every gain to codec. Two native
+  HUD stops reclaim all six owned buffers; TCP loss reconnects in20.205s.
+  Initial model/DM60s each1200 valid consecutive at20.007/20.008Hz. A separate
+  300s memory watch stays connected, same PID/104FDs, PSS184.95->185.66MiB;
+  synchronous smaps reads lose observer frames at exact30s boundaries and are
+  not a model-rate pass. See docs/s3_h264_release_20261016.md for final clean
+  frame observation, release checks and remaining Wi-Fi/long-duration limits.
+  Preserve pairing; public firmware never includes NVS. Both branches single-parent.
+
+- On 2026-10-16, user requested faster signals (20–50Hz target) and brake-lamp
+  ON/OFF. Camera is20fps; no sustained20Hz signal pass. Remove packed NV12 copy
+  with exact two-plane conversion; native conversion CPU drops~11–12%, wall
+  varies. Count preemption/I/O in50% CPU-duty sleep, preserving unique-frame,
+  freshness, detector/control and DM policies. Reject slower color prefilter
+  and core-reassignment trial. Add default-OFF LeadBrakeLights, mode0 dominates:
+  lazy context, bounded central lead crop, radar/vision match, turn rejection,
+  display/log only, candidate/unknown (never confirmed OFF or go). Signal-first
+  admission and overrun backoff; not a hard real-time deadline. Selected spatial
+  screen8/10 ON and0/16 OFF proposals is development evidence, not accuracy or
+  temporal validation.693 desktop tests with Params double pass. Native /tmp
+  diagnostics only; no vehicle installation. Publish both maintained branches,
+  single-parent. See docs/signal_speed_brake_lamps_20261016.md.
+
 - On 2026-10-16, user reported live low-memory warning after keeping ignition on.
   Captured93.29%/241.89MiB available on the same14.5h boot; guarded HUD stop
   recovers88.68%/408.40MiB and reclaims its current6 buffers, but old510 remain.
