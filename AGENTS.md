@@ -1,5 +1,48 @@
 # Repository memory
 
+- On 2026-10-17, user requested locationd CPU optimization, then rejected the
+  small benefit and explicitly requested stopping, original code and records
+  only. Trial native-result/noise-allocation optimization preserves32,625 replay
+  inputs exactly and saves9.23% replay CPU; live38.63->35.24% of one core is
+  only3.38 percentage points (~0.85 points averaged over cores0--3). Do NOT
+  publish/reinstall the withdrawn implementation/tests. Restore all four C4
+  source/native files to verified original hashes on same boot/base2ef833b2;
+  guarded manager restart recreates the exited tmux session with original env.
+  Original native mapping verified in locationd/paramsd. Final60s model1201/DM1200
+  valid consecutive at20.000005/20.003386Hz; pose1200 healthy at20.001242Hz,
+  same PIDs and eGPU active at both ends. No model/settings/reboot changes or
+  road/memory/hard-deadline claim. Publish records only to both maintained
+  branches, single-parent. See docs/locationd_cpu_20261017.md.
+
+- On 2026-10-17, user requested central-priority signal improvement and historical
+  validation. Offline 122 segments/56,612 observations: any-colour peripheral
+  rejection removes1,035 reds; do not activate it. Preserve every red/red-history
+  track and same-row green pairs: revised selector excludes503 green boxes,
+  not503 labelled false positives. Development48-frame review removes33/34 clear
+  backgrounds and retains7/7 visible overhead greens; seven exclusions remain
+  ambiguous. These examples informed the rule, not independent accuracy tests.
+  Road-only selection barely acts at low-confidence intersections; explicit
+  image fallback is only a screen-position hypothesis. Paired stopped guards
+  have0 changes over115,920 nominal and115,898 +20ms updates,18 releases each;
+  cold per segment, not MPC/moving/closed-loop validation. Existing18.802s red
+  colour gap remains.750 desktop tests pass with native Params lookup doubled.
+  Keep CentralSignalSelector OFFLINE: no observer/display/control/vehicle change.
+  Publish both maintained branches single-parent. See
+  docs/signal_central_selection_20261017.md; raw evidence remains private.
+
+- On 2026-10-17, user requested another live memory-leak investigation while
+  ignition stays on. Same boot/base2ef833b2/selective HUD fixes: untouched580s
+  retry observation returns HUD PSS75.55--75.74MiB, old ION4.75MiB unchanged.
+  Then guarded HUD-only isolation runs real live renderer/native H264 into a
+  packet sink (not S3) for~10min/5985 diagnostic units. Last5min PSS183.81--184.98
+  MiB; bounded text cache resets, GPU240 objects/151.49MiB unchanged across140s.
+  Normal close/collect drops to83.66MiB, display weakref gone, owned ION empty.
+  No additional production leak reproduced or speculative code change. Earlier
+  92% event remains incompletely attributed; no hours/road/S3 stability claim.
+  Restore HUD1; final453.42MiB available/87.43%, S3 disconnected. Independent60s
+  model/DM1200 valid consecutive each at20.0012/20.0069Hz, original PIDs/eGPU.
+  Publish findings both branches single-parent. See docs/hud_memory_followup_20261017.md.
+
 - On 2026-10-17, user reported >92% memory and clarified HUD power was cycled
   before the observed88%; user authorizes vehicle-log transfer for diagnosis,
   raw evidence stays private. Three routes/11,046 memory samples reach91%.
