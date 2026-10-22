@@ -294,6 +294,15 @@ class CarInterface(CarInterfaceBase):
       # permits engagement at a true standstill while the brake is held.
       if candidate == CAR.CHEVROLET_TRAILBLAZER and ret.openpilotLongitudinalControl:
         ret.minEnableSpeed = 5 * CV.KPH_TO_MS
+        # User test build: try the stock SNG path for auto-resume instead of
+        # raising cruiseControl.resume (which drops GasRegenCmd acc_engaged
+        # at the ECM standstill hold and faults the ECM - route 59). With
+        # autoResumeSng set, the carcontroller stops asserting its own
+        # full-stop hold, and departure is driven by longcontrol's starting
+        # state (startAccel) plus the RES_ACCEL spam already sent while
+        # stopping/starting. The ECM standstill report stays masked, so
+        # cruiseControl.resume is never raised on this car.
+        ret.autoResumeSng = True
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate in (CAR.CHEVROLET_SUBURBAN, CAR.CHEVROLET_SUBURBAN_CC):
