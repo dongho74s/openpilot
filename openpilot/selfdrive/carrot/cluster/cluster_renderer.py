@@ -110,6 +110,15 @@ KAIGEN_GOTHIC_KR_BOLD_FONT_PATH = OPENPILOT_FONT_DIR / "KaiGenGothicKR-Bold.ttf"
 JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
+# 2D Trailblazer artwork (owner request, 2026-10-22): replaces the OBJ model in
+# the 3D scene with a photo-based billboard; lamp overlays mirror the ego turn
+# signals / brake on the lead-one (L1) vehicle only.
+VEHICLE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_vehicle.png"
+VEHICLE_LAMP_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_left.png"
+VEHICLE_LAMP_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_right.png"
+VEHICLE_LAMP_BRAKE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_brake.png"
+VEHICLE_IMAGE_ASPECT = 734 / 640  # artwork height / width
+VEHICLE_IMAGE_HEIGHT_SCALE = 1.30  # billboard height vs the vehicle box height
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
 TRAFFIC_RED_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_red.png"
 TRAFFIC_GREEN_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_green.png"
@@ -952,6 +961,10 @@ class ClusterUiRenderer:
         self._nv12_dmabuf_pool_disabled = False
         self._vehicle_model = None
         self._vehicle_model_load_attempted = False
+        self._vehicle_image_textures = None
+        self._vehicle_image_load_attempted = False
+        self._frame_signal_lights = (False, False)
+        self._frame_brake_lit = False
         self._scene_cache_key: tuple[object, ...] | None = None
         self._scene_cache: ClusterScene | None = None
         self._speed_bg_texture = None
@@ -1316,6 +1329,7 @@ class ClusterUiRenderer:
         if self._tpms_car_texture is not None:
             rl.unload_texture(self._tpms_car_texture)
             self._tpms_car_texture = None
+        self._unload_vehicle_image_textures()
         if self._navi_guidance_texture is not None:
             rl.unload_texture(self._navi_guidance_texture)
             self._navi_guidance_texture = None
@@ -1349,6 +1363,7 @@ class ClusterUiRenderer:
             rl.unload_model(self._vehicle_model)
             self._vehicle_model = None
         self._vehicle_model_load_attempted = False
+        self._unload_vehicle_image_textures()
         self._scene_cache_key = None
         self._scene_cache = None
         self._camera_overlay_strip_points = None
@@ -1500,6 +1515,8 @@ class ClusterUiRenderer:
         """Draw one frame into the currently active raylib render target."""
         if signal_lights is None:
             signal_lights = self._turn_signal_lights(state)
+        self._frame_signal_lights = signal_lights
+        self._frame_brake_lit = bool(state.brake > 0.05)
         profile_stage = self._profile_start()
         if self.screen_mode in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI):
             self._clear_world()
@@ -2998,6 +3015,76 @@ class ClusterUiRenderer:
             if image is not None and rl.is_image_valid(image):
                 rl.unload_image(image)
 
+    def _load_vehicle_image_textures(self) -> None:
+        if self._vehicle_image_load_attempted:
+            return
+        self._vehicle_image_load_attempted = True
+        base = self._load_icon_texture(VEHICLE_IMAGE_PATH, "Trailblazer vehicle")
+        if base is None:
+            return
+        self._vehicle_image_textures = {
+            "base": base,
+            "left": self._load_icon_texture(VEHICLE_LAMP_LEFT_IMAGE_PATH, "Trailblazer left lamp"),
+            "right": self._load_icon_texture(VEHICLE_LAMP_RIGHT_IMAGE_PATH, "Trailblazer right lamp"),
+            "brake": self._load_icon_texture(VEHICLE_LAMP_BRAKE_IMAGE_PATH, "Trailblazer brake lamp"),
+        }
+
+    def _unload_vehicle_image_textures(self) -> None:
+        if self._vehicle_image_textures:
+            for texture in self._vehicle_image_textures.values():
+                if texture is not None:
+                    rl.unload_texture(texture)
+            self._vehicle_image_textures = None
+        self._vehicle_image_load_attempted = False
+
+    def _vehicle_image_ready(self) -> bool:
+        self._load_vehicle_image_textures()
+        return bool(self._vehicle_image_textures)
+
+    def _draw_vehicle_image(self, vehicle: VehicleBox, camera) -> bool:
+        """Draw the 2D Trailblazer billboard for a scene vehicle.
+
+        Lamp overlays mirror the ego turn signals and brake (frame state
+        stashed by render()) on the lead-one vehicle only.
+        """
+        textures = self._vehicle_image_textures
+        if not textures:
+            return False
+        base = textures["base"]
+        height_m = max(0.6, vehicle.height_m * VEHICLE_IMAGE_HEIGHT_SCALE)
+        width_m = height_m / VEHICLE_IMAGE_ASPECT
+        position = rl.Vector3(vehicle.center.x, vehicle.center.y, height_m * 0.5 + 0.02)
+        alpha = int(92 + 163 * clamp(vehicle.confidence, 0.0, 1.0))
+        tint = rl_color(WHITE, alpha)
+        up = rl.Vector3(0.0, 0.0, 1.0)
+        size = rl.Vector2(width_m, height_m)
+        origin = rl.Vector2(0.0, 0.0)
+        rl.draw_billboard_pro(
+            camera, base, rl.Rectangle(0, 0, base.width, base.height),
+            position, up, size, origin, 0.0, tint,
+        )
+        if vehicle.label == "L1":
+            left_lit, right_lit = self._frame_signal_lights
+            overlays = []
+            if left_lit and textures.get("left") is not None:
+                overlays.append(textures["left"])
+            if right_lit and textures.get("right") is not None:
+                overlays.append(textures["right"])
+            if self._frame_brake_lit and textures.get("brake") is not None:
+                overlays.append(textures["brake"])
+            if overlays:
+                rl.rl_disable_depth_test()
+                try:
+                    for texture in overlays:
+                        rl.draw_billboard_pro(
+                            camera, texture,
+                            rl.Rectangle(0, 0, texture.width, texture.height),
+                            position, up, size, origin, 0.0, tint,
+                        )
+                finally:
+                    rl.rl_enable_depth_test()
+        return True
+
     def _load_obj_mesh(self, path: Path):
         vertices: list[tuple[float, float, float]] = []
         normals: list[tuple[float, float, float]] = []
@@ -3126,7 +3213,7 @@ class ClusterUiRenderer:
             self._profile_add("draw_scene.radar_points", profile_stage)
             profile_stage = self._profile_start()
             for vehicle in scene.vehicles:
-                self._draw_vehicle(vehicle)
+                self._draw_vehicle(vehicle, camera)
             self._profile_add("draw_scene.vehicles", profile_stage)
         finally:
             rl.rl_pop_matrix()
@@ -3411,17 +3498,21 @@ class ClusterUiRenderer:
             self._triangle_strip_point_cache.popitem(last=False)
         return points, point_count
 
-    def _draw_vehicle(self, vehicle: VehicleBox) -> None:
+    def _draw_vehicle(self, vehicle: VehicleBox, camera=None) -> None:
         source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint", "cornerRadar")
-        use_model = (
-            self._vehicle_model is not None
-            and not source_marker
+        model_eligible = (
+            not source_marker
             and (not vehicle.source or vehicle.primary or vehicle.cut_in)
         )
-        if use_model:
-            self._draw_vehicle_shadow(vehicle)
-            self._draw_vehicle_model(vehicle)
-            return
+        if model_eligible:
+            if camera is not None and self._vehicle_image_ready():
+                self._draw_vehicle_shadow(vehicle)
+                self._draw_vehicle_image(vehicle, camera)
+                return
+            if self._vehicle_model is not None:
+                self._draw_vehicle_shadow(vehicle)
+                self._draw_vehicle_model(vehicle)
+                return
         if vehicle.source and (source_marker or (not vehicle.primary and not vehicle.cut_in)):
             self._draw_vehicle_marker(vehicle)
             return
