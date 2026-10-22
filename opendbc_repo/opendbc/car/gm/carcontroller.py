@@ -39,6 +39,8 @@ class CarController(CarControllerBase):
     self.last_steer_frame = 0
     self.last_button_frame = 0
     self.cancel_counter = 0
+    self.resume_press_count = 0
+    self.last_resume_frame = 0
     self.pedal_steady = 0.
 
     self.lka_steering_cmd_counter = 0
@@ -323,11 +325,32 @@ class CarController(CarControllerBase):
       # A delayed cancellation allows camera to cancel and avoids a fault when user depresses brake quickly
       self.cancel_counter = self.cancel_counter + 1 if CC.cruiseControl.cancel else 0
 
+      # Auto-resume out of the stock ACC standstill hold (user test build).
+      # controlsd sets cruiseControl.resume only when openpilot is enabled,
+      # the PCM is in its standstill hold, and the planner wants to move
+      # again: the lead departed, or the carrot signal hold released (green).
+      # On red the planner stays stopped, so resume stays false. Emulate the
+      # driver's RES press on the camera bus, like the CANCEL spam below.
+      # Driver pedal input always wins, and presses are bounded per
+      # standstill episode so a hold RES cannot release (e.g. EPB) is not
+      # spammed; repeated RES taps could also creep the set speed up.
+      resume_wanted = (CC.cruiseControl.resume and CS.out.cruiseState.standstill
+                       and not CS.out.brakePressed and not CS.out.gasPressed)
+      if not CS.out.cruiseState.standstill:
+        self.resume_press_count = 0
+      auto_resume_press = (resume_wanted and self.resume_press_count < 6
+                           and (self.frame - self.last_resume_frame) * DT_CTRL > 0.5)
+
       # Stock longitudinal, integrated at camera
       if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
         if self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
           self.last_button_frame = self.frame
           can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.CAMERA, (CS.buttons_counter + 1) % 4, CruiseButtons.CANCEL))
+        elif auto_resume_press:
+          self.last_button_frame = self.frame
+          self.last_resume_frame = self.frame
+          self.resume_press_count += 1
+          can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.CAMERA, (CS.buttons_counter + 1) % 4, CruiseButtons.RES_ACCEL))
 
     if self.CP.networkLocation == NetworkLocation.fwdCamera:
       # Silence "Take Steering" alert sent by camera, forward PSCMStatus with HandsOffSWlDetectionStatus=1
