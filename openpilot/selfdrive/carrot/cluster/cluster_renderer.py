@@ -111,12 +111,14 @@ JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
 # 2D Trailblazer artwork (owner request, 2026-10-22): replaces the OBJ model in
-# the 3D scene with a photo-based billboard; lamp overlays mirror the ego turn
-# signals / brake on the lead-one (L1) vehicle only.
+# the 3D scene with a photo-based billboard; lamp and side-mirror flash overlays
+# mirror the ego turn signals / brake on the ego vehicle.
 VEHICLE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_vehicle.png"
 VEHICLE_LAMP_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_left.png"
 VEHICLE_LAMP_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_right.png"
 VEHICLE_LAMP_BRAKE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_brake.png"
+VEHICLE_MIRROR_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_mirror_left.png"
+VEHICLE_MIRROR_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_mirror_right.png"
 VEHICLE_IMAGE_ASPECT = 675 / 607  # artwork height / width (alpha-cropped)
 VEHICLE_IMAGE_HEIGHT_SCALE = 1.55  # billboard height vs the vehicle box height
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
@@ -1516,7 +1518,7 @@ class ClusterUiRenderer:
         if signal_lights is None:
             signal_lights = self._turn_signal_lights(state)
         self._frame_signal_lights = signal_lights
-        self._frame_brake_lit = bool(state.brake > 0.05)
+        self._frame_brake_lit = bool(state.brake_pressed)
         profile_stage = self._profile_start()
         if self.screen_mode in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI):
             self._clear_world()
@@ -3027,6 +3029,8 @@ class ClusterUiRenderer:
             "left": self._load_icon_texture(VEHICLE_LAMP_LEFT_IMAGE_PATH, "Trailblazer left lamp"),
             "right": self._load_icon_texture(VEHICLE_LAMP_RIGHT_IMAGE_PATH, "Trailblazer right lamp"),
             "brake": self._load_icon_texture(VEHICLE_LAMP_BRAKE_IMAGE_PATH, "Trailblazer brake lamp"),
+            "mirror_left": self._load_icon_texture(VEHICLE_MIRROR_LEFT_IMAGE_PATH, "Trailblazer left mirror flash"),
+            "mirror_right": self._load_icon_texture(VEHICLE_MIRROR_RIGHT_IMAGE_PATH, "Trailblazer right mirror flash"),
         }
 
     def _unload_vehicle_image_textures(self) -> None:
@@ -3071,12 +3075,19 @@ class ClusterUiRenderer:
         if vehicle.ego:
             left_lit, right_lit = self._frame_signal_lights
             overlays = []
+            # Layer order: brake at the bottom, turn signals (and their
+            # side-mirror flashes) on top, so a blinking turn stays visible
+            # over the lit brake band where they overlap.
+            if self._frame_brake_lit and textures.get("brake") is not None:
+                overlays.append(textures["brake"])
             if left_lit and textures.get("left") is not None:
                 overlays.append(textures["left"])
             if right_lit and textures.get("right") is not None:
                 overlays.append(textures["right"])
-            if self._frame_brake_lit and textures.get("brake") is not None:
-                overlays.append(textures["brake"])
+            if left_lit and textures.get("mirror_left") is not None:
+                overlays.append(textures["mirror_left"])
+            if right_lit and textures.get("mirror_right") is not None:
+                overlays.append(textures["mirror_right"])
             if overlays:
                 rl.rl_disable_depth_test()
                 try:

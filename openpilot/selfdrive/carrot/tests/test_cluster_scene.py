@@ -855,7 +855,10 @@ def test_ego_vehicle_is_flagged_in_scene() -> None:
 def test_vehicle_image_lamp_overlays_follow_ego_not_lead(monkeypatch) -> None:
   renderer = object.__new__(ClusterUiRenderer)
   texture = SimpleNamespace(width=64, height=64)
-  renderer._vehicle_image_textures = {"base": texture, "left": texture, "right": texture, "brake": texture}
+  renderer._vehicle_image_textures = {
+    "base": texture, "left": texture, "right": texture, "brake": texture,
+    "mirror_left": texture, "mirror_right": texture,
+  }
   renderer._frame_signal_lights = (True, False)
   renderer._frame_brake_lit = True
   drawn = []
@@ -867,7 +870,7 @@ def test_vehicle_image_lamp_overlays_follow_ego_not_lead(monkeypatch) -> None:
   lead_box = cluster_scene.vehicle_box(0.0, 20.0, 0.0, 3.6, (255, 255, 255), False, label="L1", primary=True)
 
   assert renderer._draw_vehicle_image(ego_box, object())
-  assert len(drawn) == 3  # base + left turn + brake overlays
+  assert len(drawn) == 4  # base + brake + left turn + left mirror flash
   drawn.clear()
   assert renderer._draw_vehicle_image(lead_box, object())
   assert len(drawn) == 1  # base only, no lamp overlays
