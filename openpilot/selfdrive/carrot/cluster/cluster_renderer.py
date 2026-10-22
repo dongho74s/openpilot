@@ -117,7 +117,7 @@ VEHICLE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_vehicle.pn
 VEHICLE_LAMP_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_left.png"
 VEHICLE_LAMP_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_right.png"
 VEHICLE_LAMP_BRAKE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_brake.png"
-VEHICLE_IMAGE_ASPECT = 734 / 640  # artwork height / width
+VEHICLE_IMAGE_ASPECT = 675 / 607  # artwork height / width (alpha-cropped)
 VEHICLE_IMAGE_HEIGHT_SCALE = 1.55  # billboard height vs the vehicle box height
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
 TRAFFIC_RED_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_red.png"
@@ -3053,15 +3053,16 @@ class ClusterUiRenderer:
         base = textures["base"]
         height_m = max(0.6, vehicle.height_m * VEHICLE_IMAGE_HEIGHT_SCALE)
         width_m = height_m / VEHICLE_IMAGE_ASPECT
-        # draw_billboard_pro with origin (0, 0) anchors the quad's bottom
-        # center at `position` (verified against raylib 6.0), so z stays at
-        # ground level and the artwork stands on the road.
+        # draw_billboard_pro anchors the quad's bottom-left corner at
+        # `position` (raylib 5.5/6.0 semantics, checked against the C
+        # source), so origin.x = width/2 centers it on the vehicle and z
+        # stays at ground level: the artwork stands on the road.
         position = rl.Vector3(vehicle.center.x, vehicle.center.y, 0.02)
         alpha = int(92 + 163 * clamp(vehicle.confidence, 0.0, 1.0))
         tint = rl_color(WHITE, alpha)
         up = rl.Vector3(0.0, 0.0, 1.0)
         size = rl.Vector2(width_m, height_m)
-        origin = rl.Vector2(0.0, 0.0)
+        origin = rl.Vector2(width_m * 0.5, 0.0)
         rl.draw_billboard_pro(
             camera, base, rl.Rectangle(0, 0, base.width, base.height),
             position, up, size, origin, 0.0, tint,
