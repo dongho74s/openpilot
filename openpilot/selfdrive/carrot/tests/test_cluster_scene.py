@@ -846,6 +846,33 @@ def test_longitudinal_render_distance_is_halved_without_changing_lateral_data() 
   assert detected_box.longitudinal_m == 40.0
 
 
+def test_ego_vehicle_is_flagged_in_scene() -> None:
+  scene = build_cluster_scene(_cluster_state())
+  assert scene.vehicles[0].ego
+  assert all(not box.ego for box in scene.vehicles[1:])
+
+
+def test_vehicle_image_lamp_overlays_follow_ego_not_lead(monkeypatch) -> None:
+  renderer = object.__new__(ClusterUiRenderer)
+  texture = SimpleNamespace(width=64, height=64)
+  renderer._vehicle_image_textures = {"base": texture, "left": texture, "right": texture, "brake": texture}
+  renderer._frame_signal_lights = (True, False)
+  renderer._frame_brake_lit = True
+  drawn = []
+  monkeypatch.setattr(cluster_renderer.rl, "draw_billboard_pro", lambda *_args: drawn.append(1))
+  monkeypatch.setattr(cluster_renderer.rl, "rl_disable_depth_test", lambda: None)
+  monkeypatch.setattr(cluster_renderer.rl, "rl_enable_depth_test", lambda: None)
+
+  ego_box = cluster_scene.vehicle_box(0.0, 2.0, 0.0, 3.6, (255, 255, 255), False, ego=True)
+  lead_box = cluster_scene.vehicle_box(0.0, 20.0, 0.0, 3.6, (255, 255, 255), False, label="L1", primary=True)
+
+  assert renderer._draw_vehicle_image(ego_box, object())
+  assert len(drawn) == 3  # base + left turn + brake overlays
+  drawn.clear()
+  assert renderer._draw_vehicle_image(lead_box, object())
+  assert len(drawn) == 1  # base only, no lamp overlays
+
+
 @pytest.mark.parametrize("camera_view_mode", (
   CLUSTER_CAMERA_VIEW_MODE_ROAD_CAMERA,
   CLUSTER_CAMERA_VIEW_MODE_WIDE_CAMERA,

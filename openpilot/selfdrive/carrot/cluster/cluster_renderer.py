@@ -3045,7 +3045,8 @@ class ClusterUiRenderer:
         """Draw the 2D Trailblazer billboard for a scene vehicle.
 
         Lamp overlays mirror the ego turn signals and brake (frame state
-        stashed by render()) on the lead-one vehicle only.
+        stashed by render()) on the ego vehicle, whose artwork is the
+        driver's own car.
         """
         textures = self._vehicle_image_textures
         if not textures:
@@ -3067,7 +3068,7 @@ class ClusterUiRenderer:
             camera, base, rl.Rectangle(0, 0, base.width, base.height),
             position, up, size, origin, 0.0, tint,
         )
-        if vehicle.label == "L1":
+        if vehicle.ego:
             left_lit, right_lit = self._frame_signal_lights
             overlays = []
             if left_lit and textures.get("left") is not None:

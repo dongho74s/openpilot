@@ -245,6 +245,7 @@ class VehicleBox:
     cut_in: bool = False
     primary: bool = False
     annotate: bool = False
+    ego: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -2848,6 +2849,7 @@ def vehicle_box(
     cut_in: bool = False,
     primary: bool = False,
     annotate: bool = False,
+    ego: bool = False,
     x_offset_m: float = 0.0,
     center_x_m_override: float | None = None,
     center_z_m_offset: float = 0.0,
@@ -2906,6 +2908,7 @@ def vehicle_box(
         cut_in=cut_in,
         primary=primary,
         annotate=annotate,
+        ego=ego,
     )
 
 
@@ -3688,6 +3691,7 @@ def build_cluster_scene(
         EGO,
         camera_active,
         target_offset,
+        ego=True,
     )
     show_ego_vehicle = not cluster_camera_view_is_road_camera(state.camera_view_mode)
     merged_radar_labels = frozenset[str]()
