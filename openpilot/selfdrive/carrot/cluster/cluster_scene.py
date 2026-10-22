@@ -184,6 +184,11 @@ FOLLOW_DISTANCE_GAP_T_FOLLOW_S = {
     4: 2.0,
 }
 EGO_VEHICLE_CENTER_FORWARD_M = EGO_FORWARD_M - VEHICLE_LENGTH_M * 0.5
+# The ego artwork is a rear view anchored at the vehicle center, which
+# projects to ~84% of the drive-view height (EGO_BOTTOM camera) and leaves
+# the car floating above the bottom edge. Draw the ego vehicle this far
+# rearward so the artwork's bottom edge lands at the bottom of the frame.
+EGO_VEHICLE_DRAW_REARWARD_M = 1.7
 LANE_HIGHLIGHT_COLOR = (64, 148, 255)
 LANE_HIGHLIGHT_ALPHA = 220
 LANE_HIGHLIGHT_ROUTE_ALPHA = 170
@@ -3676,7 +3681,8 @@ def build_cluster_scene(
     target_offset = state.highlight_lane_offset if state.lane_change_phase == "changing" else None
     ego_vehicle = vehicle_box(
         ego_offset,
-        EGO_VEHICLE_CENTER_FORWARD_M,
+        EGO_VEHICLE_CENTER_FORWARD_M
+        - (0.0 if state.surround_view_active else EGO_VEHICLE_DRAW_REARWARD_M),
         state.steering,
         lane_width_m,
         EGO,
