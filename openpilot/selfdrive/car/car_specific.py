@@ -132,7 +132,10 @@ class CarSpecificEvents:
         events.add(EventName.belowEngageSpeed)
       if CS.cruiseState.standstill:
         events.add(EventName.resumeRequired)
-      if CS.vEgo < self.CP.minSteerSpeed:
+      # With minSteerSpeed == 0 (standstill-steer test build), vEgo noise
+      # around 0 at a stop makes this alert flicker on/off; only alert
+      # when there is an actual minimum steer speed.
+      if self.CP.minSteerSpeed > 0. and CS.vEgo < self.CP.minSteerSpeed:
         events.add(EventName.belowSteerSpeed)
 
     elif self.CP.brand == 'volkswagen':
