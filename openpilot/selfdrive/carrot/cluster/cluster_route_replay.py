@@ -528,6 +528,7 @@ class RouteReplayFrame:
     brake: float
     detected_vehicles: tuple[DetectedVehicle, ...]
     radar_points: tuple[RadarPoint, ...] = ()
+    brake_pressed: bool = False
     corner_radar_supported: bool = False
     tpms: TpmsInfo = TpmsInfo()
     ev_mode_valid: bool = False
@@ -1807,6 +1808,7 @@ class RouteLogParser:
             lane_change_continuation=lane_change_continuation,
             throttle=clamp(safe_float(car_state, "gas", 0.0), 0.0, 1.0),
             brake=clamp(safe_float(car_state, "brake", 0.0), 0.0, 1.0),
+            brake_pressed=bool(safe_float(car_state, "brakePressed", 0.0)),
             detected_vehicles=detected_vehicles,
             radar_points=radar_points,
             corner_radar_supported=self.corner_radar_active_for_display(),
@@ -3779,6 +3781,7 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         right_road_edge_lateral_shift_m=right_road_edge_lateral_shift_m,
         throttle=frame.throttle,
         brake=frame.brake,
+        brake_pressed=frame.brake_pressed,
         model_path=frame.model_path,
         detected_vehicles=frame.detected_vehicles,
         radar_points=frame.radar_points,
@@ -3994,6 +3997,7 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
         lane_change_continuation=discrete.lane_change_continuation,
         throttle=lerp(left.throttle, right.throttle),
         brake=lerp(left.brake, right.brake),
+        brake_pressed=discrete.brake_pressed,
         detected_vehicles=discrete.detected_vehicles,
         radar_points=discrete.radar_points,
         corner_radar_supported=discrete.corner_radar_supported,
