@@ -213,6 +213,12 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     if (gm_cc_long) {
       allowed_btn |= cruise_engaged_prev && (button == GM_BTN_SET || button == GM_BTN_RESUME || button == GM_BTN_UNPRESS);
     }
+    if (gm_pcm_cruise) {
+      // User test build: allow RESUME spam with stock longitudinal so the
+      // carcontroller can auto-resume out of the PCM standstill hold.
+      // Still gated on cruise_engaged_prev; SET stays blocked.
+      allowed_btn |= cruise_engaged_prev && (button == GM_BTN_RESUME);
+    }
 
     if (!allowed_btn) {
       tx = false;
