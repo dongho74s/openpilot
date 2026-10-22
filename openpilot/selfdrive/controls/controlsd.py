@@ -302,7 +302,10 @@ class Controls:
     setSpeed = float(desired_kph * CV.KPH_TO_MS)
     speeds = self.sm['longitudinalPlan'].speeds
     if len(speeds):
-      CC.cruiseControl.resume = CC.enabled and CS.cruiseState.standstill and speeds[-1] > 0.1
+      # Resume trigger uses wheel-based CS.standstill, not cruiseState.standstill:
+      # unmasking the ECM standstill report locks longcontrol in 'stopping' and
+      # faults the ECM cruise after the hold releases (route 57, 2026-10-22).
+      CC.cruiseControl.resume = CC.enabled and CS.standstill and speeds[-1] > 0.1
       vCluRatio = CS.vCluRatio if CS.vCluRatio > 0.5 else 1.0
       setSpeed = speeds[-1] / vCluRatio
 
