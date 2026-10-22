@@ -149,8 +149,10 @@ class Controls:
 
     # Check which actuators can be enabled
     below_min_speed = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, MIN_LATERAL_CONTROL_SPEED)
-    # This Tesla engagement change must not relax other brands' speed gates.
-    steer_at_standstill = self.CP.brand == "tesla" and self.CP.steerAtStandstill
+    # Standstill steering stays opt-in per car via CarParams.steerAtStandstill;
+    # GM is included for the Trailblazer standstill-steer test build, whose
+    # CarParams set the flag. Other GM cars keep the flag off and are unaffected.
+    steer_at_standstill = self.CP.brand in ("tesla", "gm") and self.CP.steerAtStandstill
     CC.latActive = lateral_control_allowed(self.sm['selfdriveState'].active, lateral_enabled, CS.latEnabled,
                                            CS.steerFaultTemporary, CS.steerFaultPermanent, below_min_speed,
                                            CS.standstill, steer_at_standstill)

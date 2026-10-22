@@ -283,6 +283,12 @@ class CarInterface(CarInterfaceBase):
 
     elif candidate in (CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC):
       ret.steerActuatorDelay = 0.2
+      # User test build: allow lateral control down to a standstill.
+      # Overrides the 10 km/h camera-ACC group default above; the GM panda
+      # safety has no minimum-speed steer block, but whether the EPS honors
+      # torque commands near 0 km/h is unverified on the real car.
+      ret.minSteerSpeed = 0.
+      ret.steerAtStandstill = True
       # The Trailblazer ECM faults if camera-long is initially engaged below
       # 5 km/h without sufficient brake input. GM's event handling still
       # permits engagement at a true standstill while the brake is held.
