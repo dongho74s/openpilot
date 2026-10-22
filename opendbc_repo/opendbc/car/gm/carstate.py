@@ -200,7 +200,11 @@ class CarState(CarStateBase):
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL
     # kans: avoid to accFault
-    if self.CP.carFingerprint not in CAR.CHEVROLET_VOLT:
+    # Trailblazer exception (auto-resume test build): standstill must be
+    # reported so controlsd can compute cruiseControl.resume and the GM
+    # carcontroller can send the RES press that releases the ECM hold.
+    # Revert if accFault shows up in testing.
+    if self.CP.carFingerprint not in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_TRAILBLAZER):
       ret.cruiseState.standstill = False
     if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.CP.flags & GMFlags.NO_CAMERA.value:
       if self.CP.carFingerprint not in CC_ONLY_CAR:
