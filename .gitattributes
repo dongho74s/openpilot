@@ -31,3 +31,5 @@ openpilot/selfdrive/carrot/web/assets/alert_police.svg filter=lfs diff=lfs merge
 
 # dmonitoring model was already shipped as a real blob (supercombo stays LFS).
 openpilot/selfdrive/modeld/models/dmonitoring_model.onnx -filter -diff -merge -text
+# Pinned PEAK source hashes must be identical on Windows and Linux.
+tools/jetlink/peak_usb/* text eol=lf
