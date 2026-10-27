@@ -3515,10 +3515,10 @@ class ClusterUiRenderer:
         return points, point_count
 
     def _draw_vehicle(self, vehicle: VehicleBox, camera=None) -> None:
-        source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint", "cornerRadar")
+        source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint")
         model_eligible = (
             not source_marker
-            and (not vehicle.source or vehicle.primary or vehicle.cut_in)
+            and (not vehicle.source or vehicle.primary or vehicle.cut_in or vehicle.source == "cornerRadar")
         )
         if model_eligible:
             if camera is not None and self._vehicle_image_ready():
