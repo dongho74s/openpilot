@@ -7633,9 +7633,11 @@ class ClusterUiRenderer:
             and state.steering_output_normalized is not None
             and state.steering_output_kind is not None
         ):
-            value = float(state.steering_output)
+            # 2026-10-31: display sign inverted, same as the centre arc
+            # (owner confirmed the steering gauge moves opposite).
+            value = -float(state.steering_output)
             output_kind = state.steering_output_kind
-            normalized = clamp(float(state.steering_output_normalized), -1.0, 1.0)
+            normalized = -clamp(float(state.steering_output_normalized), -1.0, 1.0)
             if output_kind == "angle":
                 value_text = f"{value:+.0f}%"
             else:
@@ -7805,8 +7807,12 @@ class ClusterUiRenderer:
             and state.steering_output_normalized is not None
             and state.steering_output_kind is not None
         ):
-            normalized = clamp(float(state.steering_output_normalized), -1.0, 1.0)
-            value = float(state.steering_output)
+            # 2026-10-31: owner confirmed the steering gauge moves
+            # opposite to the wheel. Display sign is inverted here
+            # (renderer only; live state values stay as reported), so
+            # a right turn fills the arc to the right.
+            normalized = -clamp(float(state.steering_output_normalized), -1.0, 1.0)
+            value = -float(state.steering_output)
             if state.steering_output_kind == "angle":
                 steer_text = f"{value:+.0f}%"
             else:
