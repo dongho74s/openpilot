@@ -7787,6 +7787,12 @@ class ClusterUiRenderer:
         outline = self._side_gauge_outline(state)
         left_x = CENTER_GAUGE_LEFT_X
         right_x = CENTER_GAUGE_RIGHT_X
+        # 2026-10-31: always draw the steering arc track, even when
+        # steering_output is None (previously the whole gauge vanished
+        # in that case, which is what the owner reported as "no gauge").
+        # The approved 2026-10-30 design is unchanged: curved arc,
+        # white border, yellow fill, white knob, same width/position
+        # as the accel bar below it.
         if (
             state.steering_output is not None
             and state.steering_output_normalized is not None
@@ -7798,13 +7804,17 @@ class ClusterUiRenderer:
                 steer_text = f"{value:+.0f}%"
             else:
                 steer_text = f"{normalized * 100.0:+.0f}%" if abs(value) > 999.0 else f"{value:+.0f}"
-            self._draw_curved_bipolar_gauge(
-                left_x, right_x, CENTER_STEER_ARC_Y, CENTER_STEER_ARC_SAG, normalized, (255, 210, 0)
-            )
-            self._draw_text_with_stroke("steer", left_x - 12, CENTER_STEER_ARC_Y + 2, 17, WHITE, (5, 9, 12), 2, anchor="right", cache=True)
-            self._draw_text_with_stroke(steer_text, right_x + 12, CENTER_STEER_ARC_Y + 2, 17, (255, 210, 0), (5, 9, 12), 2, anchor="left", cache=False)
-        accel_value = 0.0 if abs(state.accel_mps2) < 0.005 else state.accel_mps2
-        normalized = clamp(state.accel_mps2, -MAX_ACCEL_MPS2, MAX_ACCEL_MPS2) / MAX_ACCEL_MPS2
+        else:
+            normalized = 0.0
+            steer_text = "+0%"
+        self._draw_curved_bipolar_gauge(
+            left_x, right_x, CENTER_STEER_ARC_Y, CENTER_STEER_ARC_SAG, normalized, (255, 210, 0)
+        )
+        self._draw_text_with_stroke("steer", left_x - 12, CENTER_STEER_ARC_Y + 2, 17, WHITE, (5, 9, 12), 2, anchor="right", cache=True)
+        self._draw_text_with_stroke(steer_text, right_x + 12, CENTER_STEER_ARC_Y + 2, 17, (255, 210, 0), (5, 9, 12), 2, anchor="left", cache=False)
+        accel_mps2 = 0.0 if state.accel_mps2 is None else float(state.accel_mps2)
+        accel_value = 0.0 if abs(accel_mps2) < 0.005 else accel_mps2
+        normalized = clamp(accel_mps2, -MAX_ACCEL_MPS2, MAX_ACCEL_MPS2) / MAX_ACCEL_MPS2
         color = GREEN if normalized > 0 else RED if normalized < 0 else theme.muted
         self._draw_horizontal_bipolar_gauge(
             left_x, CENTER_ACCEL_Y, CENTER_GAUGE_WIDTH, CENTER_GAUGE_HEIGHT, normalized, color, outline, theme
