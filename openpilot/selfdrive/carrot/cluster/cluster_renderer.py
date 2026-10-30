@@ -327,16 +327,17 @@ BOTTOM_GAUGE_WIDTH = 422
 BOTTOM_GAUGE_HEIGHT = 20
 BOTTOM_GAUGE_ROW_GAP = 32
 BOTTOM_GAUGE_BOTTOM_Y = 468
-# Centre bottom gauges (owner request 2026-10-30): steering as a curved
-# arc and accel as a straight round bar, same width, aligned left/right
-# edges, at the very bottom of the 1920x480 design.
+# Centre gauges (owner request 2026-10-30, moved 2026-10-31): steering
+# as a curved arc and accel as a straight round bar, same width,
+# aligned left/right edges, directly under the ego car (not at the
+# very bottom edge, not on the right side).
 CENTER_GAUGE_LEFT_X = 749
 CENTER_GAUGE_RIGHT_X = 1171
 CENTER_GAUGE_WIDTH = 422
 CENTER_GAUGE_HEIGHT = 22
-CENTER_STEER_ARC_Y = 408
+CENTER_STEER_ARC_Y = 360
 CENTER_STEER_ARC_SAG = 14
-CENTER_ACCEL_Y = 444
+CENTER_ACCEL_Y = 396
 SIDE_GAUGE_OUTLINE = (240, 244, 248, 190)
 SPEED_LIMIT_SIGN_CENTER_X = 80
 SPEED_LIMIT_SIGN_CENTER_Y = 160
@@ -3165,14 +3166,20 @@ class ClusterUiRenderer:
             if right_lit and textures.get("mirror_right") is not None:
                 overlays.append(textures["mirror_right"])
             if overlays:
+                # 2026-10-31: owner asked for brighter blinkers/brake.
+                # Draw overlays at full alpha (not the vehicle-confidence
+                # tint) and twice, so the lamp colours stay saturated
+                # over the bright ego photo instead of washing out.
+                overlay_tint = rl_color(WHITE, 255)
                 rl.rl_disable_depth_test()
                 try:
-                    for texture in overlays:
-                        rl.draw_billboard_pro(
-                            camera, texture,
-                            rl.Rectangle(0, 0, texture.width, texture.height),
-                            position, up, size, origin, 0.0, tint,
-                        )
+                    for _pass in range(2):
+                        for texture in overlays:
+                            rl.draw_billboard_pro(
+                                camera, texture,
+                                rl.Rectangle(0, 0, texture.width, texture.height),
+                                position, up, size, origin, 0.0, overlay_tint,
+                            )
                 finally:
                     rl.rl_enable_depth_test()
         return True
