@@ -2352,7 +2352,21 @@ def radar_vehicle_box(
 
 
 def radar_point_is_vehicle_candidate(point: RadarPoint, state: ClusterUiState, lane_width_m: float) -> bool:
-    if not 2.5 <= point.longitudinal_m <= RADAR_VEHICLE_MAX_DISTANCE_M:
+    # Side-lane cars beside/behind the ego car (longitudinal -10..2.5 m)
+    # were dropped by the 2.5 m forward minimum, so they never appeared
+    # as vehicles in the 3D scene. Allow cornerRadar points in that band
+    # only when they sit outside the ego lane; all later gates below
+    # (valid count, motion consistency, probability, static reflections)
+    # still apply, so roadside clutter is not promoted to a car.
+    is_beside_corner_car = (
+        point.source == "cornerRadar"
+        and -10.0 <= point.longitudinal_m < 2.5
+        and abs(point.lateral_m) > lane_width_m * 0.5
+    )
+    if is_beside_corner_car:
+        if not -10.0 <= point.longitudinal_m <= RADAR_VEHICLE_MAX_DISTANCE_M:
+            return False
+    elif not 2.5 <= point.longitudinal_m <= RADAR_VEHICLE_MAX_DISTANCE_M:
         return False
     if abs(point.lateral_m) > lane_width_m * RADAR_VEHICLE_MAX_LATERAL_LANES:
         return False

@@ -1496,6 +1496,7 @@ class RouteLogParser:
         self.steer_ratio = 15.0
         self.trip_report_tracker = TripReportTracker()
         self.lane_width_m = DEFAULT_LANE_WIDTH_M
+        self._smoothed_display_steering: float | None = None
         self.left_lane_y_m: float | None = None
         self.right_lane_y_m: float | None = None
         self.outer_left_lane_y_m: float | None = None
@@ -1691,6 +1692,17 @@ class RouteLogParser:
                 -1.0,
                 1.0,
             )
+        # Display-only temporal smoothing for the cluster lane curve:
+        # raw model curvature jitters frame to frame and the lane curve
+        # grows with forward_m squared, so far lanes shake the most.
+        # EMA (0.35 new) damps that jitter; driving control is untouched.
+        if self._smoothed_display_steering is None:
+            self._smoothed_display_steering = steering
+        else:
+            self._smoothed_display_steering = (
+                0.65 * self._smoothed_display_steering + 0.35 * steering
+            )
+        steering = self._smoothed_display_steering
 
         self.cruise_kph = self._cruise_kph_from_car_state(car_state)
         cruise_display_state = self._cruise_display_state_from_car_state(car_state, self.cruise_kph)
@@ -4371,6 +4383,21 @@ def model_line_points(line: Any) -> tuple[ModelPathPoint, ...]:
             continue
         points.append(ModelPathPoint(forward_m=forward_m, lateral_m=lateral_m))
         previous_forward_m = forward_m
+    # Display-only spatial smoothing: one 0.25/0.5/0.25 pass over lateral
+    # values removes point-to-point zigzag in raw model lane/edge lines
+    # without shifting the curve (endpoints unchanged). This does not
+    # touch driving control, only the cluster picture.
+    if len(points) >= 3:
+        smoothed = [points[0]]
+        for index in range(1, len(points) - 1):
+            lateral = (
+                0.25 * points[index - 1].lateral_m
+                + 0.5 * points[index].lateral_m
+                + 0.25 * points[index + 1].lateral_m
+            )
+            smoothed.append(ModelPathPoint(forward_m=points[index].forward_m, lateral_m=lateral))
+        smoothed.append(points[-1])
+        points = smoothed
     return tuple(points)
 
 
