@@ -318,6 +318,13 @@ SIDE_GAUGE_VALUE_Y = 64
 SIDE_GAUGE_LABEL_OFFSET = 15
 SIDE_GAUGE_LEFT_CENTER_X = 968
 SIDE_GAUGE_COLUMN_GAP = 78
+# Bottom-right horizontal gauges (driving HUD): label left, bar middle,
+# value right. Fuel is always the bottom row.
+BOTTOM_GAUGE_RIGHT_X = 1892
+BOTTOM_GAUGE_WIDTH = 422
+BOTTOM_GAUGE_HEIGHT = 20
+BOTTOM_GAUGE_ROW_GAP = 32
+BOTTOM_GAUGE_BOTTOM_Y = 468
 SIDE_GAUGE_OUTLINE = (240, 244, 248, 190)
 SPEED_LIMIT_SIGN_CENTER_X = 80
 SPEED_LIMIT_SIGN_CENTER_Y = 160
@@ -4237,18 +4244,14 @@ class ClusterUiRenderer:
             profile_stage = self._profile_start()
             self._draw_speed_block(state, tpms_offset_x=tpms_offset_x)
             self._profile_add("hud.speed_block", profile_stage)
-            side_gauges_translated = abs(side_gauge_offset_x) > 0.001
-            if side_gauges_translated:
-                rl.rl_push_matrix()
-                rl.rl_translatef(side_gauge_offset_x, 0.0, 0.0)
-            try:
-                profile_stage = self._profile_start()
-                self._draw_accel_block(state)
-                self._profile_add("hud.accel_block", profile_stage)
-                self._draw_steering_output_block(state)
-            finally:
-                if side_gauges_translated:
-                    rl.rl_pop_matrix()
+            # Driving HUD uses horizontal bottom-right gauges instead of
+            # the old vertical side gauges (debug-graph mode still uses
+            # _draw_accel_block/_draw_steering_output_block directly).
+            # Drawn outside the side-gauge translation so the rows land
+            # at the far right bottom in fullscreen 3D (offset 0 there).
+            profile_stage = self._profile_start()
+            self._draw_bottom_right_horizontal_gauges(state)
+            self._profile_add("hud.bottom_right_gauges", profile_stage)
             profile_stage = self._profile_start()
             self._draw_turn_signal(
                 "left",
@@ -7699,6 +7702,88 @@ class ClusterUiRenderer:
             anchor="center",
             cache=True,
         )
+
+    def _draw_horizontal_level_gauge(
+        self, x: float, y: float, width: float, height: float, value: float, color, outline
+    ) -> None:
+        self._rounded_rect(x, y, width, height, 10, (0, 0, 0, 0), outline, 2)
+        fill_width = value * (width - 16)
+        if fill_width > 0.0:
+            self._rounded_rect(x + 8, y + 4, fill_width, height - 8, 8, color)
+
+    def _draw_horizontal_bipolar_gauge(
+        self, x: float, y: float, width: float, height: float, normalized: float, color, outline, theme
+    ) -> None:
+        self._rounded_rect(x, y, width, height, 10, (0, 0, 0, 0), outline, 2)
+        center_x = x + width * 0.5
+        rl.draw_line_ex(
+            rl.Vector2(center_x, y),
+            rl.Vector2(center_x, y + height),
+            3,
+            rl_color(theme.gauge_midline),
+        )
+        fill_width = abs(normalized) * (width * 0.5 - 8)
+        if fill_width <= 0.0:
+            return
+        # Positive values fill center -> right, negative center -> left.
+        fill_x = center_x if normalized > 0.0 else center_x - fill_width
+        self._rounded_rect(fill_x, y + 4, fill_width, height - 8, 8, color)
+
+    def _draw_bottom_right_horizontal_gauges(self, state: ClusterUiState) -> None:
+        theme = self._current_theme()
+        outline = self._side_gauge_outline(state)
+        right_x = BOTTOM_GAUGE_RIGHT_X
+        left_x = right_x - BOTTOM_GAUGE_WIDTH
+        label_w = 68
+        value_w = 74
+        bar_x = left_x + label_w
+        bar_w = BOTTOM_GAUGE_WIDTH - label_w - value_w
+        bar_h = BOTTOM_GAUGE_HEIGHT
+        rows: list[tuple[str, str, str]] = []
+        # Order top -> bottom; fuel is always the bottom row.
+        if state.urea_gauge is not None:
+            rows.append(("DEF", "level", f"{clamp(state.urea_gauge, 0.0, 1.0) * 100:.0f}%"))
+        accel_value = 0.0 if abs(state.accel_mps2) < 0.005 else state.accel_mps2
+        rows.append(("accel", "bipolar", f"{accel_value:+05.2f}"))
+        if (
+            state.steering_output is not None
+            and state.steering_output_normalized is not None
+            and state.steering_output_kind is not None
+        ):
+            normalized = clamp(float(state.steering_output_normalized), -1.0, 1.0)
+            value = float(state.steering_output)
+            if state.steering_output_kind == "angle":
+                steer_text = f"{value:+.0f}%"
+            else:
+                steer_text = f"{normalized * 100.0:+.0f}%" if abs(value) > 999.0 else f"{value:+.0f}"
+            rows.append(("steer", "bipolar", steer_text))
+        if state.fuel_gauge is not None:
+            rows.append(("fuel", "level", f"{clamp(state.fuel_gauge, 0.0, 1.0) * 100:.0f}%"))
+        if not rows:
+            return
+        bottom_y = BOTTOM_GAUGE_BOTTOM_Y
+        for index, (label, kind, value_text) in enumerate(rows):
+            y = bottom_y - (len(rows) - index) * BOTTOM_GAUGE_ROW_GAP
+            if label == "accel":
+                normalized = clamp(state.accel_mps2, -MAX_ACCEL_MPS2, MAX_ACCEL_MPS2) / MAX_ACCEL_MPS2
+                color = GREEN if normalized > 0 else RED if normalized < 0 else theme.muted
+                self._draw_horizontal_bipolar_gauge(bar_x, y, bar_w, bar_h, normalized, color, outline, theme)
+            elif label == "steer":
+                normalized = clamp(float(state.steering_output_normalized), -1.0, 1.0)
+                color = BLUE if normalized > 0 else AMBER if normalized < 0 else theme.muted
+                self._draw_horizontal_bipolar_gauge(bar_x, y, bar_w, bar_h, normalized, color, outline, theme)
+            elif label == "fuel":
+                value = clamp(state.fuel_gauge, 0.0, 1.0)
+                color = GREEN if value > 0.15 else RED
+                self._draw_horizontal_level_gauge(bar_x, y, bar_w, bar_h, value, color, outline)
+            elif label == "DEF":
+                value = clamp(state.urea_gauge, 0.0, 1.0)
+                color = AMBER if value <= 0.15 else BLUE
+                self._draw_horizontal_level_gauge(bar_x, y, bar_w, bar_h, value, color, outline)
+            else:
+                color = theme.muted
+            self._draw_text_with_stroke(label, left_x, y + bar_h * 0.5, 17, WHITE, (5, 9, 12), 2, anchor="left", cache=True)
+            self._draw_text_with_stroke(value_text, right_x, y + bar_h * 0.5, 17, color, (5, 9, 12), 2, anchor="right", cache=False)
 
     def _turn_signal_lights(self, state: ClusterUiState) -> tuple[bool, bool]:
         now = time.perf_counter()
