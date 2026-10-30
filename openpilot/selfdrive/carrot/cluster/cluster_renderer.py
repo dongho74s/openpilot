@@ -121,6 +121,8 @@ VEHICLE_LAMP_BRAKE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer
 VEHICLE_MIRROR_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_mirror_left.png"
 VEHICLE_MIRROR_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_mirror_right.png"
 VEHICLE_IMAGE_ASPECT = 1081 / 899  # artwork height / width (alpha-cropped, 2026-10-27 owner photo)
+BOLT_VEHICLE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "bolt_vehicle.png"
+BOLT_VEHICLE_IMAGE_ASPECT = 1000 / 900  # owner-supplied Bolt photo, cropped 900x1000
 VEHICLE_IMAGE_HEIGHT_SCALE = 1.55  # billboard height vs the vehicle box height
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
 TRAFFIC_RED_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_red.png"
@@ -3077,6 +3079,7 @@ class ClusterUiRenderer:
             return
         self._vehicle_image_textures = {
             "base": base,
+            "bolt_base": self._load_icon_texture(BOLT_VEHICLE_IMAGE_PATH, "Bolt vehicle"),
             "left": self._load_icon_texture(VEHICLE_LAMP_LEFT_IMAGE_PATH, "Trailblazer left lamp"),
             "right": self._load_icon_texture(VEHICLE_LAMP_RIGHT_IMAGE_PATH, "Trailblazer right lamp"),
             "brake": self._load_icon_texture(VEHICLE_LAMP_BRAKE_IMAGE_PATH, "Trailblazer brake lamp"),
@@ -3097,18 +3100,24 @@ class ClusterUiRenderer:
         return bool(self._vehicle_image_textures)
 
     def _draw_vehicle_image(self, vehicle: VehicleBox, camera) -> bool:
-        """Draw the 2D Trailblazer billboard for a scene vehicle.
+        """Draw the 2D vehicle billboard for a scene vehicle.
 
-        Lamp overlays mirror the ego turn signals and brake (frame state
-        stashed by render()) on the ego vehicle, whose artwork is the
-        driver's own car.
+        Ego uses the Trailblazer photo; every other vehicle (lead and
+        side-lane cars) uses the owner-supplied Bolt photo. Lamp
+        overlays mirror the ego turn signals and brake (frame state
+        stashed by render()) on the ego vehicle only.
         """
         textures = self._vehicle_image_textures
         if not textures:
             return False
-        base = textures["base"]
+        if vehicle.ego or textures.get("bolt_base") is None:
+            base = textures["base"]
+            aspect = VEHICLE_IMAGE_ASPECT
+        else:
+            base = textures["bolt_base"]
+            aspect = BOLT_VEHICLE_IMAGE_ASPECT
         height_m = max(0.6, vehicle.height_m * VEHICLE_IMAGE_HEIGHT_SCALE)
-        width_m = height_m / VEHICLE_IMAGE_ASPECT
+        width_m = height_m / aspect
         # draw_billboard_pro anchors the quad's bottom-left corner at
         # `position` (raylib 5.5/6.0 semantics, checked against the C
         # source), so origin.x = width/2 centers it on the vehicle and z
@@ -3568,10 +3577,10 @@ class ClusterUiRenderer:
 
     def _draw_vehicle(self, vehicle: VehicleBox, camera=None) -> None:
         source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint")
-        # There is no Bolt image in the cluster code, so lead vehicles
-        # also use the Trailblazer photo, like the ego and side-lane
-        # cornerRadar cars. Lamp overlays stay ego-only in
-        # _draw_vehicle_image, so other cars never show the ego signals.
+        # Ego uses the Trailblazer photo; lead and side-lane cars use
+        # the owner-supplied Bolt photo (see _draw_vehicle_image).
+        # Lamp overlays stay ego-only, so other cars never show the
+        # ego signals.
         model_eligible = (
             vehicle.ego
             or vehicle.primary
