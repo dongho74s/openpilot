@@ -246,7 +246,7 @@ FOLLOW_GAP_ICON_W = FOLLOW_GAP_ICON_H * FOLLOW_GAP_ICON_ASPECT
 TOP_CRUISE_CENTER_X = FOLLOW_STATUS_CENTER_X + 202
 TOP_CRUISE_FONT_SIZE = 27.0 * DRIVE_STATUS_SCALE
 TOP_CRUISE_UNIT_FONT_SIZE = TOP_CRUISE_FONT_SIZE
-WIFI_STATUS_CENTER_X = 160
+WIFI_STATUS_CENTER_X = 1600
 WIFI_STATUS_ICON_SIZE = 48.0
 # Keep the badge to the right of the clock, clear of its text and stroke.
 EGPU_STATUS_CENTER_X = 474.0
@@ -261,7 +261,7 @@ LFA_STATUS_ICON_SIZE = 34.0 * DRIVE_STATUS_SCALE
 LFA_LANE_ICON_WIDTH_SCALE = 2.0
 LFA_LANE_ICON_TOP_OFFSET = 3.0
 TOP_STATUS_CENTER_Y = 55.0
-TOP_CLOCK_CENTER_X = 315.0
+TOP_CLOCK_CENTER_X = 1770.0
 TOP_ICON_SIZE = 34.0 * DRIVE_STATUS_SCALE
 DRIVE_STATUS_BOX_RADIUS = 8.0 * DRIVE_STATUS_SCALE
 SPEED_HUD_SCALE = 0.8
@@ -7794,8 +7794,16 @@ class ClusterUiRenderer:
     def _draw_bottom_center_gauges(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
         outline = self._side_gauge_outline(state)
-        left_x = CENTER_GAUGE_LEFT_X
-        right_x = CENTER_GAUGE_RIGHT_X
+        # 2026-10-31: keep the gauges under the ego car. The 3D world
+        # view shifts left in debug-graph-right (and similar) modes, so
+        # the car no longer sits at screen centre; without this offset
+        # the gauges stay at screen centre, i.e. to the right of the car
+        # (owner report 2026-10-31, photo 04:57). The previous change
+        # only moved them vertically, which did not close the
+        # horizontal gap.
+        shift_x = self._world_view_shift_design_x(state)
+        left_x = CENTER_GAUGE_LEFT_X - shift_x
+        right_x = CENTER_GAUGE_RIGHT_X - shift_x
         # 2026-10-31: always draw the steering arc track, even when
         # steering_output is None (previously the whole gauge vanished
         # in that case, which is what the owner reported as "no gauge").
