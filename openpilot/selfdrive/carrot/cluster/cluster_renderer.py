@@ -3086,6 +3086,12 @@ class ClusterUiRenderer:
         self._vehicle_image_load_attempted = True
         base = self._load_icon_texture(VEHICLE_IMAGE_PATH, "Trailblazer vehicle")
         if base is None:
+            # 2026-10-31 fix: a single failed load used to poison the
+            # whole session (attempted stayed True, textures stayed
+            # None), so every car fell back to marker/box forever.
+            # Reset so the next frame retries, e.g. after a pull
+            # finishes or the GPU context becomes ready.
+            self._vehicle_image_load_attempted = False
             return
         self._vehicle_image_textures = {
             "base": base,
@@ -3591,22 +3597,21 @@ class ClusterUiRenderer:
         # the owner-supplied Bolt photo (see _draw_vehicle_image).
         # Lamp overlays stay ego-only, so other cars never show the
         # ego signals.
-        model_eligible = (
-            vehicle.ego
-            or vehicle.primary
-            or vehicle.cut_in
-            or vehicle.source == "cornerRadar"
-            or not vehicle.source
-        )
-        if model_eligible:
-            if camera is not None and self._vehicle_image_ready():
-                self._draw_vehicle_shadow(vehicle)
-                self._draw_vehicle_image(vehicle, camera)
-                return
-            if self._vehicle_model is not None:
-                self._draw_vehicle_shadow(vehicle)
-                self._draw_vehicle_model(vehicle)
-                return
+        # 2026-10-31 fix: a front car seen only by radar (primary False,
+        # e.g. a radar-vehicle box) used to fall through to the flat
+        # marker/square, so it never showed as a Bolt photo. Every
+        # scene vehicle is already a gated vehicle candidate, so draw
+        # the photo first for all of them, regardless of primary /
+        # source, and only fall back to model/marker/box when the
+        # photo textures are not ready.
+        if camera is not None and self._vehicle_image_ready():
+            self._draw_vehicle_shadow(vehicle)
+            self._draw_vehicle_image(vehicle, camera)
+            return
+        if self._vehicle_model is not None:
+            self._draw_vehicle_shadow(vehicle)
+            self._draw_vehicle_model(vehicle)
+            return
         if vehicle.source and (source_marker or (not vehicle.primary and not vehicle.cut_in)):
             self._draw_vehicle_marker(vehicle)
             return
