@@ -3561,9 +3561,17 @@ class ClusterUiRenderer:
 
     def _draw_vehicle(self, vehicle: VehicleBox, camera=None) -> None:
         source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint")
+        # Lead (primary/cut-in) and side-lane (cornerRadar) vehicles get the
+        # same large vehicle image as the ego car, regardless of whether
+        # their track came from modelV2 or radarState. Only non-primary
+        # radar tracks stay as small markers. Lamp overlays stay ego-only
+        # in _draw_vehicle_image, so other cars never show the ego signals.
         model_eligible = (
-            not source_marker
-            and (not vehicle.source or vehicle.primary or vehicle.cut_in or vehicle.source == "cornerRadar")
+            vehicle.ego
+            or vehicle.primary
+            or vehicle.cut_in
+            or vehicle.source == "cornerRadar"
+            or not vehicle.source
         )
         if model_eligible:
             if camera is not None and self._vehicle_image_ready():
