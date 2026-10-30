@@ -3568,13 +3568,16 @@ class ClusterUiRenderer:
 
     def _draw_vehicle(self, vehicle: VehicleBox, camera=None) -> None:
         source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint")
-        # Lead vehicles keep their previous rendering (not the ego
-        # Trailblazer photo): only the ego car and side-lane cornerRadar
-        # cars get the large vehicle image. Lamp overlays stay ego-only
-        # in _draw_vehicle_image, so other cars never show the ego signals.
+        # There is no Bolt image in the cluster code, so lead vehicles
+        # also use the Trailblazer photo, like the ego and side-lane
+        # cornerRadar cars. Lamp overlays stay ego-only in
+        # _draw_vehicle_image, so other cars never show the ego signals.
         model_eligible = (
-            not source_marker
-            and (not vehicle.source or vehicle.primary or vehicle.cut_in or vehicle.source == "cornerRadar")
+            vehicle.ego
+            or vehicle.primary
+            or vehicle.cut_in
+            or vehicle.source == "cornerRadar"
+            or not vehicle.source
         )
         if model_eligible:
             if camera is not None and self._vehicle_image_ready():
