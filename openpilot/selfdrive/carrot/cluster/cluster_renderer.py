@@ -327,6 +327,16 @@ BOTTOM_GAUGE_WIDTH = 422
 BOTTOM_GAUGE_HEIGHT = 20
 BOTTOM_GAUGE_ROW_GAP = 32
 BOTTOM_GAUGE_BOTTOM_Y = 468
+# Centre bottom gauges (owner request 2026-10-30): steering as a curved
+# arc and accel as a straight round bar, same width, aligned left/right
+# edges, at the very bottom of the 1920x480 design.
+CENTER_GAUGE_LEFT_X = 749
+CENTER_GAUGE_RIGHT_X = 1171
+CENTER_GAUGE_WIDTH = 422
+CENTER_GAUGE_HEIGHT = 22
+CENTER_STEER_ARC_Y = 408
+CENTER_STEER_ARC_SAG = 14
+CENTER_ACCEL_Y = 444
 SIDE_GAUGE_OUTLINE = (240, 244, 248, 190)
 SPEED_LIMIT_SIGN_CENTER_X = 80
 SPEED_LIMIT_SIGN_CENTER_Y = 160
@@ -4256,13 +4266,13 @@ class ClusterUiRenderer:
             profile_stage = self._profile_start()
             self._draw_speed_block(state, tpms_offset_x=tpms_offset_x)
             self._profile_add("hud.speed_block", profile_stage)
-            # Driving HUD uses horizontal bottom-right gauges instead of
-            # the old vertical side gauges (debug-graph mode still uses
-            # _draw_accel_block/_draw_steering_output_block directly).
-            # Drawn outside the side-gauge translation so the rows land
-            # at the far right bottom in fullscreen 3D (offset 0 there).
+            # Driving HUD: fuel/DEF stay bottom-right; steer (curved
+            # arc) and accel (straight round bar) live centred at the
+            # very bottom, same width and aligned edges. Debug-graph
+            # mode still uses _draw_accel_block/_draw_steering_output_block.
             profile_stage = self._profile_start()
             self._draw_bottom_right_horizontal_gauges(state)
+            self._draw_bottom_center_gauges(state)
             self._profile_add("hud.bottom_right_gauges", profile_stage)
             profile_stage = self._profile_start()
             self._draw_turn_signal(
@@ -7741,22 +7751,37 @@ class ClusterUiRenderer:
         fill_x = center_x if normalized > 0.0 else center_x - fill_width
         self._rounded_rect(fill_x, y + 4, fill_width, height - 8, 8, color)
 
-    def _draw_bottom_right_horizontal_gauges(self, state: ClusterUiState) -> None:
+    def _draw_curved_bipolar_gauge(
+        self, x0: float, x1: float, base_y: float, sag: float, normalized: float, color
+    ) -> None:
+        """Curved arc gauge: white border, dark track, yellow-style fill
+        from the centre to the current value, with a white knob dot at
+        the fill end (photo reference 2026-10-30)."""
+        cx = (x0 + x1) / 2.0
+        half = (x1 - x0) / 2.0
+        points: list[tuple[float, float]] = []
+        for i in range(41):
+            x = x0 + (x1 - x0) * i / 40.0
+            t = (x - cx) / half
+            points.append((x, base_y - sag * (1.0 - t * t)))
+        for width, col in ((26.0, WHITE), (20.0, (60, 65, 70))):
+            for a, b in zip(points, points[1:]):
+                rl.draw_line_ex(rl.Vector2(a[0], a[1]), rl.Vector2(b[0], b[1]), width, rl_color(col))
+        if abs(normalized) < 0.005:
+            return
+        fill_end_x = cx + normalized * half
+        fill_points = [p for p in points if (cx <= p[0] <= fill_end_x if normalized > 0 else fill_end_x <= p[0] <= cx)]
+        for a, b in zip(fill_points, fill_points[1:]):
+            rl.draw_line_ex(rl.Vector2(a[0], a[1]), rl.Vector2(b[0], b[1]), 16.0, rl_color(color))
+        if fill_points:
+            knob = fill_points[-1]
+            rl.draw_circle_v(rl.Vector2(knob[0], knob[1]), 9.0, rl_color(WHITE))
+
+    def _draw_bottom_center_gauges(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
         outline = self._side_gauge_outline(state)
-        right_x = BOTTOM_GAUGE_RIGHT_X
-        left_x = right_x - BOTTOM_GAUGE_WIDTH
-        label_w = 68
-        value_w = 74
-        bar_x = left_x + label_w
-        bar_w = BOTTOM_GAUGE_WIDTH - label_w - value_w
-        bar_h = BOTTOM_GAUGE_HEIGHT
-        rows: list[tuple[str, str, str]] = []
-        # Order top -> bottom; fuel is always the bottom row.
-        if state.urea_gauge is not None:
-            rows.append(("DEF", "level", f"{clamp(state.urea_gauge, 0.0, 1.0) * 100:.0f}%"))
-        accel_value = 0.0 if abs(state.accel_mps2) < 0.005 else state.accel_mps2
-        rows.append(("accel", "bipolar", f"{accel_value:+05.2f}"))
+        left_x = CENTER_GAUGE_LEFT_X
+        right_x = CENTER_GAUGE_RIGHT_X
         if (
             state.steering_output is not None
             and state.steering_output_normalized is not None
@@ -7768,7 +7793,35 @@ class ClusterUiRenderer:
                 steer_text = f"{value:+.0f}%"
             else:
                 steer_text = f"{normalized * 100.0:+.0f}%" if abs(value) > 999.0 else f"{value:+.0f}"
-            rows.append(("steer", "bipolar", steer_text))
+            self._draw_curved_bipolar_gauge(
+                left_x, right_x, CENTER_STEER_ARC_Y, CENTER_STEER_ARC_SAG, normalized, (255, 210, 0)
+            )
+            self._draw_text_with_stroke("steer", left_x - 12, CENTER_STEER_ARC_Y + 2, 17, WHITE, (5, 9, 12), 2, anchor="right", cache=True)
+            self._draw_text_with_stroke(steer_text, right_x + 12, CENTER_STEER_ARC_Y + 2, 17, (255, 210, 0), (5, 9, 12), 2, anchor="left", cache=False)
+        accel_value = 0.0 if abs(state.accel_mps2) < 0.005 else state.accel_mps2
+        normalized = clamp(state.accel_mps2, -MAX_ACCEL_MPS2, MAX_ACCEL_MPS2) / MAX_ACCEL_MPS2
+        color = GREEN if normalized > 0 else RED if normalized < 0 else theme.muted
+        self._draw_horizontal_bipolar_gauge(
+            left_x, CENTER_ACCEL_Y, CENTER_GAUGE_WIDTH, CENTER_GAUGE_HEIGHT, normalized, color, outline, theme
+        )
+        self._draw_text_with_stroke("accel", left_x - 12, CENTER_ACCEL_Y + CENTER_GAUGE_HEIGHT * 0.5, 17, WHITE, (5, 9, 12), 2, anchor="right", cache=True)
+        self._draw_text_with_stroke(f"{accel_value:+05.2f}", right_x + 12, CENTER_ACCEL_Y + CENTER_GAUGE_HEIGHT * 0.5, 17, color, (5, 9, 12), 2, anchor="left", cache=False)
+
+    def _draw_bottom_right_horizontal_gauges(self, state: ClusterUiState) -> None:
+        theme = self._current_theme()
+        outline = self._side_gauge_outline(state)
+        right_x = BOTTOM_GAUGE_RIGHT_X
+        left_x = right_x - BOTTOM_GAUGE_WIDTH
+        label_w = 68
+        value_w = 74
+        bar_x = left_x + label_w
+        bar_w = BOTTOM_GAUGE_WIDTH - label_w - value_w
+        bar_h = BOTTOM_GAUGE_HEIGHT
+        rows: list[tuple[str, str, str]] = []
+        # Steer/accel now live in the centre bottom gauges; only
+        # fuel/DEF stay at the bottom right.
+        if state.urea_gauge is not None:
+            rows.append(("DEF", "level", f"{clamp(state.urea_gauge, 0.0, 1.0) * 100:.0f}%"))
         if state.fuel_gauge is not None:
             rows.append(("fuel", "level", f"{clamp(state.fuel_gauge, 0.0, 1.0) * 100:.0f}%"))
         if not rows:
@@ -7776,15 +7829,7 @@ class ClusterUiRenderer:
         bottom_y = BOTTOM_GAUGE_BOTTOM_Y
         for index, (label, kind, value_text) in enumerate(rows):
             y = bottom_y - (len(rows) - index) * BOTTOM_GAUGE_ROW_GAP
-            if label == "accel":
-                normalized = clamp(state.accel_mps2, -MAX_ACCEL_MPS2, MAX_ACCEL_MPS2) / MAX_ACCEL_MPS2
-                color = GREEN if normalized > 0 else RED if normalized < 0 else theme.muted
-                self._draw_horizontal_bipolar_gauge(bar_x, y, bar_w, bar_h, normalized, color, outline, theme)
-            elif label == "steer":
-                normalized = clamp(float(state.steering_output_normalized), -1.0, 1.0)
-                color = BLUE if normalized > 0 else AMBER if normalized < 0 else theme.muted
-                self._draw_horizontal_bipolar_gauge(bar_x, y, bar_w, bar_h, normalized, color, outline, theme)
-            elif label == "fuel":
+            if label == "fuel":
                 value = clamp(state.fuel_gauge, 0.0, 1.0)
                 color = GREEN if value > 0.15 else RED
                 self._draw_horizontal_level_gauge(bar_x, y, bar_w, bar_h, value, color, outline)
