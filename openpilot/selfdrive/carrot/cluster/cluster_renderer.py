@@ -333,13 +333,17 @@ BOTTOM_GAUGE_BOTTOM_Y = 468
 # design, accel bar ends at y 478). 2026-10-31 16:12: the gauges
 # still covered the ego bumper, so they shrink: width 422 -> 320
 # (centred at 960), height 22 -> 16, arc sag 14 -> 10.
-CENTER_GAUGE_LEFT_X = 800
-CENTER_GAUGE_RIGHT_X = 1120
-CENTER_GAUGE_WIDTH = 320
-CENTER_GAUGE_HEIGHT = 16
-CENTER_STEER_ARC_Y = 432
-CENTER_STEER_ARC_SAG = 10
-CENTER_ACCEL_Y = 456
+# 2026-10-31 16:47: thinner and narrower again, pushed to the floor:
+# width 320 -> 280 (centred at 960), height 16 -> 13, arc sag 10 -> 8,
+# arc widths 20/14/12 -> 17/12/10, knob 7 -> 6, accel bar 456 -> 464
+# (ends at y 477, 3 px from the 480 bottom edge).
+CENTER_GAUGE_LEFT_X = 820
+CENTER_GAUGE_RIGHT_X = 1100
+CENTER_GAUGE_WIDTH = 280
+CENTER_GAUGE_HEIGHT = 13
+CENTER_STEER_ARC_Y = 445
+CENTER_STEER_ARC_SAG = 8
+CENTER_ACCEL_Y = 464
 SIDE_GAUGE_OUTLINE = (240, 244, 248, 190)
 SPEED_LIMIT_SIGN_CENTER_X = 80
 SPEED_LIMIT_SIGN_CENTER_Y = 160
@@ -7787,7 +7791,7 @@ class ClusterUiRenderer:
             x = x0 + (x1 - x0) * i / 40.0
             t = (x - cx) / half
             points.append((x, base_y - sag * (1.0 - t * t)))
-        for width, col in ((20.0, WHITE), (14.0, (60, 65, 70))):
+        for width, col in ((17.0, WHITE), (12.0, (60, 65, 70))):
             for a, b in zip(points, points[1:]):
                 rl.draw_line_ex(rl.Vector2(a[0], a[1]), rl.Vector2(b[0], b[1]), width, rl_color(col))
         if abs(normalized) < 0.005:
@@ -7795,10 +7799,10 @@ class ClusterUiRenderer:
         fill_end_x = cx + normalized * half
         fill_points = [p for p in points if (cx <= p[0] <= fill_end_x if normalized > 0 else fill_end_x <= p[0] <= cx)]
         for a, b in zip(fill_points, fill_points[1:]):
-            rl.draw_line_ex(rl.Vector2(a[0], a[1]), rl.Vector2(b[0], b[1]), 12.0, rl_color(color))
+            rl.draw_line_ex(rl.Vector2(a[0], a[1]), rl.Vector2(b[0], b[1]), 10.0, rl_color(color))
         if fill_points:
             knob = fill_points[-1]
-            rl.draw_circle_v(rl.Vector2(knob[0], knob[1]), 7.0, rl_color(WHITE))
+            rl.draw_circle_v(rl.Vector2(knob[0], knob[1]), 6.0, rl_color(WHITE))
 
     def _draw_bottom_center_gauges(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
