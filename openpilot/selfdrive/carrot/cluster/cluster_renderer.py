@@ -4161,6 +4161,13 @@ class ClusterUiRenderer:
                     DEBUG_PLOT_RIGHT_H,
                 )
                 self._profile_add("hud.debug_plot_right", profile_stage)
+                # 2026-10-31: the right debug panel (x 1124-1916, full
+                # height) is drawn after the driving HUD, so it covered
+                # the far-right clock (1770) and wifi (1600) moved there
+                # in 3b02d2ed1. Re-draw them on top of the panel so they
+                # stay at the far right AND visible in this mode.
+                self._draw_center_clock(state, center_x=TOP_CLOCK_CENTER_X)
+                self._draw_network_status(state, TOP_STATUS_CENTER_Y + WIFI_STATUS_ICON_SIZE * 0.5)
             if screen_mode == CLUSTER_SCREEN_MODE_TRIP_REPORT:
                 profile_stage = self._profile_start()
                 self._draw_trip_report_panel(state)
