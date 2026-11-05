@@ -298,6 +298,16 @@ class SignalStartGuard:
       # green removes that exclusion; moving/disable/restart clears identity.
       self.hold = self.warned = False
       self.release_authorized = True
+    elif not self.hold and not self.release_authorized and not departure and abs(speed) <= .3:
+      # Signal stop without a colour observation. departure is False only
+      # while the e2e planner holds e2eStop/e2eStopped with no lead car and
+      # no model green, so a lead-following stop never latches here. The
+      # e2e shouldStop flickers frame to frame while stopped, so the stop
+      # must be latched; it releases only on a confirmed green observation
+      # or driver gas/RES. release_authorized blocks re-latching right
+      # after a green release until the car departs or a new red arrives.
+      self.release_authorized = False
+      self.hold = True
     warn = self.hold and departure and not self.warned
     self.warned |= warn
     green = (self.release_authorized and self.green_evidence and not self.hold

@@ -28,6 +28,70 @@ def held():
   return g
 
 
+def test_signal_stop_latches_without_red_observation():
+  """A stopped e2e signal stop latches even when no colour is observed.
+
+  Regression for the 2026-11-05 route 132 seg16 red-light release: the
+  car stopped for a red light, the plan source switched e2e->cruise, and
+  the car departed on red because the guard never latched (no red
+  observation ever arrived) and the e2e shouldStop flickers while stopped.
+  """
+  g = SignalStartGuard()
+  # No observation at all, stopped in e2eStop/e2eStopped, no lead, not green.
+  d = step(g, 0, observation=None, departure=False)
+  assert d.hold and not d.released
+  # Missing/unknown observations cannot release the latched stop.
+  for i in range(1, 10):
+    d = step(g, i*.35, observation=None, departure=False)
+    assert d.hold and not d.released
+  # Driver gas releases.
+  assert not step(g, 4., gas=True).hold
+
+
+def test_signal_stop_latch_needs_stopped_no_lead_no_green():
+  g = SignalStartGuard()
+  # Moving: no latch (moving_no_entry).
+  assert not step(g, 0, observation=None, departure=False, speed=5.).hold
+  # Lead present (departure True): no latch, lead following is untouched.
+  assert not step(g, .35, observation=None, departure=True).hold
+  # Model green (departure True): no latch.
+  assert not step(g, .7, observation=None, departure=True).hold
+  # Stopped, no lead, not green: latch.
+  assert step(g, 1.05, observation=None, departure=False).hold
+
+
+def test_green_release_does_not_immediately_relatch():
+  # Latch via a confirmed red observation first (the producer path).
+  g = held()
+  # A confirmed green releases.
+  assert step(g, .7, 'green').hold
+  assert step(g, 1.05, 'green').hold
+  d = step(g, 1.4, 'green')
+  assert d.released and not d.hold
+  # Still stopped, no lead, not green, no observation: the latch must not
+  # re-engage while the green release is still authorised.
+  d = step(g, 1.75, observation=None, departure=False)
+  assert not d.hold
+  # After the car departs, a later signal stop can latch again.
+  assert not step(g, 2.1, speed=6.).hold
+  assert step(g, 2.45, observation=None, departure=False).hold
+
+
+def test_green_without_red_anchor_cannot_release_no_observation_latch():
+  """A newly appearing green cannot release a stop latched without red.
+
+  This is the no-producer case: the car stopped at a signal, the guard
+  latched on the e2e stop with no colour observation, and a green
+  observation alone has no red housing to confirm against. Driver gas is
+  the release path here, matching the confirmed-green-or-driver rule.
+  """
+  g = SignalStartGuard()
+  assert step(g, 0, observation=None, departure=False).hold
+  for i in range(1, 6):
+    assert step(g, i*.35, 'green', departure=False).hold
+  assert not step(g, 2.1, gas=True).hold
+
+
 def test_red_blocks_once_and_never_starts_moving_braking():
   g = SignalStartGuard()
   for i in range(30):
