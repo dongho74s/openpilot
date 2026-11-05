@@ -1,5 +1,20 @@
 # Repository memory
 
+- On 2026-11-05, owner requests Light speed 2 b92fc482 as an additional shared
+  eGPU/Jetson choice, keeping old Light speed. Official PKL b4dead3e/767228907B,
+  ONNX909a1400/768749892B, checkpoint ea2f516f match all metadata; NOO unsupported.
+  Pin isolated tinygrad ec91b74/runtime96c6ecc9; upstream includes cast-zero USB
+  wrap rule, so retain old backport only for d39227. Add exact-runtime cooperative
+  USB wait/captured copies and native compatibility CI. Signed selected-model
+  host delivery required. Parked physical testing authorized before19:40; do not
+  treat desktop metadata/CI as road acceptance. See docs/light_speed_2_model_20261105.md.
+  Published9faaee0ab9; native Light2 five/Jetson2364 checks pass. Owner car retained
+  concurrent CAN-task f8e02ee19d, normal comma reboot selects Light2. ONNX downloaded
+  on Jetson and reboot requested; owner then explicitly PAUSED Jetson work due to
+  CAN-task overlap. No further device changes/tests until resumed. Automatic boot
+  update may proceed; actual Light2 engine/inference/road readiness unverified.
+
+
 - On 2026-11-05, owner requests MKS CANable 2.0 support alongside PEAK and S3,
   first-ready output selection, and beginner PC/Jetson firmware/photo guides.
   Standard G431 board flashed/readback-verified carrot-b1-slcan-2; exact image
@@ -17,6 +32,11 @@
   Standard MKS V2.0 only; Pro/V1/other MCU unverified. Windows physical DFU flash
   untested. User explicitly authorizes KO/EN photo guides, Wiki and release kits.
   See docs/user/ko/indicator-adapters.md and tools/jetlink/canable/README.md.
+  Live installation exposed bridge status cadence (1Hz inference/2s idle) versus
+  the new 500ms lease: source restarted repeatedly despite healthy CAN. Request
+  telemetry on each inference with an indicator channel, poll idle at200ms and
+  keep local receive timeout100ms; retain 500ms stale revocation. Production-loop
+  cadence regressions3pass. No firmware change is needed for this correction.
 
 - On 2026-11-05, owner requests exact g1 handoff rejection on screen and logs.
   Add adb-handoff reason codes and bounded observations for first failed guard,
