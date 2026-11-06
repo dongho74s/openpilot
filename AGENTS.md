@@ -1,5 +1,32 @@
 # Repository memory
 
+- On 2026-11-06, owner requests one continuing ChatGPT voice conversation mixing
+  settings and direct lane/set-speed commands. Rejects per-command buttons and
+  short-local-STT/long-ChatGPT modes. Keep Android0.2.0/default assistant unchanged.
+  Owner is departing: prepare/push for later manual GitPull; do NOT update/restart
+  vehicle or execute live driving commands. Remote voice-start button was only
+  proposed; existing remote targets comma, phone invocation bridge is not added.
+  MCP0.6.0 loads VOICE_RULES.md, adds separately consented carrot.drive and a
+  separate local stationary-issued grant. Old grants never expand. Clear current
+  commands avoid extra conversational confirmation; platform approvals remain.
+  Existing lane FSM owns motion with fresh state, BSD/geometry/torque/driver gates,
+  Tesla real signal acknowledgement; no synthesized physical/DM input. Speed_up
+  uses RES/+ handling, down subtracts an explicit amount, set preserves target;
+  active supported longitudinal control only, never engages lateral/control.
+  Single request, relay5s/local1s freshness, lane preparation3s, duplicate guard10s,
+  no replay after expiry/restart/uncertain feedback. Completion requires lane
+  crossing plus FSM finish; set-speed readback is not measured vehicle speed.
+  Missing result-file IO cannot restore a consumed rejection. Wakeable polling
+  reduces delivery wait, not ChatGPT latency. Fix0.5.1 strict MCP result rejecting
+  device step_note. PC new controller20/API49/MCP18/web8, isolated build/Ruff pass.
+  Linux Signal CI42202066904 passes1644/362subtests +131,40skips; Jetson CI42202066820
+  also passes. Full general build CI remains separate. Runtime owner hashes let
+  revocation cancel pending requests even after a web-server restart.
+  NAS0.6.0 built/started exit0 and public health/discovery verify new scope; owner's
+  driving grant has NOT been added and actual spoken road operation is untested.
+  Full parked device restart needed after GitPull, not web-only reload. No API/key
+  or APK change. KO/EN guides and Wiki describe experimental scope and setup.
+
 - On 2026-11-06, owner explicitly requests supported driving-setting edits while
   moving. Supersedes the CarrotAssist onroad allowlist below: catalog edits may
   prepare/commit onroad; only initial local permission needs parked/disengaged
