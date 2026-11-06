@@ -45,6 +45,7 @@ const DEVICE_TOGGLES = [
   { param: "DisengageOnAccelerator", labelKey: "disengage_on_accelerator", defaultLabel: "Disengage on Accelerator" },
   { param: "IsLdwEnabled", labelKey: "enable_ldw", defaultLabel: "Enable Lane Departure Warnings" },
   { param: "AlwaysOnDM", labelKey: "always_on_dm", defaultLabel: "Always-on DM" },
+  { param: "DisablePowerDown", labelKey: "always_on_power", defaultLabel: "Always-on Power" },
   { param: "RecordFront", labelKey: "record_front", defaultLabel: "Record and Upload Driver Camera" },
   { param: "RecordAudio", labelKey: "record_audio", defaultLabel: "Record and Upload Microphone Audio" },
   { param: "IsMetric", labelKey: "is_metric", defaultLabel: "Use Metric System" },

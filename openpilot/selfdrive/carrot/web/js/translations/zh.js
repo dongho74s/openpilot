@@ -374,6 +374,7 @@ window.CarrotTranslations.register("zh", {
     disengage_on_accelerator: "Disengage on Accelerator",
     enable_ldw: "Enable Lane Departure Warnings",
     always_on_dm: "Always-on DM",
+    always_on_power: "Always-on Power",
     record_front: "Record and Upload Driver Camera",
     record_audio: "Record and Upload Microphone Audio",
     record_front_lock: "Record audio",

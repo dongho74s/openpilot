@@ -479,6 +479,7 @@ window.CarrotTranslations.register("ko", {
     disengage_on_accelerator: "가속 페달 조작 시 해제",
     enable_ldw: "차선 이탈 경고 활성화",
     always_on_dm: "운전자 모니터링 항상 켜기",
+    always_on_power: "상시전원",
     record_front: "운전자 카메라 녹화 및 업로드",
     record_audio: "마이크 오디오 녹음 및 업로드",
     record_front_lock: "오디오 녹음",
