@@ -43,6 +43,8 @@ CarrotAssist has separate web storage from Chrome or Samsung Internet, so author
 
 Changes follow **read current value → propose → user confirms → verify application**. Catalog defaults are not treated as live device values. Bounds and increments are checked. Proposals expire after 60 seconds; a changed current value requires a new proposal and confirmation.
 
+ChatGPT's plugin permissions may add a tool-approval prompt such as **Allow once**. If a proposal expires while waiting for approval, confirm a new proposal. Completely hands-free operation is not guaranteed in every account or conversation.
+
 “Increase by 10%” adds ten percent of the current value: 50 becomes 55 before rounding to the setting's increment. “Add 10” adds ten units. If zero has a special meaning such as automatic mode, check the explanation and request an explicit value. Distinguish the Carrot display from the phone display.
 
 Keep the CarrotAssist web interface active beneath the small voice overlay. A different fullscreen app or locked phone can suspend delivery until a request expires. A queued request is not a confirmed change.
@@ -56,6 +58,8 @@ This version does not execute real-time cruise-speed commands, lane changes, dir
 ## Updates and disconnection
 
 The app checks for updates on launch, at most once per six hours after a successful check. Tap the top device name for app information and a manual check. Download the new version and approve installation in Android. Updates with the same signing identity preserve connection data; do not uninstall first.
+
+The first in-app update may open Android's **Install unknown apps > CarrotAssist > Allow permission** screen. After allowing it, return and select **Package installer > Just once > Update** if an app chooser appears. Samsung devices may show an additional notice for apps distributed outside their stores; verify that you are installing CarrotAssist from the official release above.
 
 App updates, device Git updates and relay updates are separate. Updating the APK does not add device features to old device software.
 
