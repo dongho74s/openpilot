@@ -26,6 +26,19 @@ STALK_QUEUE_GUARD_S = 0.3
 # An accepted App action may wait for interlocks, but must not start unexpectedly much later.
 AUTO_APP_WAIT_S = 10.0
 
+# ── Auto overtake (automatic left-lane overtake) ──────────────────────────
+# When the lead car is this much slower than the cruise set speed, start an
+# automatic overtake to the left lane: announce with the existing lane-change
+# notification (left blinker + HUD), wait OVERTAKE_ANNOUNCE_S, then start the
+# lane change through the normal auto-lane-change path. A solid centre line
+# (left lane_change_available false) blocks the overtake entirely — it is
+# never even announced.
+OVERTAKE_SPEED_DIFF_KPH = 20.0
+OVERTAKE_ANNOUNCE_S = 2.0
+OVERTAKE_ARMED_TIMEOUT_S = 3.0
+OVERTAKE_MIN_SPEED_KPH = 60.0
+OVERTAKE_MAX_LEAD_DIST_M = 150.0
+
 
 class DesireHelper:
   def __init__(self, tesla_auto_signals=False, boundary_indicator_supported=False):
@@ -72,6 +85,15 @@ class DesireHelper:
     # auto lane change
     self.auto_lane_change_enable = False
     self.next_lane_change = False
+
+    # auto overtake (left-lane overtake when the lead is much slower than the
+    # cruise set speed). States: "off" -> "announcing" (left blinker on, the
+    # existing lane-change notification) -> "armed" (auto-lane-change path
+    # armed, waiting for the FSM to start the change) -> "off" once the lane
+    # change starts or the arming times out. A solid centre line blocks the
+    # overtake before it is even announced.
+    self._overtake_state = "off"
+    self._overtake_timer = 0.0
 
     # turn-signal lever presses (carState.*BlinkerStalkCount): an explicit request for the next lane change
     self.stalk_counts = None
@@ -374,6 +396,113 @@ class DesireHelper:
     return side.lane_exist_count.counter <= 0 and not side.lane_change_available_geom
 
   # ─────────────────────────────────────────────
+  # auto overtake
+  # ─────────────────────────────────────────────
+  def _update_auto_overtake(self, carstate, radarState, lateral_active):
+    """Automatic left-lane overtake.
+
+    Trigger: engaged, ego speed >= OVERTAKE_MIN_SPEED_KPH, a lead car is
+    present and at least OVERTAKE_SPEED_DIFF_KPH slower than the cruise set
+    speed, and the left lane change is available (this already encodes the
+    solid-line check via LaneLineCheck and the left-side obstacle/BSD check).
+    On trigger, announce with the existing lane-change notification (left
+    blinker) for OVERTAKE_ANNOUNCE_S, then arm the normal auto-lane-change
+    path so the FSM starts the change. Any loss of the trigger condition,
+    a solid line appearing, the left lane becoming blocked, or driver
+    intervention cancels the overtake before the lane change starts. After
+    arming, the state is "armed" (not "off") until the lane change actually
+    starts, so a still-slow lead cannot immediately re-trigger a new
+    announcement; if the lane change has not started within
+    OVERTAKE_ARMED_TIMEOUT_S the arming is withdrawn.
+    """
+    # Cancel whenever we are not in a state to overtake.
+    lane_change_busy = self.lane_change_state not in (LaneChangeState.off, LaneChangeState.preLaneChange)
+    driver_blinker = carstate.leftBlinker or carstate.rightBlinker
+    if (not lateral_active) or lane_change_busy or driver_blinker:
+      self._overtake_state = "off"
+      self._overtake_timer = 0.0
+      return
+
+    # Lead speed (km/h) vs cruise set speed (km/h).
+    lead = getattr(radarState, "leadOne", None)
+    lead_ok = bool(lead is not None and getattr(lead, "status", False))
+    v_cruise_kph = float(getattr(carstate, "vCruise", 0.0) or 0.0)
+    v_ego_kph = float(carstate.vEgo) * CV.MS_TO_KPH
+    if lead_ok:
+      lead_kph = float(getattr(lead, "vLead", 0.0) or 0.0) * CV.MS_TO_KPH
+      lead_dist = float(getattr(lead, "dRel", 0.0) or 0.0)
+    else:
+      lead_kph = 0.0
+      lead_dist = 0.0
+
+    trigger = (
+      lead_ok and
+      v_ego_kph >= OVERTAKE_MIN_SPEED_KPH and
+      v_cruise_kph > 0.0 and
+      (v_cruise_kph - lead_kph) >= OVERTAKE_SPEED_DIFF_KPH and
+      0.0 < lead_dist <= OVERTAKE_MAX_LEAD_DIST_M and
+      # Left lane change available: solid centre line blocks this (via
+      # LaneLineCheck) and so does a blocked/occupied left lane.
+      self.left.lane_change_available
+    )
+
+    if self._overtake_state == "off":
+      if trigger:
+        self._overtake_state = "announcing"
+        self._overtake_timer = 0.0
+        # Announce with the existing lane-change notification: left blinker.
+        # Refresh the count every frame while announcing so it stays on.
+        self.carrot_blinker_state = BLINKER_LEFT
+        self.carrot_lane_change_count = int(OVERTAKE_ANNOUNCE_S / DT_MDL) + 2
+    elif self._overtake_state == "announcing":
+      if not trigger:
+        # Condition lost (lead sped up, solid line appeared, left blocked,
+        # or speed dropped): cancel before any lane change starts.
+        self._overtake_state = "off"
+        self._overtake_timer = 0.0
+        self.carrot_lane_change_count = 0
+        return
+      # Keep the left blinker (the existing notification) on.
+      self.carrot_blinker_state = BLINKER_LEFT
+      self.carrot_lane_change_count = int(OVERTAKE_ANNOUNCE_S / DT_MDL) + 2
+      self._overtake_timer += DT_MDL
+      if self._overtake_timer >= OVERTAKE_ANNOUNCE_S:
+        # Arm the normal auto-lane-change path; its trigger and the
+        # lane_change_available gate (solid line + obstacles) still apply,
+        # so a line that turned solid in the meantime still blocks the start.
+        # Stay in "armed" (not "off") until the FSM actually starts the
+        # lane change, so the still-slow lead cannot re-trigger a fresh
+        # announcement in the next frame.
+        self.auto_lane_change_enable = True
+        self._overtake_state = "armed"
+        self._overtake_timer = 0.0
+        self.desireLog = "OVERTAKE:announced->armed left"
+    elif self._overtake_state == "armed":
+      if lane_change_busy:
+        # The FSM has taken over the lane change.
+        self._overtake_state = "off"
+        self._overtake_timer = 0.0
+        return
+      if not trigger:
+        # Condition lost before the lane change started: withdraw the arming.
+        self.auto_lane_change_enable = False
+        self._overtake_state = "off"
+        self._overtake_timer = 0.0
+        self.carrot_lane_change_count = 0
+        return
+      # Keep the left blinker on while waiting for the lane change to start.
+      self.carrot_blinker_state = BLINKER_LEFT
+      self.carrot_lane_change_count = int(OVERTAKE_ANNOUNCE_S / DT_MDL) + 2
+      self._overtake_timer += DT_MDL
+      if self._overtake_timer >= OVERTAKE_ARMED_TIMEOUT_S:
+        # The lane change never started (e.g. the target lane was never
+        # detected): give up instead of announcing forever.
+        self.auto_lane_change_enable = False
+        self._overtake_state = "off"
+        self._overtake_timer = 0.0
+        self.carrot_lane_change_count = 0
+
+  # ─────────────────────────────────────────────
   # main update
   # ─────────────────────────────────────────────
   def update(self, carstate, modeldata, lateral_active, lane_change_prob, carrotMan, radarState, *, indicator_valid=False, indicator_curvature=None):
@@ -416,6 +545,13 @@ class DesireHelper:
       self.auto_lane_change_enable = False
       self.next_lane_change = False
       self.desireLog = "TRAILER:MANEUVER_BLOCKED"
+
+    # auto overtake (left-lane overtake when the lead is much slower than the
+    # cruise set speed). Runs after _process_sides so the left lane's solid-line
+    # and obstacle state is known, and before the blinker update so the
+    # announcement (left blinker) is picked up in this same frame.
+    if not trailer_maneuver_blocked:
+      self._update_auto_overtake(carstate, radarState, lateral_active)
 
     # desire state from model
     self._check_desire_state(modeldata, carstate, self.maneuver_type)
