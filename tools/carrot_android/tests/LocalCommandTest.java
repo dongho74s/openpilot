@@ -39,6 +39,37 @@ public class LocalCommandTest {
     pending.ask(CLARIFY_LEFT, 1); check(pending.resolve(CONFIRM_LEFT, 2) == LEFT);
     check(pending.resolve(CONFIRM_LEFT, 3) == UNCERTAIN);
     pending.ask(CLARIFY_RIGHT, 1); pending.clear(); check(pending.resolve(CONFIRM_RIGHT, 2) == UNCERTAIN);
+    for (String phrase : Arrays.asList("가속도 설정 0을 240으로 바꿔줘", "가속도 설정 0을 이백사십으로 바꿔 줘", "가속도 설정 0 240으로 변경해 주세요")) {
+      SpokenSetting value = SpokenSetting.parse(phrase);
+      check(value != null && value.name.equals("가속도 설정 0") && value.value == 240);
+    }
+    SpokenSetting english = SpokenSetting.parse("Set acceleration setting zero to 240.");
+    check(english != null && english.value == 240);
+    check(SpokenSetting.parse("조향 지연을 마이너스 십으로 바꿔줘").value == -10);
+    for (String phrase : Arrays.asList("가속도 설정 0을 240으로 바꾸지 마", "가속도 설정 0을 240으로 바꿔줘?", "가속도를 10%만 올려", "Set accel to 2.4", "밝기를 일일로 바꿔줘"))
+      check(SpokenSetting.parse(phrase) == null);
+    String phrase = "가속도 설정 0을 240으로 바꿔줘";
+    SpokenSetting value = SpokenSetting.parse(phrase);
+    check(value.agreed(Arrays.asList(phrase, "가속도설정 0을 이백사십으로 변경해줘"), null));
+    check(!value.agreed(Arrays.asList(phrase, phrase.replace("240", "250")), null));
+    check(!value.agreed(Arrays.asList(phrase, phrase.replace("0을", "1을")), null));
+    check(!value.agreed(Arrays.asList(phrase, phrase + " 말고"), null));
+    check(!value.agreed(Arrays.asList(phrase), new float[]{.4f}));
+    check("가속도".equals(SpokenSetting.search("가속도 설정을 찾아줘")));
+    check("가속도".equals(SpokenSetting.search("가속도에 관련된 설정을 찾아줘")));
+    check("acceleration".equals(SpokenSetting.search("Find acceleration settings")));
+    check(SpokenSetting.search(phrase) == null);
+    String ordinal = "첫 번째 거 240으로 바꿔줘";
+    for (String phraseByNumber : Arrays.asList(ordinal, "첫번째 것을 이백사십으로 변경해줘", "1번째 걸 240으로 바꿔줘", "set the first one to 240")) {
+      SpokenSetting selected = SpokenSetting.parse(phraseByNumber);
+      check(selected != null && selected.position == 1 && selected.value == 240);
+    }
+    check(SpokenSetting.parse("두 번째 설정을 245로 변경해줘").position == 2);
+    check(SpokenSetting.parse("20번 항목을 10으로 바꿔줘").position == 20);
+    check(SpokenSetting.parse("가속도 설정 0을 240으로 바꿔줘").position == 0);
+    check(SpokenSetting.parse(ordinal).agreed(Arrays.asList(ordinal, "1번 항목을 240으로 바꿔줘"), null));
+    check(!SpokenSetting.parse(ordinal).agreed(Arrays.asList(ordinal, "두 번째 거 240으로 바꿔줘"), null));
+    check(!SpokenSetting.parse(ordinal).agreed(Arrays.asList(ordinal, "첫 번째 거 250으로 바꿔줘"), null));
     System.out.println("Local voice command checks passed: "+checks);
   }
 }

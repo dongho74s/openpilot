@@ -73,6 +73,7 @@ public final class MainActivity extends Activity {
   private PhoneVoice phoneVoice;
   private boolean phoneSession, waitingForPermission, resumePhoneVoice, permissionGreeting;
   private int phoneGeneration, permissionDevice;
+  private String phoneSearchId;
   private final LocalCommand.DirectionCheck directionCheck = new LocalCommand.DirectionCheck();
   private static final int PHONE_MIC = 42;
 
@@ -102,6 +103,8 @@ public final class MainActivity extends Activity {
     phoneVoice = new PhoneVoice(this, new PhoneVoice.Listener() {
       public void status(String text) { title.setText(text); if (!phoneVoice.listening()) phoneSession = false; }
       public void heard(LocalCommand command) { handlePhoneCommand(command); }
+      public void heardSetting(SpokenSetting setting) { handleSpokenSetting(setting); }
+      public void findSettings(String query) { startSettingAction("findSettings", JSONObject.quote(query)); }
     });
     root = column(); root.setBackgroundColor(background);
     if (android.os.Build.VERSION.SDK_INT >= 30) root.setOnApplyWindowInsetsListener((v,insets) -> {
@@ -412,7 +415,7 @@ public final class MainActivity extends Activity {
   private boolean autoVoiceEnabled() { return preferences.getBoolean("voice_auto_start", phoneMode()); }
 
   private void stopPhoneVoice() {
-    phoneGeneration++; directionCheck.clear();
+    phoneGeneration++; directionCheck.clear(); phoneSearchId = null;
     if (phoneVoice != null) phoneVoice.stop();
     if (phoneSession && welcome != null) welcome.cancel();
     phoneSession = false;
@@ -430,7 +433,7 @@ public final class MainActivity extends Activity {
   private void startPhoneVoice(boolean automatic) {
     if (!localPage() || phoneSession || waitingForPermission) return;
     final int token = ++phoneGeneration;
-    directionCheck.clear(); phoneSession = true;
+    directionCheck.clear(); phoneSearchId = null; phoneSession = true;
     web.evaluateJavascript(onDevicePage("typeof window.CarrotLocalVoice?.start === 'function'"), value -> {
       if (!currentSession(token)) return;
       if (!"true".equals(value)) {
@@ -463,6 +466,41 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private void handleSpokenSetting(SpokenSetting setting) {
+    final int token = phoneGeneration;
+    directionCheck.clear();
+    if (!currentSession(token)) { stopPhoneVoice(); return; }
+    if (setting == null) {
+      replyAndListen(token, UiText.get("설정 이름과 숫자를 다시 말해 주세요.", "Please repeat the setting name and number."));
+      return;
+    }
+    if (setting.position == 0) {
+      startSettingAction("setValue", JSONObject.quote(setting.name) + "," + setting.value);
+    } else if (phoneSearchId == null) {
+      replyAndListen(token, UiText.get("먼저 설정을 찾아 달라고 말해 주세요.", "Search for settings first."));
+    } else {
+      startSettingAction("setResultValue", JSONObject.quote(phoneSearchId) + "," + setting.position + "," +
+        setting.value + "," + JSONObject.quote(UiText.get("ko", "en")));
+    }
+  }
+  private void startSettingAction(String method, String arguments) {
+    final int token = phoneGeneration;
+    directionCheck.clear();
+    if (!currentSession(token)) { stopPhoneVoice(); return; }
+    String id = ConnectionPolicy.nonce();
+    long expires = System.currentTimeMillis() + 5000;
+    if ("findSettings".equals(method)) phoneSearchId = null;
+    String expression = "typeof window.CarrotLocalVoice?." + method + " !== 'function' ? 'update' : window.CarrotLocalVoice." + method + "(" +
+      arguments + "," + JSONObject.quote(id) + "," + expires + ")";
+    web.evaluateJavascript(onDevicePage(expression), raw -> {
+      if (!currentSession(token)) return;
+      if ("\"update\"".equals(raw)) {
+        replyAndListen(token, UiText.get("정차 후 당근 기기를 깃풀하고 재시작해 주세요.", "Update and restart the parked Carrot device."));
+      } else if ("true".equals(raw)) {
+        checkPhoneResult(token, id, null, SystemClock.elapsedRealtime() + 12000);
+      } else phoneResult(token, null, "unverified");
+    });
+  }
   private void handlePhoneCommand(LocalCommand command) {
     final int token = phoneGeneration;
     if (!currentSession(token)) { stopPhoneVoice(); return; }
@@ -512,6 +550,29 @@ public final class MainActivity extends Activity {
       String status;
       try { Object v = new org.json.JSONTokener(raw).nextValue(); status = v instanceof String ? (String)v : "unverified"; }
       catch (Exception e) { status = "unverified"; }
+      if (command == null) {
+        try {
+          Object value = new org.json.JSONTokener(raw).nextValue();
+          if (value instanceof JSONObject) {
+            JSONObject result = (JSONObject)value;
+            String name = result.optString("label");
+            switch (result.optString("status")) {
+              case "found":
+                int count = result.getInt("total");
+                phoneSearchId = count > 0 ? id : null;
+                replyAndListen(token, count == 0 ? UiText.get("관련 설정을 찾지 못했어요.", "No matching settings.")
+                  : UiText.get(count + "개 찾았어요. 첫 번째는 " + result.optString("firstKo") + "예요.", "Found " + count + ". First is " + result.optString("firstEn") + "."));
+                return;
+              case "applied": replyAndListen(token, UiText.get(name + ", " + result.getInt("current") + "으로 설정했어요.", name + " set to " + result.getInt("current") + ".")); return;
+              case "range": replyAndListen(token, UiText.get("허용 범위는 " + result.getInt("min") + "에서 " + result.getInt("max") + "까지예요.", "Allowed range is " + result.getInt("min") + " to " + result.getInt("max") + ".")); return;
+              case "unchanged": replyAndListen(token, UiText.get(name + ", 이미 " + result.getInt("current") + "이에요.", name + " is already " + result.getInt("current") + ".")); return;
+              case "permission": replyAndListen(token, UiText.get("정차 후 당근웹 도구에서 설정값 조회·변경을 허용해 주세요.", "While parked, allow setting reads and changes in Carrot Web Tools.")); return;
+              case "no_result": replyAndListen(token, UiText.get("지금 검색 목록에 그 항목이 없어요.", "That item is not in the current search results.")); return;
+              case "unknown": replyAndListen(token, UiText.get("설정 하나를 찾을 수 없어요. 설정 이름을 다시 말해 주세요.", "Please say the name of one setting.")); return;
+            }
+          }
+        } catch (org.json.JSONException ignored) {}
+      }
       phoneResult(token, command, status);
     });
   }
