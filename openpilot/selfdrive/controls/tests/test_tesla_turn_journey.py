@@ -154,14 +154,15 @@ def test_journey_timeout_does_not_rearm_same_turn():
 
 def test_modeld_passes_validated_pose_and_hold_permission_to_actual_desire_update():
   path = Path(__file__).parents[2] / "modeld/modeld.py"
-  tree = ast.parse(path.read_text())
+  tree = ast.parse(path.read_text(encoding='utf8'))
   init = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign) and
               ast.unparse(node.targets[0]) == "(turn_hold_allowed, turn_pose)" and isinstance(node.value, ast.Tuple))
-  guard = next(node for node in ast.walk(tree) if isinstance(node, ast.If) and ast.unparse(node.test) == "DH.tesla_auto_signals")
   call = next(node for node in ast.walk(tree) if isinstance(node, ast.Expr) and
               isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == "DH.update")
   sm = messages()
   sm['carState'] = car.CarState.new_message(latEnabled=True)
+  sm['livePose'].angularVelocityDevice.valid = True
+  sm['livePose'].angularVelocityDevice.z = -.2
   sm['carrotMan'], sm['radarState'] = None, None
   sm.valid['radarState'] = sm.alive['radarState'] = True
   sm.recv_time['radarState'] = 10.
@@ -170,11 +171,13 @@ def test_modeld_passes_validated_pose_and_hold_permission_to_actual_desire_updat
                "indicator_now": 10., "indicator_valid": True, "turn_signal_context": turn_signal_context,
                "params": NS(get_bool=lambda name: False), "time": NS(clock_gettime_ns=lambda clock: N, CLOCK_MONOTONIC=1),
                "modelv2_send": NS(modelV2=log.ModelDataV2.new_message()), "lane_change_prob": .5}
-  code = compile(ast.Module(body=[init, guard, call], type_ignores=[]), str(path), "exec")
+  block = next(node.body for node in ast.walk(tree) if isinstance(getattr(node, 'body', None), list) and init in node.body)
+  code = compile(ast.Module(body=block[block.index(init):block.index(call) + 1], type_ignores=[]), str(path), "exec")
   exec(code, namespace)
   assert received[-1]["turn_hold_allowed"]
   assert received[-1]["turn_pose"] == (N, .5)
   assert received[-1]["assistant_valid"]
+  assert received[-1]['indicator_yaw_rate'] == pytest.approx(-.2)
   sm.recv_time['radarState'] -= .4
   exec(code, namespace)
   assert not received[-1]["assistant_valid"]
@@ -182,3 +185,8 @@ def test_modeld_passes_validated_pose_and_hold_permission_to_actual_desire_updat
   sm.logMonoTime['livePose'] -= 400_000_000
   exec(code, namespace)
   assert not received[-1]["turn_hold_allowed"] and received[-1]["turn_pose"] is None
+  assert received[-1]['indicator_yaw_rate'] is None
+  sm.logMonoTime['livePose'] = N
+  sm.recv_time['livePose'] -= .3
+  exec(code, namespace)
+  assert received[-1]['indicator_yaw_rate'] is None
