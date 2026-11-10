@@ -128,6 +128,14 @@ VEHICLE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_vehicle.pn
 # Shown instead of the EV6 3D model on the parked screen for this car.
 TRAILBLAZER_PARK_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_park.png"
 TRAILBLAZER_FINGERPRINT = "CHEVROLET_TRAILBLAZER"
+TRAILBLAZER_REVERSE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_reverse.png"
+# Light positions in trailblazer_reverse.png, as (x, y) fractions of the photo.
+# Measured from the user's rear photo: the reverse lamps sit low in each cluster,
+# the turn-signal lens sits on the main lamp above them.
+TRAILBLAZER_REVERSE_LIGHTS = {
+    "reverse": ((95 / 885.0, 350 / 735.0), (790 / 885.0, 350 / 735.0)),
+    "hazard": ((85 / 885.0, 273 / 735.0), (795 / 885.0, 273 / 735.0)),
+}
 VEHICLE_LAMP_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_left.png"
 VEHICLE_LAMP_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_right.png"
 VEHICLE_LAMP_BRAKE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_brake.png"
@@ -2320,10 +2328,17 @@ class ClusterUiRenderer:
             heading += curvature * step
         return points
 
-    def _ev6_reverse_camera(self):
-        # top view, car front to the left: screen up = the car's right side
-        camera = rl.Camera3D(rl.Vector3(-2.6, -3.3, 12.5), rl.Vector3(0.0, -3.3, 0.0), rl.Vector3(1.0, 0.0, 0.0),
-                             27.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
+    def _ev6_reverse_camera(self, vertical=False):
+        if vertical:
+            # vertical view, car front up: screen up = the car's front (+Y), so the
+            # reverse path runs down the screen. Higher camera so the car + 3 m of
+            # guide fit in the 480 px height.
+            camera = rl.Camera3D(rl.Vector3(0.0, -1.5, 16.0), rl.Vector3(0.0, -1.5, 0.0), rl.Vector3(0.0, 1.0, 0.0),
+                                 27.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
+        else:
+            # top view, car front to the left: screen up = the car's right side
+            camera = rl.Camera3D(rl.Vector3(-2.6, -3.3, 12.5), rl.Vector3(0.0, -3.3, 0.0), rl.Vector3(1.0, 0.0, 0.0),
+                                 27.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
         if self._vehicle_shaders:
             view_pos = rl.ffi.new("float[]", [camera.position.x, camera.position.y, camera.position.z])
             for vehicle_shader, view_loc in self._vehicle_shaders:
@@ -2348,6 +2363,33 @@ class ClusterUiRenderer:
     def _ev6_prepare_reverse_sprite(self, state: ClusterUiState) -> None:
         """Build the selected car sprite outside the frame target; own every temporary GPU object."""
         if not self._ev6_reverse_screen_active(state):
+            return
+        if state.car_fingerprint == TRAILBLAZER_FINGERPRINT:
+            # Trailblazer: use the bundled rear photo instead of the 3D model
+            # (2026-11-11, owner approved the vertical reverse-screen simulation).
+            key = ("trailblazer_reverse", self.width, self.height)
+            if self._ev6_reverse_sprite_key == key:
+                return
+            if self._ev6_reverse_sprite:
+                rl.unload_texture(self._ev6_reverse_sprite[0])
+            self._ev6_reverse_sprite_key = key
+            self._ev6_reverse_sprite = False
+            texture = self._load_icon_texture(TRAILBLAZER_REVERSE_IMAGE_PATH, "Trailblazer reverse")
+            if texture is None:
+                return
+            camera = self._ev6_reverse_camera(vertical=True)
+            centre = world_to_screen_label_anchor(rl.Vector3(0.0, 0.0, 0.0), camera, int(self.width), int(self.height))
+            front = world_to_screen_label_anchor(rl.Vector3(0.0, 2.18, 0.0), camera, int(self.width), int(self.height))
+            rear = world_to_screen_label_anchor(rl.Vector3(0.0, -2.18, 0.0), camera, int(self.width), int(self.height))
+            if centre is None or front is None or rear is None:
+                rl.unload_texture(texture)
+                return
+            car_h = abs(front.y - rear.y)
+            if car_h <= 0:
+                rl.unload_texture(texture)
+                return
+            car_w = car_h * texture.width / texture.height
+            self._ev6_reverse_sprite = (texture, (centre.x - car_w / 2, centre.y - car_h / 2, car_w, car_h))
             return
         model, name = self._ego_model(ego_model_name(state.car_fingerprint))
         key = (name, self.width, self.height)
@@ -2403,6 +2445,26 @@ class ClusterUiRenderer:
             if target is not None:
                 rl.unload_render_texture(target)
 
+    def _draw_trailblazer_reverse_lights(self, state: ClusterUiState, sprite) -> None:
+        """Bright reverse lamps (always on in R) and blinking turn/hazard lamps
+        on the Trailblazer rear photo. Positions are fractions of the photo."""
+        _texture, (car_x, car_y, car_w, car_h) = sprite
+
+        def glow(x, y, radius, color):
+            # concentric circles, fading outward, so the lamp reads as lit
+            for factor, alpha in ((1.0, 45), (0.68, 110), (0.42, 185), (0.22, 255)):
+                rl.draw_circle(int(x), int(y), max(1, int(radius * factor)), rl.Color(*color, alpha))
+
+        radius = max(6.0, car_w * 0.075)
+        for fx, fy in TRAILBLAZER_REVERSE_LIGHTS["reverse"]:
+            glow(car_x + fx * car_w, car_y + fy * car_h, radius, (255, 255, 255))
+        # Turn signals / hazards blink ~1 Hz while the lamp state is on.
+        if time.monotonic() % 1.0 < 0.5:
+            for (fx, fy), active in zip(TRAILBLAZER_REVERSE_LIGHTS["hazard"],
+                                       (state.left_signal, state.right_signal)):
+                if active:
+                    glow(car_x + fx * car_w, car_y + fy * car_h, radius * 1.15, (255, 170, 0))
+
     def _ev6_draw_reverse_screen(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
         dark = theme.is_dark
@@ -2422,7 +2484,8 @@ class ClusterUiRenderer:
         accent = colors["accent"]
         warn = EV6_REVERSE_WARN
 
-        camera = self._ev6_reverse_camera()
+        is_trailblazer = state.car_fingerprint == TRAILBLAZER_FINGERPRINT
+        camera = self._ev6_reverse_camera(vertical=is_trailblazer)
         sprite = getattr(self, "_ev6_reverse_sprite", None)
 
         def side(point, offset, z):
@@ -2466,6 +2529,8 @@ class ClusterUiRenderer:
             texture, (car_x, car_y, car_w, car_h) = sprite
             rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
                                 rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
+        if sprite and is_trailblazer:
+            self._draw_trailblazer_reverse_lights(state, sprite)
 
         mark_labels = []
         for distance_m, _color in EV6_REVERSE_MARKS:
