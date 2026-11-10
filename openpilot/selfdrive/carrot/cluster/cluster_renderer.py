@@ -123,6 +123,11 @@ TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
 # the 3D scene with a photo-based billboard; lamp and side-mirror flash overlays
 # mirror the ego turn signals / brake on the ego vehicle.
 VEHICLE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_vehicle.png"
+# Parked (P) screen photo for the Trailblazer (owner request, 2026-11-10):
+# front 3/4 photo on a dark floor, plate blurred, transparent background.
+# Shown instead of the EV6 3D model on the parked screen for this car.
+TRAILBLAZER_PARK_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_park.png"
+TRAILBLAZER_FINGERPRINT = "CHEVROLET_TRAILBLAZER"
 VEHICLE_LAMP_LEFT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_left.png"
 VEHICLE_LAMP_RIGHT_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_right.png"
 VEHICLE_LAMP_BRAKE_IMAGE_PATH = CLUSTER_DIR / "assets" / "images" / "trailblazer_lamp_brake.png"
@@ -1313,6 +1318,8 @@ class ClusterUiRenderer:
         self._other_vehicle_names: list[str] = []
         self._park_model_texture = None
         self._park_model_key = None
+        self._trailblazer_park_tex = None
+        self._trailblazer_park_load_attempted = False
         self._ev6_reverse_sprite = None
         self._ev6_reverse_sprite_key = None
         self._ev6_park_textures = None
@@ -2059,6 +2066,20 @@ class ClusterUiRenderer:
             self._ev6_park_off = os.path.exists(EV6_PARK_SCREEN_OFF_FLAG)
         return not self._ev6_park_off
 
+    def _trailblazer_park_texture(self):
+        # Parked-screen Trailblazer photo, bundled with the repo (2026-11-10).
+        # Loaded once and cached; a failed load resets the flag so the next
+        # frame retries, e.g. after a pull finishes or the GPU context is ready.
+        if self._trailblazer_park_load_attempted:
+            return self._trailblazer_park_tex
+        self._trailblazer_park_load_attempted = True
+        texture = self._load_icon_texture(TRAILBLAZER_PARK_IMAGE_PATH, "Trailblazer park")
+        if texture is None:
+            self._trailblazer_park_load_attempted = False
+            return None
+        self._trailblazer_park_tex = texture
+        return texture
+
     def _ev6_park_car_texture(self, dark: bool):
         # Loaded lazily from the device; a missing file is retried every few seconds so a copied photo shows up
         # without restarting the HUD. Dark theme drops the photo's grey ground shadow (it reads as a haze on black).
@@ -2228,7 +2249,10 @@ class ClusterUiRenderer:
                 rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
                                 rl.Color(0, 0, 0, 8 if theme.is_dark else 7))
             texture = self._park_model_texture
-            if ego_model_name(state.car_fingerprint) == "ev6":
+            if state.car_fingerprint == TRAILBLAZER_FINGERPRINT:
+                # Trailblazer: owner's photo instead of the EV6 3D model.
+                texture = self._trailblazer_park_texture() or texture
+            elif ego_model_name(state.car_fingerprint) == "ev6":
                 texture = self._ev6_park_car_texture(theme.is_dark) or texture
             if texture is not None:
                 car_w = car_h * texture.width / max(1, texture.height)
