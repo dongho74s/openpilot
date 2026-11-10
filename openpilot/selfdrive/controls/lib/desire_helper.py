@@ -99,9 +99,11 @@ class DesireHelper:
     # existing lane-change notification) -> "armed" (auto-lane-change path
     # armed, waiting for the FSM to start the change) -> "off" once the lane
     # change starts or the arming times out. A solid centre line blocks the
-    # overtake before it is even announced.
+    # overtake before it is even announced. Disabled entirely when the
+    # AutoOvertake setting is off (default on).
     self._overtake_state = "off"
     self._overtake_timer = 0.0
+    self.auto_overtake_enabled = True
 
     # turn-signal lever presses (carState.*BlinkerStalkCount): an explicit request for the next lane change
     self.stalk_counts = None
@@ -176,6 +178,7 @@ class DesireHelper:
       self.laneChangeDelay = self.params.get_float("LaneChangeDelay") * 0.1
       self.blinkerLatchedTurn = self.params.get_int("BlinkerLatchedTurn") * CV.KPH_TO_MS
       self.laneChangeLeverWait = self.params.get_bool("LaneChangeLeverWait")
+      self.auto_overtake_enabled = self.params.get_bool("AutoOvertake")
 
   def _check_desire_state(self, modeldata, carstate, maneuver_type):
     desire_state = modeldata.meta.desireState
@@ -420,6 +423,14 @@ class DesireHelper:
     announcement; if the lane change has not started within
     OVERTAKE_ARMED_TIMEOUT_S the arming is withdrawn.
     """
+    # Auto overtake off (AutoOvertake setting): never trigger, and drop any
+    # announcement/arming already in progress.
+    if not self.auto_overtake_enabled:
+      if self._overtake_state != "off":
+        self._overtake_state = "off"
+        self._overtake_timer = 0.0
+        self.carrot_lane_change_count = 0
+      return
     # Cancel whenever we are not in a state to overtake.
     lane_change_busy = self.lane_change_state not in (LaneChangeState.off, LaneChangeState.preLaneChange)
     driver_blinker = carstate.leftBlinker or carstate.rightBlinker

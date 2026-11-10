@@ -2702,6 +2702,23 @@
     },
     {
       "group": "조향일반",
+      "name": "AutoOvertake",
+      "title": "자동 추월",
+      "descr": "앞차가 설정속도보다 20km/h 이상 느리면 왼쪽 깜빡이+화면 안내 뒤 2초 후 자동으로 왼쪽 차선으로 변경합니다. 0: 끄기(앞차가 느려도 추월하지 않고 따라감), 1: 켜기. 실선·왼쪽 차량이 있으면 시작하지 않으며, 운전자가 핸들을 반대 방향으로 꺾거나 깜빡이 레버를 건드리면 취소됩니다.",
+      "egroup": "LAT",
+      "etitle": "Auto overtake",
+      "edescr": "When the lead car is at least 20 km/h slower than the cruise set speed, announce with the left blinker and HUD, then automatically change to the left lane after 2 seconds. 0: off (follow the slower lead instead of overtaking), 1: on. Never starts on a solid centre line or with a vehicle on the left; steering in the opposite direction or touching the blinker lever cancels it.",
+      "cgroup": "转向",
+      "ctitle": "自动超车",
+      "cdescr": "当前车比设定车速慢20km/h以上时，左转向灯+屏幕提示，2秒后自动变到左侧车道。0：关闭（跟随慢车，不超车），1：开启。实线或左侧有车时不启动；反向打方向盘或拨动转向灯拨杆可取消。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "조향일반",
       "name": "BlinkerLatchedTurn",
       "title": "깜빡이 레버로 회전/차선변경 구분 (km/h, 0=끔)",
       "descr": "현대 CAN-FD(0x3C1 레버 신호) 전용. 0이면 끔. 설정 속도 이하에서는 반만 밀어(원터치) 깜빡이가 켜짐-꺼짐-켜짐을 본 뒤 끝까지 걸면(고정) 좌/우회전, 그냥 고정하거나 원터치만 하면 차선변경으로 정하고, 레버가 원터치 위치에 있는 동안은 차선변경을 시작하지 않습니다(고정도 걸리기 전 약 0.1초 그 위치를 지나감). 설정 속도를 넘으면 레버를 고정해도 차선변경만 합니다.",

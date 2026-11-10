@@ -370,6 +370,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoBlinkerControl", {PERSISTENT, INT, "0"}},
     {"BlinkerLatchedTurn", {PERSISTENT, INT, "0"}},
     {"LaneChangeLeverWait", {PERSISTENT, BOOL, "0"}},
+    {"AutoOvertake", {PERSISTENT, BOOL, "1"}},
     {"MaxAngleFrames", {PERSISTENT, INT, "89"}},
 
     {"LatMpcPathCost", {PERSISTENT, INT, "200"}},
