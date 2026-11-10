@@ -156,6 +156,7 @@
                 "LaneChangeBsd",
                 "LaneLineCheck",
                 "AutoBlinkerControl",
+                "AutoOvertake",
                 "ManualLaneChangeIndicator",
                 "ManualTurnIndicator",
                 "ModelDesireIndicator",
