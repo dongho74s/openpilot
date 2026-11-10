@@ -206,7 +206,8 @@ async def handle_download_params_backup(request: web.Request) -> web.Response:
     values = await asyncio.to_thread(read_param_backup_values, path)
     # Pretty-print (one param per line) so the downloaded file is readable,
     # matching the indent=2 file written by the backup job.
-    body = json.dumps(values, ensure_ascii=False, indent=2).encode("utf-8")
+    # sort_keys=True lists params in ascending (alphabetical) order.
+    body = json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
     return web.Response(
       body=body,
       content_type="application/json",
