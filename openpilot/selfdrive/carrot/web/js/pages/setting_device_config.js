@@ -8,6 +8,7 @@ const DEVICE_GROUPS = [
   { id: "Network", labelKey: "device_group_network", defaultLabel: "Network" },
   { id: "Toggles", labelKey: "device_group_toggles", defaultLabel: "Toggles" },
   { id: "Software", labelKey: "device_group_software", defaultLabel: "Software" },
+  { id: "WayonKey", labelKey: "device_group_wayon_key", defaultLabel: "My Traverse 키" },
   { id: "Developer", labelKey: "device_group_developer", defaultLabel: "Developer" },
 ];
 

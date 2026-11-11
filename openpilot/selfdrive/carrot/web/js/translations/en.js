@@ -285,6 +285,7 @@ window.CarrotTranslations.register("en", {
     device_group_network: "Network",
     device_group_toggles: "Toggles",
     device_group_software: "Software",
+    device_group_wayon_key: "My Traverse key",
     device_group_developer: "Developer",
     language_setting: "System",
     branch: "Branch",

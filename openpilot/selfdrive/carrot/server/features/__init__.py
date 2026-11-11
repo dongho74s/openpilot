@@ -28,6 +28,7 @@ from . import (
   tools,
   vision_diag,
   vision_test,
+  wayon_key,
   web_sound,
   web_settings,
   ws,
@@ -55,6 +56,7 @@ def register_all(app: web.Application) -> None:
   web_settings.register(app)
   ssh_keys.register(app)
   cars.register(app)
+  wayon_key.register(app)
   system.register(app)
   terminal.register(app)
   dashcam.register(app)
