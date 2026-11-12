@@ -37,6 +37,85 @@ static bool gm_pedal_long = false;
 static bool gm_cc_long = false;
 static bool gm_skip_relay_check = false;
 static bool gm_force_ascm = false;
+static bool gm_sdgm = false;
+static bool gm_manual_hold = false;
+static struct {
+  bool armed;
+  bool active;
+  bool low_speed;
+  bool cruise_active;
+  uint8_t pedal;
+  uint8_t seen;
+  uint32_t ts[4];
+} gm_hold;
+
+static void gm_hold_reset(void) {
+  gm_hold.armed = false;
+  gm_hold.active = false;
+}
+
+static bool gm_hold_inputs_fresh(void) {
+  bool fresh = gm_hold.seen == 0xFU;
+  for (int i = 0; i < 4; i++) {
+    fresh = fresh && (get_ts_elapsed(microsecond_timer_get(), gm_hold.ts[i]) <= 500000U);
+  }
+  return fresh;
+}
+
+static void gm_hold_rx(const CANPacket_t *msg) {
+  const int addr = GET_ADDR(msg);
+  const int len = GET_LEN(msg);
+  int input = -1;
+  bool valid = true;
+  if (addr == 0x34A) {
+    input = 0;
+    valid = len == 5;
+    const int left = (GET_BYTE(msg, 0) << 8) | GET_BYTE(msg, 1);
+    const int right = (GET_BYTE(msg, 2) << 8) | GET_BYTE(msg, 3);
+    gm_hold.low_speed = (left <= 173) && (right <= 173);  // <= 1.5 m/s
+  } else if (addr == 0xC9) {
+    input = 1;
+    valid = len == 8;
+  } else if (addr == 0x1C4) {
+    input = 2;
+    valid = len == 8;
+    gm_hold.cruise_active = (GET_BYTE(msg, 1) >> 5) != 0U;
+  } else if (addr == 0xBE) {
+    input = 3;
+    valid = (len >= 6) && (len <= 8);
+    gm_hold.pedal = GET_BYTE(msg, 1);
+  }
+  // An expired intent cannot be revived merely by receiving fresh idle inputs.
+  if (!gm_hold_inputs_fresh()) {
+    gm_hold_reset();
+  }
+  if (input >= 0) {
+    if (!valid) {
+      gm_hold.seen = 0U;
+      gm_hold_reset();
+      return;
+    }
+    gm_hold.seen |= (uint8_t)(1U << input);
+    gm_hold.ts[input] = microsecond_timer_get();
+  }
+  if (!gm_hold_inputs_fresh() || safety_rx_checks_invalid || controls_allowed || gas_pressed || regen_braking ||
+      gm_hold.cruise_active || !gm_hold.low_speed || (gm_hold.active && vehicle_moving)) {
+    gm_hold_reset();
+  } else {
+    // Pedal strength and its pressed switch arrive independently. Evaluate their
+    // fresh combined state, as the host parser does, rather than only on 0xBE.
+    if (brake_pressed && (gm_hold.pedal >= 80U)) {
+      gm_hold.armed = true;
+    } else if (!gm_hold.active && !brake_pressed) {
+      gm_hold.armed = false;
+    }
+    if (!gm_hold.active && gm_hold.armed && brake_pressed && !vehicle_moving) {
+      gm_hold.active = true;
+    }
+    // Python cancels on a light tap. Safety retains only stationary permission:
+    // independently timed pedal/switch CAN frames must not interrupt an existing hold.
+  }
+}
 
 static void gm_rx_hook(const CANPacket_t *to_push) {
 
@@ -137,6 +216,9 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
       stock_ecu_detected = true;
     }
     generic_rx_checks(stock_ecu_detected);
+    if (gm_manual_hold) {
+      gm_hold_rx(to_push);
+    }
   }
 }
 
@@ -159,7 +241,14 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
   if (addr == 0x315) {
     int brake = ((GET_BYTE(to_send, 0) & 0xFU) << 8) + GET_BYTE(to_send, 1);
     brake = (0x1000 - brake) & 0xFFF;
-    if (longitudinal_brake_checks(brake, *gm_long_limits)) {
+    if (gm_manual_hold && !gm_hold_inputs_fresh()) {
+      gm_hold_reset();
+    }
+    // Only driver-armed stationary friction hold, never acceleration or ACC permission.
+    const bool manual_hold = gm_manual_hold && gm_hold.active && gm_hold_inputs_fresh() && !safety_rx_checks_invalid &&
+                             !controls_allowed && !vehicle_moving && !gas_pressed && !regen_braking && !gm_hold.cruise_active &&
+                             (brake > 0) && (brake <= 400) && ((GET_BYTE(to_send, 0) >> 4) == 0xAU);
+    if (!manual_hold && longitudinal_brake_checks(brake, *gm_long_limits)) {
       tx = false;
     }
   }
@@ -186,7 +275,8 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
   // GAS/REGEN: safety check
   if (addr == 0x2CB) {
     bool apply = GET_BIT(to_send, 0U);
-    if (apply && !controls_allowed) {
+    // SDGM transmit requests must never restore permission after disengagement.
+    if (apply && !controls_allowed && !gm_sdgm) {
       controls_allowed = true;        
     }
     // convert float CAN signal to an int for gas checks: 22534 / 0.125 = 180272
@@ -259,6 +349,8 @@ static safety_config gm_init(uint16_t param) {
   const uint16_t GM_PARAM_NO_ACC = 32;
   const uint16_t GM_PARAM_PEDAL_LONG = 64;  // TODO: this can be inferred
   const uint16_t GM_PARAM_EV = 256;
+  const uint16_t GM_PARAM_HW_SDGM = 512;
+  const uint16_t GM_PARAM_MANUAL_AUTO_HOLD = 1024;
 
   // common safety checks assume unscaled integer values
   static const int GM_GAS_TO_CAN = 8;  // 1 / 0.125
@@ -284,6 +376,10 @@ static safety_config gm_init(uint16_t param) {
 
   static const CanMsg GM_CAM_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x315, 0, 5}, {0x2CB, 0, 8}, {0x370, 0, 6}, {0x200, 0, 6}, {0x1E1, 0, 7},  // pt bus
                                                {0x184, 2, 8}};  // camera bus
+
+  // Traverse SDGM/SASCM harness: brake only on camera CAN, never on powertrain CAN.
+  static const CanMsg GM_SDGM_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x2CB, 0, 8}, {0x370, 0, 6}, {0x200, 0, 6}, {0x1E1, 0, 7},
+                                               {0x315, 2, 5}, {0x184, 2, 8}};
 
   // TODO: do checksum and counter checks. Add correct timestep, 0.1s for now.
   static RxCheck gm_rx_checks[] = {
@@ -331,18 +427,30 @@ static safety_config gm_init(uint16_t param) {
   } else {
   }
 
+  gm_cc_long = GET_FLAG(param, GM_PARAM_CC_LONG);
+  gm_sdgm = GET_FLAG(param, GM_PARAM_HW_SDGM);
+  gm_cam_long = false;
 #ifdef ALLOW_DEBUG
   const uint16_t GM_PARAM_HW_CAM_LONG = 2;
   gm_cam_long = GET_FLAG(param, GM_PARAM_HW_CAM_LONG) && !gm_cc_long;
 #endif
   gm_pedal_long = GET_FLAG(param, GM_PARAM_PEDAL_LONG);
-  gm_cc_long = GET_FLAG(param, GM_PARAM_CC_LONG);
   gm_pcm_cruise = (gm_hw == GM_CAM) && (!gm_cam_long || gm_cc_long) && !gm_force_ascm && !gm_pedal_long;
   gm_skip_relay_check = GET_FLAG(param, GM_PARAM_NO_CAMERA);
   gm_has_acc = !GET_FLAG(param, GM_PARAM_NO_ACC);
 
   const uint16_t GM_PARAM_PEDAL_INTERCEPTOR = 128;
   enable_gas_interceptor = GET_FLAG(param, GM_PARAM_PEDAL_INTERCEPTOR);
+  gm_manual_hold = GET_FLAG(param, GM_PARAM_MANUAL_AUTO_HOLD) && (gm_hw == GM_CAM) && gm_cam_long && gm_sdgm &&
+                   gm_has_acc && !gm_force_ascm && !gm_pedal_long && !enable_gas_interceptor && !GET_FLAG(param, GM_PARAM_EV);
+  gm_hold_reset();
+  gm_hold.low_speed = false;
+  gm_hold.cruise_active = false;
+  gm_hold.pedal = 0U;
+  gm_hold.seen = 0U;
+  for (int i = 0; i < 4; i++) {
+    gm_hold.ts[i] = 0U;
+  }
   if (enable_gas_interceptor) {
       print("GM Pedal Interceptor Enabled\n");
   }
@@ -354,7 +462,11 @@ static safety_config gm_init(uint16_t param) {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CC_LONG_TX_MSGS);
       print("GM CC Long\n");
     } else if (gm_cam_long) {
-      ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_TX_MSGS);
+      if (gm_sdgm) {
+        ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_SDGM_LONG_TX_MSGS);
+      } else {
+        ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_TX_MSGS);
+      }
       print("GM CAM Long\n");
     } else {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_TX_MSGS);
