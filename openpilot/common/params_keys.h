@@ -326,6 +326,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HyundaiCameraSccHint", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
 
     {"HotspotOnBoot", {PERSISTENT, INT, "0"}},
+    {"HotspotShareInternet", {PERSISTENT, INT, "0"}},
     {"SoftwareMenu", {PERSISTENT, INT, "1"}},
 
     {"HyundaiCameraSCC", {PERSISTENT, INT, "0"}},

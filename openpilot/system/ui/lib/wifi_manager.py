@@ -33,6 +33,7 @@ except Exception:
   Params = None
 
 TETHERING_IP_ADDRESS = "192.168.43.1"
+TETHERING_SUBNET = "192.168.43.0/24"
 DEFAULT_TETHERING_PASSWORD = "swagswagcomma"
 SIGNAL_QUEUE_SIZE = 10
 SCAN_PERIOD_SECONDS = 5
@@ -832,15 +833,47 @@ class WifiManager:
     cloudlog.info("HotspotOnBoot is set, enabling hotspot at boot")
     self.set_tethering_active(True)
 
+  def _is_internet_sharing_enabled(self) -> bool:
+    # "핫스팟 인터넷 공유" (HotspotShareInternet): let hotspot clients use the
+    # comma cellular connection.
+    if Params is None:
+      return False
+    try:
+      return Params().get_bool("HotspotShareInternet")
+    except Exception:
+      cloudlog.exception("Failed to read HotspotShareInternet param")
+      return False
+
+  def _enable_tethering_nat(self) -> None:
+    # Share the cellular connection with hotspot clients. Without forwarding
+    # and NAT the hotspot is local-only (the phone shows "인터넷에 연결되어
+    # 있지 않음"). The rule is added once; `iptables -C` keeps re-enables
+    # from duplicating it. It does not survive a reboot, but tethering is
+    # re-enabled at boot when HotspotOnBoot is set, which re-applies it.
+    subprocess.run(["sudo", "sysctl", "net.ipv4.ip_forward=1"], check=False)
+    check = ["sudo", "iptables-legacy", "-t", "nat", "-C", "POSTROUTING",
+             "-s", TETHERING_SUBNET, "-j", "MASQUERADE"]
+    if subprocess.run(check, check=False).returncode != 0:
+      subprocess.run(["sudo", "iptables-legacy", "-t", "nat", "-A", "POSTROUTING",
+                      "-s", TETHERING_SUBNET, "-j", "MASQUERADE"], check=False)
+
+  def _apply_tethering_networking(self) -> None:
+    # Called after the tethering connection is up. Shares the cellular
+    # connection when HotspotShareInternet is set; otherwise keeps the previous
+    # behaviour (forwarding off unless the settings UI asked for it).
+    time.sleep(5)
+    if self._is_internet_sharing_enabled():
+      cloudlog.info("HotspotShareInternet is set, enabling NAT for hotspot clients")
+      self._enable_tethering_nat()
+    elif not self._ipv4_forward:
+      cloudlog.warning("net.ipv4.ip_forward = 0")
+      subprocess.run(["sudo", "sysctl", "net.ipv4.ip_forward=0"], check=False)
+
   def set_tethering_active(self, active: bool):
     def worker():
       if active:
         self.activate_connection(self._tethering_ssid, block=True)
-
-        if not self._ipv4_forward:
-          time.sleep(5)
-          cloudlog.warning("net.ipv4.ip_forward = 0")
-          subprocess.run(["sudo", "sysctl", "net.ipv4.ip_forward=0"], check=False)
+        self._apply_tethering_networking()
       else:
         self._deactivate_connection(self._tethering_ssid)
 

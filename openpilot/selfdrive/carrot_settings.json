@@ -3208,6 +3208,22 @@
     },
     {
       "group": "시작",
+      "name": "HotspotShareInternet",
+      "title": "핫스팟 인터넷 공유",
+      "descr": "핫스팟에 연결된 기기가 콤마의 셀룰러 인터넷을 쓸 수 있게 함 (유심 데이터 사용)",
+      "egroup": "START",
+      "etitle": "Share Internet over Hotspot",
+      "edescr": "Let hotspot clients use the comma cellular connection (uses SIM data)",
+      "cgroup": "启动设置",
+      "ctitle": "热点共享网络",
+      "cdescr": "让热点连接的设备使用 COMMA 的蜂窝网络 (使用 USIM 流量)",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1
+    },
+    {
+      "group": "시작",
       "name": "SoftwareMenu",
       "title": "소프트웨어메뉴활성화",
       "descr": "메모리오류가 있을때 끄기",
