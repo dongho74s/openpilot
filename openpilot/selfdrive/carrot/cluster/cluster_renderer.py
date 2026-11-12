@@ -1087,6 +1087,12 @@ EV6_REVERSE_WHEELBASE_M = 2.90
 EV6_REVERSE_REAR_AXLE_Y_M = -1.44
 EV6_REVERSE_REAR_BUMPER_Y_M = -2.34
 EV6_REVERSE_HALF_WIDTH_M = 0.95
+# Trailblazer reverse guide (2026-11-11, owner: "주차라인이 폭이 좁아 보여 차폭으로 넓혀줘"):
+# the rear-photo sprite is sized by car length (4.36 m, front +2.18 to rear -2.18)
+# with the photo's aspect (885x735), so the car reads 5.25 m wide on screen and
+# the EV6 1.90 m guide looks narrow against it. The guide half-width matches the
+# displayed photo width: 4.36 * 885 / 735 / 2 = 2.62 m.
+TRAILBLAZER_REVERSE_HALF_WIDTH_M = 4.36 * 885.0 / 735.0 / 2.0
 EV6_REVERSE_PATH_LENGTH_M = 5.0
 EV6_REVERSE_PATH_STEPS = 60
 EV6_REVERSE_MARKS = ((1.0, (255, 59, 48)), (2.0, (255, 159, 10)), (3.0, (52, 199, 89)))
@@ -2496,7 +2502,7 @@ class ClusterUiRenderer:
             for tri in ((a, b, c), (a, c, d), (a, c, b), (a, d, c)):  # both windings: no culling surprises
                 rl.draw_triangle_3d(*tri, color)
 
-        half_w = EV6_REVERSE_HALF_WIDTH_M
+        half_w = TRAILBLAZER_REVERSE_HALF_WIDTH_M if is_trailblazer else EV6_REVERSE_HALF_WIDTH_M
         rl.begin_mode_3d(camera)
         try:
             fill = rl.Color(*accent, 46 if dark else 34)
