@@ -47,6 +47,21 @@ def get_driving_mode_comfort_brake_factor(driving_mode: DrivingMode) -> float:
   """Keep Eco efficient while giving Safe a modestly earlier braking profile."""
   return 0.9 if driving_mode == DrivingMode.Safe else 1.0
 
+
+# ComfortBrake setting (select index -> m/s^2). The same value is used for both
+# the ego stopping term and the lead stopping term in the longitudinal MPC, so
+# the steady following distance does not change -- only when deceleration
+# starts when there is a speed difference. Index 1 (2.0) is the default.
+COMFORT_BRAKE_VALUES = (1.5, 2.0, 2.5, 3.0)
+COMFORT_BRAKE_DEFAULT_INDEX = 1
+
+
+def comfort_brake_from_index(index) -> float:
+  try:
+    return COMFORT_BRAKE_VALUES[int(np.clip(int(index), 0, len(COMFORT_BRAKE_VALUES) - 1))]
+  except (TypeError, ValueError):
+    return COMFORT_BRAKE_VALUES[COMFORT_BRAKE_DEFAULT_INDEX]
+
 class TrafficState(Enum):
   off = 0
   red = 1
@@ -125,7 +140,7 @@ class CarrotPlanner:
 
     self.stop_distance = 6.0
     self.trafficStopDistanceAdjust = 2.5 #params.get_float("TrafficStopDistanceAdjust") / 100.
-    self.comfortBrake = 2.4
+    self.comfortBrake = self._read_comfort_brake()
     self.comfort_brake = self.comfortBrake
 
     self.soft_hold_active = 0
@@ -190,6 +205,14 @@ class CarrotPlanner:
     self.trafficStopModelLeadOffset = 0.0
     self.last_event_time = 0.0
 
+  def _read_comfort_brake(self) -> float:
+    # Falls back to the default if the key is not registered yet (params table
+    # not rebuilt after an update), so a missing key never breaks the planner.
+    try:
+      return comfort_brake_from_index(self.params.get_int("ComfortBrake"))
+    except Exception:
+      return COMFORT_BRAKE_VALUES[COMFORT_BRAKE_DEFAULT_INDEX]
+
   def _params_update(self):
     self.frame += 1
     self.params_count += 1
@@ -215,6 +238,7 @@ class CarrotPlanner:
       self.tFollowGap4 = self.params.get_float("TFollowGap4") / 100.
       self.leadAccelResponseBase = int(np.clip(self.params.get_int("LeadAccelResponse"), 0, 5))
       self.leadAccelResponseTF = [int(np.clip(self.params.get_int(f"LeadAccelResponseTF{i}"), -1, 5)) for i in range(1, 5)]
+      self.comfortBrake = self._read_comfort_brake()
       self.dynamicTFollowLC = self.params.get_float("DynamicTFollowLC") / 100.
       self.speedTFFactor = int(np.clip(self.params.get_int("SpeedTFFactor"), 10, 30))
       self.tFollowDecelBoost = self.params.get_float("TFollowDecelBoost") / 100.

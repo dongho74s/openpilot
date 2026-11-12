@@ -98,8 +98,8 @@ def get_T_FOLLOW(personality=log.LongitudinalPersonality.standard):
   else:
     raise NotImplementedError("Longitudinal personality not supported")
 
-def get_stopped_equivalence_factor(v_lead):
-  return (v_lead**2) / (2 * COMFORT_BRAKE)
+def get_stopped_equivalence_factor(v_lead, comfort_brake=COMFORT_BRAKE):
+  return (v_lead**2) / (2 * comfort_brake)
 
 def get_safe_obstacle_distance(v_ego, t_follow=None, comfort_brake=COMFORT_BRAKE, stop_distance=STOP_DISTANCE):
   if t_follow is None:
@@ -109,7 +109,7 @@ def get_safe_obstacle_distance(v_ego, t_follow=None, comfort_brake=COMFORT_BRAKE
 def desired_follow_distance(v_ego, v_lead, comfort_brake, stop_distance, t_follow=None):
   if t_follow is None:
     t_follow = get_T_FOLLOW()
-  return get_safe_obstacle_distance(v_ego, t_follow, comfort_brake, stop_distance) - get_stopped_equivalence_factor(v_lead)
+  return get_safe_obstacle_distance(v_ego, t_follow, comfort_brake, stop_distance) - get_stopped_equivalence_factor(v_lead, comfort_brake)
 
 
 def gen_long_model():
@@ -449,8 +449,8 @@ class LongitudinalMpc:
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
     # and then treat that as a stopped car/obstacle at this new distance.
-    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
-    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1], comfort_brake)
+    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1], comfort_brake)
 
     self.params[:,0] = ACCEL_MIN if not reset_state else a_ego
     # negative accel constraint causes problems because negative speed is not allowed
@@ -600,7 +600,7 @@ class LongitudinalMpc:
       comfort.update(enabled=eligible, track_id=lead.radarTrackId, dt=self.dt,
                      distance=lead.dRel if eligible else 0.0,
                      relative_speed=lead.vRel if eligible else 0.0)
-      danger = lead_xv[:,0] + get_stopped_equivalence_factor(lead_xv[:,1]) - gap_x - self.params[0,5] * gap_safe_distance
+      danger = lead_xv[:,0] + get_stopped_equivalence_factor(lead_xv[:,1], comfort_brake) - gap_x - self.params[0,5] * gap_safe_distance
       relief = comfort.comfort_relief(dt=self.dt, enabled=eligible and self.lead_gap_margins[0,lead_index] <= 0.01,
                                      base_tf=t_follow, ego_speeds=gap_v, lead_speeds=lead_xv[:,1],
                                      lead_accel=lead.aLeadK if eligible else 0.0, physical_gaps=physical_gaps,

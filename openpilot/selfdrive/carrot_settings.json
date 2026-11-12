@@ -404,7 +404,8 @@
                 "LeadAccelResponseTF4",
                 "DynamicTFollowLC",
                 "SpeedTFFactor",
-                "TFollowDecelBoost"
+                "TFollowDecelBoost",
+                "ComfortBrake"
               ]
             },
             {
@@ -3713,6 +3714,43 @@
       "default": 0,
       "unit": 10,
       "display_unit": "percent"
+    },
+    {
+      "group": "차량간격",
+      "name": "ComfortBrake",
+      "title": "컴포트 브레이크 · 감속 여유",
+      "descr": "앞차 추종 시 감속을 얼마나 일찍·부드럽게 시작할지 정합니다. 낮을수록(1.5) 일찍 약하게 감속하고, 높을수록(3.0) 늦게 세게 감속합니다. 앞차 쪽 정지거리 계산에도 같은 값을 써서 정상 추종 거리는 바뀌지 않고, 속도 차가 있을 때의 감속 시작 시점만 달라집니다. 기본값 2.0.",
+      "egroup": "FDIST",
+      "etitle": "Comfort brake",
+      "edescr": "How early and gently to start decelerating when following a lead car. Lower (1.5) brakes earlier and gentler; higher (3.0) brakes later and harder. The same value is used for the lead car's stopping distance, so the steady following distance does not change -- only when deceleration starts when there is a speed difference. Default 2.0.",
+      "cgroup": "跟车距离",
+      "ctitle": "舒适制动",
+      "cdescr": "跟随前车时减速开始的早晚和柔和程度。越低（1.5）越早越柔和，越高（3.0）越晚越强。前车停车距离也使用相同值，因此正常跟车距离不变，仅在有速度差时改变减速开始时机。默认2.0。",
+      "min": 0,
+      "max": 3,
+      "default": 1,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "1.5 가장 부드럽게",
+          "2.0 부드럽게",
+          "2.5 기본",
+          "3.0 강하게"
+        ],
+        "en": [
+          "1.5 Gentlest",
+          "2.0 Gentle",
+          "2.5 Default",
+          "3.0 Firm"
+        ],
+        "zh": [
+          "1.5 最柔和",
+          "2.0 柔和",
+          "2.5 默认",
+          "3.0 较强"
+        ]
+      }
     },
     {
       "group": "감속제어",
