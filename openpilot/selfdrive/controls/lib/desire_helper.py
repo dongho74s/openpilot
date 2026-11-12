@@ -33,7 +33,7 @@ AUTO_APP_WAIT_S = 10.0
 # the navigation command has stayed live under continuous lateral control
 # for this long. Deliberately longer than a resume transient, so a stale
 # command never starts a maneuver the moment control returns.
-ATC_RETRY_WAIT_S = 5.0
+ATC_RETRY_WAIT_S = 2.0
 
 # ── Auto overtake (automatic left-lane overtake) ──────────────────────────
 # When the lead car is this much slower than the cruise set speed, start an

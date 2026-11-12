@@ -116,13 +116,13 @@ class TestDesireHelperDriverIntent:
     assert self.helper.prev_desire_enabled
     assert self.helper.lane_change_state == log.LaneChangeState.off
 
-    # Still off 2.5 s after lateral resumes: no immediate re-arm.
-    for _ in range(50):
+    # Still off 1 s after lateral resumes: no immediate re-arm.
+    for _ in range(20):
       self.update()
     assert self.helper.lane_change_state == log.LaneChangeState.off
 
-    # The live command re-arms once the retry clock (5 s) has run out.
-    for _ in range(60):
+    # The live command re-arms once the retry clock (2 s) has run out.
+    for _ in range(30):
       self.update()
     assert self.helper.lane_change_state == log.LaneChangeState.preLaneChange
 
@@ -139,9 +139,9 @@ class TestDesireHelperDriverIntent:
       self.helper.update(slow, SimpleNamespace(), True, 0.1, self.carrot_man, SimpleNamespace())
     assert self.helper.lane_change_state == log.LaneChangeState.off
 
-    for _ in range(50):
+    for _ in range(20):
       self.update()
     assert self.helper.lane_change_state == log.LaneChangeState.off
-    for _ in range(60):
+    for _ in range(30):
       self.update()
     assert self.helper.lane_change_state == log.LaneChangeState.preLaneChange
