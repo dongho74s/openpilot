@@ -62,6 +62,22 @@ def comfort_brake_from_index(index) -> float:
   except (TypeError, ValueError):
     return COMFORT_BRAKE_VALUES[COMFORT_BRAKE_DEFAULT_INDEX]
 
+
+# FollowDecelStrength setting (select index -> MPC obstacle-cost factor).
+# Lowering the obstacle cost lets the MPC accept a temporarily shorter gap
+# instead of braking hard to hold the desired distance. The danger-zone
+# constraint, accel limits and crash logic are untouched, so hard braking
+# for a real hazard is unchanged. Index 1 (0.6, cost 3.0) is the default.
+FOLLOW_DECEL_STRENGTH_FACTORS = (0.4, 0.6, 1.0)
+FOLLOW_DECEL_STRENGTH_DEFAULT_INDEX = 1
+
+
+def follow_obstacle_cost_factor_from_index(index) -> float:
+  try:
+    return FOLLOW_DECEL_STRENGTH_FACTORS[int(np.clip(int(index), 0, len(FOLLOW_DECEL_STRENGTH_FACTORS) - 1))]
+  except (TypeError, ValueError):
+    return FOLLOW_DECEL_STRENGTH_FACTORS[FOLLOW_DECEL_STRENGTH_DEFAULT_INDEX]
+
 class TrafficState(Enum):
   off = 0
   red = 1
@@ -142,6 +158,7 @@ class CarrotPlanner:
     self.trafficStopDistanceAdjust = 2.5 #params.get_float("TrafficStopDistanceAdjust") / 100.
     self.comfortBrake = self._read_comfort_brake()
     self.comfort_brake = self.comfortBrake
+    self.follow_obstacle_cost_factor = self._read_follow_decel_strength()
 
     self.soft_hold_active = 0
     self.events = Events()
@@ -213,6 +230,14 @@ class CarrotPlanner:
     except Exception:
       return COMFORT_BRAKE_VALUES[COMFORT_BRAKE_DEFAULT_INDEX]
 
+  def _read_follow_decel_strength(self) -> float:
+    # Same fallback as the comfort brake: a missing key (params table not
+    # rebuilt yet) must never break the planner.
+    try:
+      return follow_obstacle_cost_factor_from_index(self.params.get_int("FollowDecelStrength"))
+    except Exception:
+      return FOLLOW_DECEL_STRENGTH_FACTORS[FOLLOW_DECEL_STRENGTH_DEFAULT_INDEX]
+
   def _params_update(self):
     self.frame += 1
     self.params_count += 1
@@ -239,6 +264,7 @@ class CarrotPlanner:
       self.leadAccelResponseBase = int(np.clip(self.params.get_int("LeadAccelResponse"), 0, 5))
       self.leadAccelResponseTF = [int(np.clip(self.params.get_int(f"LeadAccelResponseTF{i}"), -1, 5)) for i in range(1, 5)]
       self.comfortBrake = self._read_comfort_brake()
+      self.follow_obstacle_cost_factor = self._read_follow_decel_strength()
       self.dynamicTFollowLC = self.params.get_float("DynamicTFollowLC") / 100.
       self.speedTFFactor = int(np.clip(self.params.get_int("SpeedTFFactor"), 10, 30))
       self.tFollowDecelBoost = self.params.get_float("TFollowDecelBoost") / 100.

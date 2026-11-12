@@ -335,14 +335,16 @@ class LongitudinalMpc:
                   jerk_factor=1.0,
                   a_change_cost_starting=A_CHANGE_COST_STARTING,
                   a_change_cost_factor=1.0,
-                  jerk_cost_factor=1.0):
+                  jerk_cost_factor=1.0,
+                  obstacle_cost_factor=1.0):
     #jerk_factor = get_jerk_factor(personality)
     if self.mode == 'acc':
       a_change_cost = get_a_change_cost(
         prev_accel_constraint, a_change_cost_starting, a_change_cost_factor,
       )
       applied_jerk_cost_factor = float(np.clip(jerk_cost_factor, 0.0, 1.0))
-      cost_weights = [X_EGO_OBSTACLE_COST, X_EGO_COST, V_EGO_COST, A_EGO_COST,
+      applied_obstacle_cost_factor = float(np.clip(obstacle_cost_factor, 0.1, 2.0))
+      cost_weights = [X_EGO_OBSTACLE_COST * applied_obstacle_cost_factor, X_EGO_COST, V_EGO_COST, A_EGO_COST,
                       a_change_cost, jerk_factor * applied_jerk_cost_factor * J_EGO_COST]
       constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, DANGER_ZONE_COST]
     elif self.mode == 'blended':
@@ -353,6 +355,7 @@ class LongitudinalMpc:
       raise NotImplementedError(f'Planner mode {self.mode} not recognized in planner cost set')
     self.a_change_cost = float(a_change_cost)
     self.jerk_cost_factor = float(applied_jerk_cost_factor if self.mode == 'acc' else 1.0)
+    self.obstacle_cost_factor = float(applied_obstacle_cost_factor if self.mode == 'acc' else 1.0)
     self.set_cost_weights(cost_weights, constraint_cost_weights)
 
   def update_predicted_danger_margin(self, lead, lead_obstacle, t_follow, comfort_brake, stop_distance):
@@ -569,6 +572,7 @@ class LongitudinalMpc:
       a_change_cost_starting=a_change_cost_starting,
       a_change_cost_factor=response_request.a_change_cost_factor,
       jerk_cost_factor=response_request.jerk_cost_factor,
+      obstacle_cost_factor=getattr(carrot, 'follow_obstacle_cost_factor', 1.0),
     )
 
     # Extra TF is a comfort preference, not a change to physical lead obstacles,

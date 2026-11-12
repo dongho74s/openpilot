@@ -405,7 +405,8 @@
                 "DynamicTFollowLC",
                 "SpeedTFFactor",
                 "TFollowDecelBoost",
-                "ComfortBrake"
+                "ComfortBrake",
+                "FollowDecelStrength"
               ]
             },
             {
@@ -3749,6 +3750,40 @@
           "2.0 柔和",
           "2.5 默认",
           "3.0 较强"
+        ]
+      }
+    },
+    {
+      "group": "차량간격",
+      "name": "FollowDecelStrength",
+      "title": "추종 감속 강도",
+      "descr": "앞차를 따라갈 때 간격이 줄어들면 얼마나 세게 감속할지 정합니다. 부드럽게일수록 간격이 조금 좁혀지는 걸 허용하면서 천천히 감속하고, 기본은 원하는 간격을 엄격히 지킵니다. 위험 거리·감속 한도는 그대로라서 진짜 위험할 때는 똑같이 세게 감속합니다. 기본값 부드럽게.",
+      "egroup": "FDIST",
+      "etitle": "Follow decel strength",
+      "edescr": "How hard to decelerate when the gap to a lead car closes. Softer allows the gap to compress a little and brakes more gently; Default holds the desired distance strictly. The danger distance and decel limits are unchanged, so hard braking for a real hazard is the same. Default Gentle.",
+      "cgroup": "跟车距离",
+      "ctitle": "跟随减速强度",
+      "cdescr": "跟随前车、间距缩小时减速的强度。越柔和越允许间距暂时缩小、减速越缓；默认则严格保持期望间距。危险距离和减速限值不变，真正危险时同样全力减速。默认柔和。",
+      "min": 0,
+      "max": 2,
+      "default": 1,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "가장 부드럽게",
+          "부드럽게",
+          "기본"
+        ],
+        "en": [
+          "Gentlest",
+          "Gentle",
+          "Default"
+        ],
+        "zh": [
+          "最柔和",
+          "柔和",
+          "默认"
         ]
       }
     },
