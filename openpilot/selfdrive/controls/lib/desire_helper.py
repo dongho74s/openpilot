@@ -28,6 +28,12 @@ from openpilot.selfdrive.controls.lib.desire_lib.lever import LEVER_REQUEST_WAIT
 STALK_QUEUE_GUARD_S = 0.3
 # An accepted App action may wait for interlocks, but must not start unexpectedly much later.
 AUTO_APP_WAIT_S = 10.0
+# An ATC-only lane-change attempt that died on a transient condition (speed
+# dipped below the minimum, the command flickered) may re-enter only after
+# the navigation command has stayed live under continuous lateral control
+# for this long. Deliberately longer than a resume transient, so a stale
+# command never starts a maneuver the moment control returns.
+ATC_RETRY_WAIT_S = 5.0
 
 # ── Auto overtake (automatic left-lane overtake) ──────────────────────────
 # When the lead car is this much slower than the cruise set speed, start an
@@ -146,6 +152,9 @@ class DesireHelper:
     # misc
     self.prev_desire_enabled = False
     self.desireLog = ""
+    # ATC-only retry clock (seconds spent in off with a live ATC-only
+    # request under continuous lateral control).
+    self._atc_retry_wait = 0.0
 
     # externally readable flags
     self.lane_change_available_left = False
@@ -669,6 +678,16 @@ class DesireHelper:
       side.lane_line_info_mod not in (0, 5)
     )
 
+    # ATC-only retry clock. While the FSM sits in off with a live ATC-only
+    # request and lateral control continuously active, count up; any break
+    # (command off, lateral inactive, driver request, state left off)
+    # resets the clock. It stays quiet while lateral is inactive, so
+    # nothing re-arms on the resume frame itself.
+    if self.lane_change_state == LaneChangeState.off and lateral_active and atc_lane_change_only:
+      self._atc_retry_wait += DT_MDL
+    else:
+      self._atc_retry_wait = 0.0
+
     # auto lane change trigger (기존 로직 유지하되 side 기반)
     auto_lane_change_trigger = False
     if desire_enabled and side is not None and not trailer_maneuver_blocked:
@@ -770,7 +789,12 @@ class DesireHelper:
         if self.lane_change_state == LaneChangeState.off:
           # A lever press while the lamp is still flashing has no lamp edge but is still a fresh request.
           driver_desire_started = driver_enabled and (driver_changed or stalk_press == blinker_state)
-          if desire_enabled and (not self.prev_desire_enabled or driver_desire_started) and \
+          # ATC-only re-entry: a live navigation command whose attempt died
+          # on a transient condition may try again once the retry clock has
+          # run out. A fresh driver request still re-arms at once; the
+          # rising edge for a fresh ATC command is unchanged.
+          atc_retry_ready = atc_lane_change_only and self._atc_retry_wait >= ATC_RETRY_WAIT_S
+          if desire_enabled and (not self.prev_desire_enabled or driver_desire_started or atc_retry_ready) and \
              not below_lane_change_speed and side is not None:
             self.lane_change_state = LaneChangeState.preLaneChange
             self.lane_change_ll_prob = 1.0

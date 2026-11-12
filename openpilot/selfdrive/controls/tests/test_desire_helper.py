@@ -107,3 +107,41 @@ class TestDesireHelperDriverIntent:
     self.update()
     self.update()
     assert self.helper.lane_change_state != log.LaneChangeState.laneChangeStarting
+
+  def test_atc_retry_rearms_after_cooldown_not_immediately(self):
+    # seg15 follow-up: an ATC-only attempt that died on a transient condition
+    # may try again, but not the moment lateral control returns.
+    self.update()
+    self.update(lateral_active=False)
+    assert self.helper.prev_desire_enabled
+    assert self.helper.lane_change_state == log.LaneChangeState.off
+
+    # Still off 2.5 s after lateral resumes: no immediate re-arm.
+    for _ in range(50):
+      self.update()
+    assert self.helper.lane_change_state == log.LaneChangeState.off
+
+    # The live command re-arms once the retry clock (5 s) has run out.
+    for _ in range(60):
+      self.update()
+    assert self.helper.lane_change_state == log.LaneChangeState.preLaneChange
+
+  def test_atc_rearms_after_speed_dip(self):
+    # Enter preLaneChange, dip below the minimum speed (off), recover: the
+    # live command re-arms after the retry clock, not immediately.
+    self.update()
+    self.update()
+    assert self.helper.lane_change_state == log.LaneChangeState.preLaneChange
+
+    slow = make_car_state()
+    slow.vEgo = 5.0  # below LANE_CHANGE_SPEED_MIN (30 km/h)
+    for _ in range(10):
+      self.helper.update(slow, SimpleNamespace(), True, 0.1, self.carrot_man, SimpleNamespace())
+    assert self.helper.lane_change_state == log.LaneChangeState.off
+
+    for _ in range(50):
+      self.update()
+    assert self.helper.lane_change_state == log.LaneChangeState.off
+    for _ in range(60):
+      self.update()
+    assert self.helper.lane_change_state == log.LaneChangeState.preLaneChange
