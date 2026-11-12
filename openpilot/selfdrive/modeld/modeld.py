@@ -34,7 +34,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.navigation.map_client import MapInput
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
 from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
-                                                refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
+                                                rebind_usbgpu_xhci, refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
                                                 usbgpu_pcie_not_ready, usbgpu_present, wait_for_usbgpu_present)
 
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld"
@@ -45,7 +45,7 @@ LAT_SMOOTH_SECONDS = 0.0
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 USBGPU_MODEL_LOAD_TIMEOUT = 120
-USBGPU_DISCOVERY_GRACE_SECONDS = 5.0
+USBGPU_DISCOVERY_GRACE_SECONDS = 30.0
 USBGPU_DISCOVERY_POLL_INTERVAL = 0.1
 USBGPU_INIT_ATTEMPTS = 6
 USBGPU_PRECOMPILED_INIT_ATTEMPTS = 2
@@ -243,6 +243,14 @@ def main(demo=False):
       f"eGPU USB not present at modeld start; waiting up to {USBGPU_DISCOVERY_GRACE_SECONDS:.1f}s for SuperSpeed enumeration"
     )
     _present = wait_for_usbgpu_present(USBGPU_DISCOVERY_GRACE_SECONDS, USBGPU_DISCOVERY_POLL_INTERVAL)
+    if not _present:
+      # A long optical cable can link too slowly on cold boot for the GPU to
+      # enumerate even after the grace period. Force one fresh enumeration of
+      # the eGPU host controller (xhci-hcd.1 only, never the modem on
+      # xhci-hcd.0), then wait once more before falling back to the internal model.
+      if rebind_usbgpu_xhci():
+        cloudlog.warning("eGPU USB still absent; rebound xhci-hcd.1, waiting again for enumeration")
+        _present = wait_for_usbgpu_present(USBGPU_DISCOVERY_GRACE_SECONDS, USBGPU_DISCOVERY_POLL_INTERVAL)
     if _present:
       cloudlog.warning("eGPU USB enumerated during startup grace period")
     else:

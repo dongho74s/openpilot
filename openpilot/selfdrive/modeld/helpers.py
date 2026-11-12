@@ -139,6 +139,35 @@ def wait_for_usbgpu_present(timeout: float, poll_interval: float = 0.1) -> bool:
   return False
 
 
+# The eGPU dock is on xhci-hcd.1; the cellular modem is on xhci-hcd.0.
+# Only xhci-hcd.1 is ever rebound here — the modem controller is never touched.
+USBGPU_XHCI_DRIVER = Path("/sys/bus/platform/drivers/xhci-hcd")
+USBGPU_XHCI_DEVICE = "xhci-hcd.1.auto"
+USBGPU_XHCI_REBIND_SETTLE_SECONDS = 3.0
+
+
+def rebind_usbgpu_xhci() -> bool:
+  """Force a fresh enumeration of the eGPU USB host controller, once.
+
+  A long optical cable can link too slowly on cold boot for the GPU to enumerate
+  within the discovery grace period. Unbinding and rebinding xhci-hcd.1 makes the
+  kernel re-enumerate the controller, which is the same recovery already done by
+  hand (unbind, sleep 3s, bind). Returns True when the rebind was issued, False
+  when the sysfs entries are absent or the write failed. Never touches xhci-hcd.0.
+  """
+  try:
+    unbind = USBGPU_XHCI_DRIVER / "unbind"
+    bind = USBGPU_XHCI_DRIVER / "bind"
+    if not unbind.exists() or not bind.exists():
+      return False
+    unbind.write_text(USBGPU_XHCI_DEVICE + "\n")
+    time.sleep(USBGPU_XHCI_REBIND_SETTLE_SECONDS)
+    bind.write_text(USBGPU_XHCI_DEVICE + "\n")
+    return True
+  except OSError:
+    return False
+
+
 def refresh_usbgpu_device_cache() -> None:
   """Discard libusb device pointers that may go stale during USB re-enumeration."""
   try:

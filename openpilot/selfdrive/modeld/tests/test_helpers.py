@@ -49,6 +49,24 @@ def test_usbgpu_pcie_readiness_error_is_recognized_through_wrappers():
   assert not usbgpu_pcie_not_ready(RuntimeError("USB device disconnected"))
 
 
+def test_usbgpu_xhci_rebind_only_touches_egpu_controller(tmp_path, monkeypatch):
+  # The eGPU is on xhci-hcd.1; the modem is on xhci-hcd.0 and must never be rebound.
+  driver = tmp_path / "xhci-hcd"
+  driver.mkdir()
+  (driver / "unbind").write_text("")
+  (driver / "bind").write_text("")
+  monkeypatch.setattr(helpers, "USBGPU_XHCI_DRIVER", driver)
+  monkeypatch.setattr(helpers, "USBGPU_XHCI_REBIND_SETTLE_SECONDS", 0.0)
+  assert helpers.rebind_usbgpu_xhci() is True
+  assert (driver / "unbind").read_text() == "xhci-hcd.1.auto\n"
+  assert (driver / "bind").read_text() == "xhci-hcd.1.auto\n"
+
+
+def test_usbgpu_xhci_rebind_returns_false_without_sysfs(monkeypatch):
+  monkeypatch.setattr(helpers, "USBGPU_XHCI_DRIVER", Path("/nonexistent-xhci-driver"))
+  assert helpers.rebind_usbgpu_xhci() is False
+
+
 def test_usbgpu_pcie_readiness_error_is_recognized_in_exception_group():
   error = ExceptionGroup(
     "No interface for AMD:0 is available",
