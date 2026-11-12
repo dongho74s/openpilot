@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import gc
+import threading
 
 from openpilot.system.hardware import HARDWARE, TICI
 from openpilot.common.realtime import set_core_affinity
@@ -12,6 +13,27 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.impact_dashcam import ImpactDashcamPrompt
 
 BIG_UI = gui_app.big_ui()
+
+
+def _start_boot_hotspot() -> None:
+  # "부팅시 핫스팟켜기" (HotspotOnBoot): turn the hotspot on at boot. The menu
+  # setting existed with no code acting on it. Constructing a WifiManager runs
+  # its init worker, which enables tethering once when the param is set (see
+  # WifiManager._maybe_enable_tethering_on_boot). Only construct one when the
+  # setting is on, so the off case costs nothing.
+  try:
+    from openpilot.common.params import Params
+
+    if not Params().get_bool("HotspotOnBoot"):
+      return
+  except Exception:
+    return
+  try:
+    from openpilot.system.ui.lib.wifi_manager import WifiManager
+
+    WifiManager()
+  except Exception:
+    pass
 
 
 def main():
@@ -29,6 +51,7 @@ def main():
   scheduler.update(False, force=True)
 
   gui_app.init_window("UI")
+  threading.Thread(target=_start_boot_hotspot, daemon=True).start()
   if BIG_UI:
     MainLayout()
   else:

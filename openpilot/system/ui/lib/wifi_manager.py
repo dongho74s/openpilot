@@ -41,6 +41,12 @@ BACKGROUND_SCAN_PERIOD_SECONDS = 5
 DEBUG = False
 _dbus_call_idx = 0
 
+# "부팅시 핫스팟켜기" (HotspotOnBoot): enable tethering once per process, when
+# the first WifiManager finishes initializing. The menu setting existed with
+# no code acting on it, so the hotspot never came up at boot. The once-flag
+# keeps a manual tether-off from being undone by opening settings later.
+_boot_tethering_done = False
+
 
 def normalize_ssid(ssid: str) -> str:
   return ssid.replace("’", "'")  # for iPhone hotspots
@@ -220,6 +226,7 @@ class WifiManager:
       self._init_wifi_state()
 
       self._tethering_password = self._get_tethering_password()
+      self._maybe_enable_tethering_on_boot()
       cloudlog.debug("WifiManager initialized")
 
     threading.Thread(target=worker, daemon=True).start()
@@ -806,6 +813,24 @@ class WifiManager:
 
   def set_ipv4_forward(self, enabled: bool):
     self._ipv4_forward = enabled
+
+  def _maybe_enable_tethering_on_boot(self) -> None:
+    # "부팅시 핫스팟켜기" (HotspotOnBoot): the menu setting existed with no code
+    # acting on it, so the hotspot never came up at boot. Enable it once when
+    # the first WifiManager finishes initializing.
+    global _boot_tethering_done
+    if _boot_tethering_done or Params is None:
+      return
+    _boot_tethering_done = True
+    try:
+      enabled = Params().get_bool("HotspotOnBoot")
+    except Exception:
+      cloudlog.exception("Failed to read HotspotOnBoot param")
+      return
+    if not enabled or self.is_tethering_active():
+      return
+    cloudlog.info("HotspotOnBoot is set, enabling hotspot at boot")
+    self.set_tethering_active(True)
 
   def set_tethering_active(self, active: bool):
     def worker():
