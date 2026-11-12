@@ -18,7 +18,6 @@ from bisect import bisect_right
 from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 from cluster_config import (
@@ -80,7 +79,6 @@ from openpilot.selfdrive.controls.lib.cutin_helpers import (
     update_cutin_confirmation,
     update_lane_relative_motion,
 )
-from openpilot.selfdrive.controls.lib.desire_lib.side_state import SideState
 
 
 DBC_SIGNAL_RE = re.compile(
@@ -108,6 +106,14 @@ class DbcSignalSpec:
 
 
 MODEL_LEAD_MIN_PROB = 0.50
+# Vision blind-spot display zone (FrogPilot-style red lane marking): a model
+# lead in the adjacent lane within this forward window lights the lane red.
+# Lateral is right-positive; the band is one lane beyond the ego lane lines
+# when the model reports them, else a fixed band. The hold bridges brief
+# model dropouts so the marking does not flicker.
+BSD_MODEL_ZONE_MAX_M = 50.0
+BSD_MODEL_ZONE_HOLD_S = 0.5
+BSD_MODEL_ZONE_FALLBACK_EDGE_M = 1.8
 RADAR_POINT_STALE_S = 0.25
 CORNER_DETECTION_STALE_S = 0.8
 RADAR_MIN_LONGITUDINAL_M = 0.0
@@ -1622,16 +1628,14 @@ class RouteLogParser:
         self.live_track_radar_t = -999.0
         self.radar_detections: tuple[DetectedVehicle, ...] = ()
         self.radar_detection_t = -999.0
-        # Vision/radar-based blind-spot display (FrogPilot-style red lane).
+        # Vision-based blind-spot display (FrogPilot-style red lane).
         # The car's own BSM signal (0x142) never arrives on this car's tapped
         # bus, so the red lane marking would never light from carState alone.
-        # These SideState trackers mirror the lane-change blocking rule: they
-        # are fed the adjacent-lane radar leads at the radar update rate
-        # (~20 Hz, same as controlsd) and their debounced output is OR-ed
-        # into the displayed blind-spot state in _frame_from_car_state.
-        self._bsd_side_left = SideState(name="left")
-        self._bsd_side_right = SideState(name="right")
-        self._bsd_last_car_blindspot: tuple[bool, bool] = (False, False)
+        # The Trailblazer has no front radar either: radarState side leads
+        # never appear in its logs, so the display reads the driving model's
+        # adjacent-lane leads (self.model_detections) instead. Per-side hold
+        # timestamps bridge brief model dropouts.
+        self._bsd_model_until: dict[str, float] = {"left": -999.0, "right": -999.0}
         self.current_speed_kph = 0.0
         self.v_ego_cluster_seen = False
 
@@ -1744,21 +1748,12 @@ class RouteLogParser:
         right_signal = bool(safe_get(car_state, "rightBlinker", False))
         left_bsm = bool(safe_get(car_state, "leftBlindspot", False))
         right_bsm = bool(safe_get(car_state, "rightBlindspot", False))
-        self._bsd_last_car_blindspot = (left_bsm, right_bsm)
-        # Red lane marking: the car's own BSM signal OR the vision/radar side
-        # detection (same rule as the lane-change block). The radar path only
-        # sees ahead (dRel > 0); a car directly beside or behind the B-pillar
-        # stays invisible, same as FrogPilot's vision BSD.
-        left_blindspot = (
-            left_bsm
-            or self._bsd_side_left.side_object_detected
-            or self._bsd_side_left.bsd_hold_counter > 0
-        )
-        right_blindspot = (
-            right_bsm
-            or self._bsd_side_right.side_object_detected
-            or self._bsd_side_right.bsd_hold_counter > 0
-        )
+        # Red lane marking: the car's own BSM signal OR the vision side
+        # detection from the driving model. The model only sees ahead, so a
+        # car directly beside or behind the B-pillar stays invisible, same
+        # as FrogPilot's vision BSD.
+        left_blindspot = left_bsm or event_t < self._bsd_model_until["left"]
+        right_blindspot = right_bsm or event_t < self._bsd_model_until["right"]
         observed_ego_lane_offset = 0.0
         if lane_values["center"] is not None:
             observed_ego_lane_offset = clamp(-lane_values["center"] / lane_values["width"], -1.25, 1.25)
@@ -2030,6 +2025,23 @@ class RouteLogParser:
             self._update_lane_change_meta(meta, "modelV2")
             self._update_model_lane_change_values(meta)
             self._update_model_meta_values(meta, model)
+        self._update_model_bsd_zone(event_t)
+
+    def _update_model_bsd_zone(self, event_t: float) -> None:
+        lane_width = self.lane_width_m or DEFAULT_LANE_WIDTH_M
+        left_edge = self.left_lane_y_m if self.left_lane_y_m is not None else -BSD_MODEL_ZONE_FALLBACK_EDGE_M
+        right_edge = self.right_lane_y_m if self.right_lane_y_m is not None else BSD_MODEL_ZONE_FALLBACK_EDGE_M
+        for vehicle in self.model_detections:
+            if vehicle.source != "modelV2.leadsV3":
+                continue
+            lon = vehicle.longitudinal_m
+            if not 0.2 < lon < BSD_MODEL_ZONE_MAX_M:
+                continue
+            lat = vehicle.lateral_m
+            if left_edge - lane_width <= lat <= left_edge:
+                self._bsd_model_until["left"] = event_t + BSD_MODEL_ZONE_HOLD_S
+            elif right_edge <= lat <= right_edge + lane_width:
+                self._bsd_model_until["right"] = event_t + BSD_MODEL_ZONE_HOLD_S
 
     def _update_lateral_plan(self, lateral_plan: Any) -> None:
         lane_width = safe_optional_float(lateral_plan, "laneWidth")
@@ -2285,28 +2297,6 @@ class RouteLogParser:
         self.lead_one_radar = bool(lead_one is not None and safe_get(lead_one, "radar", False))
         lead_one_track_id = safe_optional_int(lead_one, "radarTrackId") if lead_one is not None else None
         self.lead_one_track_id = lead_one_track_id if lead_one_track_id is not None else -1
-        # Feed the adjacent-lane radar leads into the vision/radar blind-spot
-        # trackers used for the red lane marking display. The leads are
-        # normalised to plain attribute access with explicit floats so the
-        # SideState rule reads them uniformly.
-        v_ego = max(0.0, self.current_speed_kph / 3.6)
-        left_bsm, right_bsm = self._bsd_last_car_blindspot
-        for side_state, lead_name, bsm in (
-            (self._bsd_side_left, "leadLeft", left_bsm),
-            (self._bsd_side_right, "leadRight", right_bsm),
-        ):
-            lead = safe_get(radar_state, lead_name)
-            lead_ns = SimpleNamespace(
-                status=bool(lead is not None and safe_get(lead, "status", False)),
-                dRel=safe_float(lead, "dRel", 255.0) if lead is not None else 255.0,
-                vRel=safe_optional_float(lead, "vRel") if lead is not None else None,
-                vLead=safe_optional_float(lead, "vLead") if lead is not None else None,
-            )
-            # Corner-object input is omitted on purpose: it only shortens the
-            # BSD hold release, and the hold simply decays instead.
-            side_state.update_obstacles(
-                v_ego, lead_ns, bsm, False, bsd_hold_sec=2.0, radar_objects=(),
-            )
         recorded_cutin_leads = tuple(safe_get(radar_state, "leadsCutIn", ()) or ())
         self.recorded_cutin_ids = {
             track_id
