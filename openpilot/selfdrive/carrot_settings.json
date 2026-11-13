@@ -476,6 +476,7 @@
             "DriverMonitoringEnabled",
             "DriverMonitoringMode",
             "CarrotVisionEnabled",
+            "CarrotVisionParkedEnabled",
             "MuteDoor",
             "MuteSeatbelt"
           ]
@@ -2288,6 +2289,37 @@
       "cgroup": "启动设置",
       "ctitle": "启用 Carrot Vision",
       "cdescr": "独立于驾驶员监控启用网页道路视频，可与外部HUD同时使用。同时使用视频可能增加设备负载。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "끄기",
+          "켜기"
+        ],
+        "en": [
+          "Off",
+          "On"
+        ],
+        "zh": [
+          "关闭",
+          "开启"
+        ]
+      }
+    },
+    {
+      "group": "시작",
+      "name": "CarrotVisionParkedEnabled",
+      "title": "주차 중 라이브 영상",
+      "descr": "주차 중에도 웹 도로 영상(전방 카메라) 라이브를 켭니다. 주행 중 라이브는 Carrot Vision 사용 설정만으로 동작합니다. 주차 중 카메라를 켜두면 배터리가 빨리 닳으니 볼 때만 켜고 안 볼 때는 꺼두세요.",
+      "egroup": "START",
+      "etitle": "Parked live video",
+      "edescr": "Enables web road-camera live view while parked. Driving live view only needs Carrot Vision. Keeping the camera on while parked drains the battery, so turn it off when not watching.",
+      "cgroup": "启动设置",
+      "ctitle": "停车时直播视频",
+      "cdescr": "停车时也可启用网页道路视频直播。行车直播只需开启 Carrot Vision。停车时开着摄像头会更快耗电，不看时请关闭。",
       "min": 0,
       "max": 1,
       "default": 0,

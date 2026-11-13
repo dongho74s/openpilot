@@ -105,6 +105,13 @@ def enable_webrtc(started, params, CP: car.CarParams) -> bool:
   # The web encoder remains idle until a Carrot Vision session requests it.
   return params.get_bool("CarrotVisionEnabled")
 
+def enable_parked_vision(started, params, CP: car.CarParams) -> bool:
+  # Parked live view: lets the road-camera pipeline run while the car is
+  # parked (offroad) when the user explicitly enables it. Driving is
+  # unaffected — iscar still gates the onroad path. Default off so a parked
+  # car never runs the camera (and drains the battery) unless asked.
+  return params.get_bool("CarrotVisionParkedEnabled")
+
 def c3x_lite(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and params.get_bool("HardwareC3xLite")
 
@@ -135,10 +142,10 @@ procs = [
   NativeProcess("stream_encoderd", "openpilot/system/loggerd", ["./encoderd", "--stream"], notcar),
   # Prewarm the hardware encoder with the rest of the onroad stack. The
   # encoder process stays idle until CarrotVisionActive is set by a session.
-  NativeProcess("carrot_vision_encoderd", "openpilot/system/loggerd", ["./encoderd", "--carrot-vision-road"], and_(iscar, enable_webrtc)),
+  NativeProcess("carrot_vision_encoderd", "openpilot/system/loggerd", ["./encoderd", "--carrot-vision-road"], and_(or_(iscar, enable_parked_vision), enable_webrtc)),
   PythonProcess("logmessaged", "openpilot.system.logmessaged", always_run),
 
-  NativeProcess("camerad", "openpilot/system/camerad", ["./camerad"], or_(driverview, hylink.camera_requested), enabled=not WEBCAM),
+  NativeProcess("camerad", "openpilot/system/camerad", ["./camerad"], or_(driverview, hylink.camera_requested, enable_parked_vision), enabled=not WEBCAM),
   PythonProcess("webcamerad", "openpilot.tools.webcam.camerad", driverview, enabled=WEBCAM),
   PythonProcess("proclogd", "openpilot.system.proclogd", only_onroad, enabled=platform.system() != "Darwin"),
   PythonProcess("journald", "openpilot.system.journald", only_onroad, platform.system() != "Darwin"),
@@ -187,7 +194,7 @@ procs = [
   # debug procs
   NativeProcess("bridge", "openpilot/cereal/messaging", ["./bridge"], notcar),
   PythonProcess("webrtcd", "openpilot.system.webrtc.webrtcd", notcar),
-  PythonProcess("carrot_webrtcd", "openpilot.system.webrtc.carrot_webrtcd", and_(iscar, enable_webrtc)),
+  PythonProcess("carrot_webrtcd", "openpilot.system.webrtc.carrot_webrtcd", and_(or_(iscar, enable_parked_vision), enable_webrtc)),
   PythonProcess("webjoystick", "openpilot.tools.bodyteleop.web", notcar, enabled=BODYTELEOP_AVAILABLE),
   PythonProcess("joystick", "openpilot.tools.joystick.joystick_control", and_(joystick, iscar)),
 
