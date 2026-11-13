@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import json
 import os
+from time import monotonic_ns
 from openpilot.cereal import car
 from math import fabs, exp
 from openpilot.common.params import Params
-from opendbc.car import get_safety_config, get_friction, structs
+from opendbc.car import Bus, get_safety_config, get_friction, structs
 from opendbc.car.common.basedir import BASEDIR
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.carcontroller import CarController
