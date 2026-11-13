@@ -1,7 +1,6 @@
 "use strict";
 
 function bindDeviceTabEvents(container) {
-  if (container.querySelector("#wayonKeyPanel")) bindWayonKeyPanel(container);
   bindDeviceDisabledControls(container);
   bindDeviceToggleRows(container);
   bindDevicePersonality(container);

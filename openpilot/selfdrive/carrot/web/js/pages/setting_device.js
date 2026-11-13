@@ -398,7 +398,6 @@ async function refreshDeviceSshPanel() {
 }
 
 async function getDeviceGroupValues(groupId) {
-  if (groupId === "WayonKey") return {};
   if (groupId === "Network") {
     await loadDeviceNetwork(true);
     return deviceParamValues;
@@ -508,7 +507,6 @@ function renderDeviceGroupItems(groupId, values) {
   }
 
   if (groupId === "Network") return renderNetworkPanel(deviceNetworkInfo || {});
-  if (groupId === "WayonKey") return renderWayonKeyPanel();
   if (groupId === "Toggles") return renderDeviceToggleItems(data);
   if (groupId === "Developer") return renderDeviceDeveloperItems(data);
   if (groupId === "Software") {

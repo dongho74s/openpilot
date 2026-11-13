@@ -318,7 +318,7 @@ MAIN_PAGE_PATHS: Final = ("/", "/index.html")
 
 
 def _guard_main_page_frame(response: web.StreamResponse) -> None:
-  # Other sites must not frame Carrot Web (clickjacking onto its buttons, e.g. the My Traverse key copy).
+  # Other sites must not frame Carrot Web (clickjacking onto its buttons).
   # 'self' keeps same-origin frames working.
   response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
   response.headers["X-Frame-Options"] = "SAMEORIGIN"

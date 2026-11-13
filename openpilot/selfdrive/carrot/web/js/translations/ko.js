@@ -301,7 +301,6 @@ window.CarrotTranslations.register("ko", {
     device_group_network: "네트워크",
     device_group_toggles: "토글",
     device_group_software: "소프트웨어",
-    device_group_wayon_key: "My Traverse 키",
     device_group_developer: "개발자",
     language_setting: "시스템",
     branch: "브랜치",

@@ -705,8 +705,8 @@ function showSettingScreen(which, pushHistory = false) {
   document.getElementById("pageSetting")?.classList.toggle("setting-profile-active", isProfileItems);
 
   if (!splitLandscape) {
-    // Announced at the start, before any slide, so a panel holding something sensitive (the My Traverse
-    // key) can clear it before it slides out of view.
+    // Announced at the start, before any slide, so a panel holding something sensitive
+    // can clear it before it slides out of view.
     window.dispatchEvent(new CustomEvent("carrot:settingscreenchange", { detail: { screen: which } }));
   }
 
