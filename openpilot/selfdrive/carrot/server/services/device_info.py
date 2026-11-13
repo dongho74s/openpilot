@@ -80,6 +80,7 @@ DEVICE_SETTING_GROUPS: tuple[tuple[str, tuple[tuple[str, Any], ...]], ...] = (
     ("DisengageOnAccelerator", False),
     ("IsLdwEnabled", False),
     ("AlwaysOnDM", False),
+    ("DisablePowerDown", False),
     ("RecordFront", False),
     ("RecordAudio", False),
     ("IsMetric", False),

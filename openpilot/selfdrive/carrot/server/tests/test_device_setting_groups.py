@@ -35,6 +35,9 @@ def test_parameters_the_ui_depends_on_are_not_dropped():
   # Each of these drives a specific control; losing one silently blanks it.
   assert "LongitudinalPersonality" in grouped["Toggles"]
   assert "ExperimentalModeConfirmed" in grouped["Toggles"]
+  # DisablePowerDown was rendered by the web UI but missing here, so the
+  # toggle was never fetched and always showed OFF while the device was ON.
+  assert "DisablePowerDown" in grouped["Toggles"]
   assert "SoftwareMenu" in grouped["Device"]
   assert {"GithubUsername", "GithubSshKeys"} <= set(grouped["Developer"])
 
