@@ -317,8 +317,9 @@ class LatControlTorque(LatControl):
           friction_input = self.lat_accel_friction_factor * error + self.lat_jerk_friction_factor * lookahead_lateral_jerk
         else:
           friction_input = error
+        # FrogPilot's fallback (model too short) feed-forward is the plain linear torque, without the friction term
         ff = self.torque_from_lateral_accel(LatControlInputs(gravity_adjusted_lateral_accel, roll_compensation, CS.vEgo, CS.aEgo), self.torque_params,
-                                            friction_input, lateral_accel_deadzone, friction_compensation=True,
+                                            friction_input, lateral_accel_deadzone, friction_compensation=not self.nnff_frogpilot_parity,
                                             gravity_adjusted=True)
 
       # [패치 3] steer_limited_by_controls 분기 제거: 고조향 한계 시 Integrator 락으로 인한 토크 0 추락 차단
