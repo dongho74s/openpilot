@@ -2,21 +2,28 @@
 
 // 360 live view for the Log section (Logs > Live).
 //
-// One rotatable viewer over a single WebRTC session (cameras: ["road",
-// "driver"]), with the previous side-by-side front + indoor windows kept
-// below it. The server sends one video track per camera; the track order
-// follows the cameras list, so transceiver mid "0" is road and "1" is
-// driver. Both the rotatable viewer and the side-by-side windows show the
-// same tracks, so both layouts are live at the same time with no second
-// WebRTC session. Dragging the viewer horizontally rotates between the two
-// views (front <-> indoor) with a crossfade + slide, and the compass strip
-// shows which way you are facing. Both tracks stay live so switching is
-// instant.
+// One rotatable panoramic viewer over a single WebRTC session (cameras:
+// ["road", "driver"]), with the previous side-by-side front + indoor
+// windows kept below it. The server sends one video track per camera; the
+// track order follows the cameras list, so transceiver mid "0" is road and
+// "1" is driver. Both the panoramic viewer and the side-by-side windows
+// show the same tracks, so both layouts are live at the same time with no
+// second WebRTC session.
+//
+// The viewer is a real panorama, not a crossfade: the two camera feeds are
+// laid out as one circular strip (road 0-180 deg, driver 180-360 deg) and
+// drawn onto a canvas with a cylindrical (perspective) projection, the way
+// a 360 video player pans across an equirectangular image. Dragging left
+// or right pans the view continuously around the circle and it wraps, so
+// you can keep rotating in either direction; the view stays where you
+// leave it, with no snap to a fixed view. The compass strip shows the
+// facing direction across the full 360 degrees.
 //
 // Honest hardware limit: the C4 has only two cameras (front wide-angle
 // road + indoor driver), no rear or side outward camera, so a true stitched
-// 360 panorama is impossible. The viewer rotates between the two real
-// views instead of faking a panorama.
+// 360 panorama is impossible. The panorama is built from the two real
+// views, so the seam between them is visible, but the rotation itself is
+// continuous like a 360 video.
 //
 // The session starts when the Live tab becomes active and stops when the
 // user leaves it, so the camera pipeline (and battery) is only used while
@@ -29,14 +36,21 @@ const LIVE360_BUSY_CODE = "carrot_vision_busy";
 const LIVE360_ICE_TIMEOUT_MS = 1500;
 const LIVE360_FETCH_TIMEOUT_MS = 10000;
 const LIVE360_PARKED_STARTUP_WAIT_MS = 4000;
-const LIVE360_ROTATE_SNAP_MS = 400;
-const LIVE360_SLIDE_PX = 24;
+const LIVE360_ROTATE_MS = 400;
+// Horizontal field of view of the panorama viewport, in degrees. A wide
+// viewport like this is what makes the rotation feel like a 360 video.
+const LIVE360_FOV_DEG = 100;
+// Vertical slices per frame for the cylindrical projection. More slices
+// make the curve smoother; 48 is a good balance on a phone.
+const LIVE360_SLICES = 48;
+const LIVE360_MAX_DPR = 2;
 
 const live360Els = {
   roadVideo: null,
   driverVideo: null,
   sideRoadVideo: null,
   sideDriverVideo: null,
+  canvas: null,
   status: null,
   toggle: null,
   retry: null,
@@ -53,12 +67,13 @@ let live360Started = false;
 let live360Starting = false;
 let live360TrackCount = 0;
 
-// Rotation angle in degrees: 0 = front (road), 180 = indoor (driver).
-// Dragging across the full viewer width turns 180 degrees, and the angle
-// wraps at 360 so you can keep rotating in either direction.
+// Pan angle in degrees: 0 = front (road), 180 = indoor (driver), and it
+// wraps at 360 so you can keep rotating in either direction. The view
+// rests wherever the user leaves it; there is no snap.
 let live360Angle = 0;
 let live360Drag = null;
-let live360SnapTimer = null;
+let live360Tween = 0;
+let live360Raf = 0;
 
 function live360DeviceId() {
   return String(
@@ -88,30 +103,86 @@ function live360ShowRetry(show) {
   if (live360Els.retry) live360Els.retry.hidden = !show;
 }
 
-// Blend between the two views from the rotation angle. t = 0 is front
-// (road), t = 1 is indoor (driver); it wraps at a full turn, so rotating
-// either way from one view reaches the other at 180 degrees.
-function live360Blend() {
-  const rad = (live360Angle * Math.PI) / 180;
-  return (1 - Math.cos(rad)) / 2;
+// Draw the panorama viewport onto the canvas with a cylindrical
+// (perspective) projection: each output column is a ray at a given angle,
+// so straight lines bend the way they do in a 360 video and the view pans
+// continuously across the road + driver strip. The panorama is circular:
+// road covers 0-180 deg, driver covers 180-360 deg.
+function live360DrawFrame() {
+  const canvas = live360Els.canvas;
+  const road = live360Els.roadVideo;
+  const driver = live360Els.driverVideo;
+  if (!canvas || !road || !driver) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const stage = live360Els.stage;
+  const cssW = Math.max(1, stage?.clientWidth || canvas.clientWidth || 640);
+  const cssH = Math.max(1, stage?.clientHeight || canvas.clientHeight || 360);
+  const dpr = Math.min(window.devicePixelRatio || 1, LIVE360_MAX_DPR);
+  const W = Math.round(cssW * dpr);
+  const H = Math.round(cssH * dpr);
+  if (canvas.width !== W || canvas.height !== H) {
+    canvas.width = W;
+    canvas.height = H;
+  }
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+
+  const fovRad = (LIVE360_FOV_DEG * Math.PI) / 180;
+  const f = (W / 2) / Math.tan(fovRad / 2);
+  const sliceW = W / LIVE360_SLICES;
+  for (let i = 0; i < LIVE360_SLICES; i++) {
+    const x0 = i * sliceW;
+    const xc = x0 + sliceW / 2;
+    // Ray angle for the slice center.
+    const phi = live360Angle + (Math.atan((xc - W / 2) / f) * 180) / Math.PI;
+    const norm = ((phi % 360) + 360) % 360;
+    const isDriver = norm >= 180;
+    const video = isDriver ? driver : road;
+    if (!video || !video.videoWidth || video.readyState < 2) continue;
+    const frac = isDriver ? (norm - 180) / 180 : norm / 180;
+    // Source width for this slice: it spans dPhi degrees of the panorama.
+    const phi0 = live360Angle + (Math.atan((x0 - W / 2) / f) * 180) / Math.PI;
+    const phi1 = live360Angle + (Math.atan((x0 + sliceW - W / 2) / f) * 180) / Math.PI;
+    const dPhi = Math.abs(phi1 - phi0);
+    const sw = Math.max(1, (dPhi / 180) * video.videoWidth);
+    let sx = frac * video.videoWidth - sw / 2;
+    sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
+    ctx.drawImage(video, sx, 0, sw, video.videoHeight, x0, 0, sliceW + 1, H);
+  }
 }
 
+function live360RenderLoop() {
+  live360Raf = 0;
+  if (!live360Started) return;
+  live360DrawFrame();
+  live360Raf = requestAnimationFrame(live360RenderLoop);
+}
+
+function live360StartRenderLoop() {
+  if (!live360Raf) live360Raf = requestAnimationFrame(live360RenderLoop);
+}
+
+function live360StopRenderLoop() {
+  if (live360Raf) {
+    cancelAnimationFrame(live360Raf);
+    live360Raf = 0;
+  }
+}
+
+// Update the compass marker and the view label from the pan angle. The
+// marker travels the full 360-degree track (front at both ends, indoor in
+// the middle). If the render loop is not running, draw one frame so the
+// canvas follows the angle immediately.
 function live360ApplyView() {
-  const t = live360Blend();
-  const rad = (live360Angle * Math.PI) / 180;
-  const shift = Math.sin(rad) * LIVE360_SLIDE_PX;
-  if (live360Els.roadVideo) {
-    live360Els.roadVideo.style.opacity = String(1 - t);
-    live360Els.roadVideo.style.transform = `translateX(${-shift}px)`;
-  }
-  if (live360Els.driverVideo) {
-    live360Els.driverVideo.style.opacity = String(t);
-    live360Els.driverVideo.style.transform = `translateX(${shift}px)`;
-  }
+  const norm = ((live360Angle % 360) + 360) % 360;
   if (live360Els.compassMarker) {
-    live360Els.compassMarker.style.left = `${t * 100}%`;
+    live360Els.compassMarker.style.left = `${(norm / 360) * 100}%`;
   }
-  const indoor = t >= 0.5;
+  const distFront = Math.min(norm, 360 - norm);
+  const indoor = distFront > 90;
   if (live360Els.viewLabel) {
     live360Els.viewLabel.textContent = indoor ? "실내" : "전방 · 광각";
   }
@@ -119,31 +190,33 @@ function live360ApplyView() {
     const isIndoor = stop.dataset?.live360View === "driver";
     stop.classList.toggle("is-active", isIndoor === indoor);
   }
+  if (!live360Raf) live360DrawFrame();
 }
 
-function live360SetAnimating(on) {
-  if (!live360Els.viewer) return;
-  live360Els.viewer.classList.toggle("logs-live__viewer--animating", !!on);
-  if (on) {
-    clearTimeout(live360SnapTimer);
-    live360SnapTimer = setTimeout(() => live360SetAnimating(false), LIVE360_ROTATE_SNAP_MS + 50);
-  }
-}
-
-// Snap the angle to the nearest real view (0 or 180 degrees) with a smooth
-// transition, so the viewer always settles on a camera after a drag.
-function live360SnapView() {
-  const normalized = ((live360Angle % 360) + 360) % 360;
-  const target = normalized <= 90 || normalized > 270 ? 0 : 180;
-  live360Angle = target;
-  live360SetAnimating(true);
-  live360ApplyView();
-}
-
+// Animate the pan to the nearest equivalent of `angle` (shortest way
+// around the circle), used when the user taps a compass stop.
 function live360RotateTo(angle) {
-  live360Angle = ((angle % 360) + 360) % 360;
-  live360SetAnimating(true);
-  live360ApplyView();
+  const start = live360Angle;
+  const startNorm = ((start % 360) + 360) % 360;
+  const targetNorm = ((angle % 360) + 360) % 360;
+  let delta = targetNorm - startNorm;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  if (delta === 0) return;
+  if (live360Tween) cancelAnimationFrame(live360Tween);
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / LIVE360_ROTATE_MS);
+    const eased = 1 - Math.pow(1 - k, 3);
+    live360Angle = start + delta * eased;
+    live360ApplyView();
+    if (k < 1) {
+      live360Tween = requestAnimationFrame(step);
+    } else {
+      live360Tween = 0;
+    }
+  };
+  live360Tween = requestAnimationFrame(step);
 }
 
 function live360OnPointerDown(event) {
@@ -154,7 +227,10 @@ function live360OnPointerDown(event) {
     startX: event.clientX,
     startAngle: live360Angle,
   };
-  live360SetAnimating(false);
+  if (live360Tween) {
+    cancelAnimationFrame(live360Tween);
+    live360Tween = 0;
+  }
   try { live360Els.stage.setPointerCapture(event.pointerId); } catch (_) {}
   event.preventDefault();
 }
@@ -163,6 +239,7 @@ function live360OnPointerMove(event) {
   if (!live360Drag || event.pointerId !== live360Drag.pointerId) return;
   const width = live360Els.stage?.clientWidth || 1;
   const dx = event.clientX - live360Drag.startX;
+  // Dragging across the full viewer width turns 180 degrees.
   live360Angle = live360Drag.startAngle + (dx / width) * 180;
   live360ApplyView();
 }
@@ -170,7 +247,9 @@ function live360OnPointerMove(event) {
 function live360OnPointerEnd(event) {
   if (!live360Drag || event.pointerId !== live360Drag.pointerId) return;
   live360Drag = null;
-  live360SnapView();
+  // No snap: the view rests where the user leaves it, like a real
+  // 360 viewer.
+  live360ApplyView();
 }
 
 function live360OnCompassClick(event) {
@@ -218,9 +297,9 @@ async function live360SetParkedEnabled(enabled) {
 }
 
 function live360ClearVideos() {
-  // The same track feeds both the rotatable viewer and the side-by-side
-  // window for that camera, so collect the tracks first and stop each one
-  // only once.
+  // The same track feeds both the panoramic viewer source and the
+  // side-by-side window for that camera, so collect the tracks first and
+  // stop each one only once.
   const tracks = new Set();
   for (const video of [live360Els.roadVideo, live360Els.driverVideo, live360Els.sideRoadVideo, live360Els.sideDriverVideo]) {
     if (!video) continue;
@@ -262,8 +341,8 @@ function live360AttachVideo(video, track) {
 function live360AttachTrack(track, mid) {
   const isDriver = mid === "1" || (mid !== "0" && live360TrackCount >= 1);
   live360TrackCount += 1;
-  // The same track feeds both the rotatable viewer and the side-by-side
-  // window for this camera, so both layouts are live at once.
+  // The same track feeds both the panoramic viewer source and the
+  // side-by-side window for this camera, so both layouts are live at once.
   live360AttachVideo(isDriver ? live360Els.driverVideo : live360Els.roadVideo, track);
   live360AttachVideo(isDriver ? live360Els.sideDriverVideo : live360Els.sideRoadVideo, track);
   live360SetStatus("라이브 연결됨");
@@ -375,6 +454,7 @@ export async function startLive360() {
     if (generation !== live360Generation) return;
     live360Started = true;
     live360SetStatus("연결됨, 영상 기다리는 중…");
+    live360StartRenderLoop();
   } catch (error) {
     if (generation !== live360Generation) return;
     live360ClosePeer();
@@ -395,7 +475,11 @@ export function stopLive360() {
   live360Starting = false;
   live360Drag = null;
   live360Angle = 0;
-  live360SetAnimating(false);
+  if (live360Tween) {
+    cancelAnimationFrame(live360Tween);
+    live360Tween = 0;
+  }
+  live360StopRenderLoop();
   live360ApplyView();
   live360ClosePeer();
   live360ClearVideos();
@@ -434,6 +518,7 @@ export function initLive360() {
   live360Els.driverVideo = document.getElementById("live360DriverVideo");
   live360Els.sideRoadVideo = document.getElementById("live360SideRoadVideo");
   live360Els.sideDriverVideo = document.getElementById("live360SideDriverVideo");
+  live360Els.canvas = document.getElementById("live360Canvas");
   live360Els.status = document.getElementById("live360Status");
   live360Els.toggle = document.getElementById("live360ParkedToggle");
   live360Els.retry = document.getElementById("live360Retry");
@@ -442,7 +527,7 @@ export function initLive360() {
   live360Els.viewLabel = document.getElementById("live360ViewLabel");
   live360Els.compassMarker = document.getElementById("live360CompassMarker");
   live360Els.compassStops = Array.from(document.querySelectorAll("[data-live360-view]"));
-  if (!live360Els.roadVideo || !live360Els.driverVideo) return false;
+  if (!live360Els.roadVideo || !live360Els.driverVideo || !live360Els.canvas) return false;
   live360Els.toggle?.addEventListener("change", live360OnToggleChange);
   live360Els.retry?.addEventListener("click", () => {
     stopLive360();
