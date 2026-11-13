@@ -520,6 +520,16 @@
               </div>
               <p class="logs-live__rotate-hint">좌우로 밀어 돌려보세요 · 전방 ↔ 실내 (카메라는 앞·실내 2대라 뒤·옆은 없습니다)</p>
             </div>
+            <div class="logs-live__grid">
+              <figure class="logs-live__cell">
+                <video id="live360SideRoadVideo" class="logs-live__side-video" autoplay playsinline muted disablepictureinpicture></video>
+                <figcaption class="logs-live__caption">전방 · 광각</figcaption>
+              </figure>
+              <figure class="logs-live__cell">
+                <video id="live360SideDriverVideo" class="logs-live__side-video" autoplay playsinline muted disablepictureinpicture></video>
+                <figcaption class="logs-live__caption">실내</figcaption>
+              </figure>
+            </div>
             <div class="logs-live__controls">
               <label class="logs-live__toggle">
                 <input id="live360ParkedToggle" type="checkbox" />

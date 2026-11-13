@@ -41,7 +41,7 @@
       "kind": "bundle",
       "source": "src/entries/logs.js",
       "path": "js/generated/logs.js",
-      "hash": "9bb40e9a105ba438b5a820770b94718a064374a0938aa4505180b424bea1e84d"
+      "hash": "bf80571c4813faa422bb1c1df330d65eff64b26ebf0be881b055d203cd57abdb"
     },
     {
       "id": "terminal.runtime",
@@ -125,7 +125,7 @@
       "kind": "bundle",
       "source": "src/entries/logs.css",
       "path": "css/generated/logs.css",
-      "hash": "5b08f76cf89f6eb2e91ac37911b8517f66f5bc3d1665f93212548bc0808751cc"
+      "hash": "fa40bd3d1ceb0e485d935a599c6b3b54abd0449861572ddd2cc1853fe8f2fdb1"
     },
     {
       "id": "terminal.styles",

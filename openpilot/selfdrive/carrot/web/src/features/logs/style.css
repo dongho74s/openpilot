@@ -1545,6 +1545,41 @@
   text-align: center;
 }
 
+.logs-live__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .logs-live__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.logs-live__cell {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.logs-live__side-video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #000;
+  border-radius: 12px;
+  display: block;
+}
+
+.logs-live__caption {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-on-surface-variant, #b0b0b0);
+  text-align: center;
+}
+
 .logs-live__controls {
   display: flex;
   align-items: center;

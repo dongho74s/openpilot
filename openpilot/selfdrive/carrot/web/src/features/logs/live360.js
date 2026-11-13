@@ -3,11 +3,15 @@
 // 360 live view for the Log section (Logs > Live).
 //
 // One rotatable viewer over a single WebRTC session (cameras: ["road",
-// "driver"]). The server sends one video track per camera; the track order
+// "driver"]), with the previous side-by-side front + indoor windows kept
+// below it. The server sends one video track per camera; the track order
 // follows the cameras list, so transceiver mid "0" is road and "1" is
-// driver. Dragging the viewer horizontally rotates between the two views
-// (front <-> indoor) with a crossfade + slide, and the compass strip shows
-// which way you are facing. Both tracks stay live so switching is instant.
+// driver. Both the rotatable viewer and the side-by-side windows show the
+// same tracks, so both layouts are live at the same time with no second
+// WebRTC session. Dragging the viewer horizontally rotates between the two
+// views (front <-> indoor) with a crossfade + slide, and the compass strip
+// shows which way you are facing. Both tracks stay live so switching is
+// instant.
 //
 // Honest hardware limit: the C4 has only two cameras (front wide-angle
 // road + indoor driver), no rear or side outward camera, so a true stitched
@@ -31,6 +35,8 @@ const LIVE360_SLIDE_PX = 24;
 const live360Els = {
   roadVideo: null,
   driverVideo: null,
+  sideRoadVideo: null,
+  sideDriverVideo: null,
   status: null,
   toggle: null,
   retry: null,
@@ -212,15 +218,22 @@ async function live360SetParkedEnabled(enabled) {
 }
 
 function live360ClearVideos() {
-  for (const video of [live360Els.roadVideo, live360Els.driverVideo]) {
+  // The same track feeds both the rotatable viewer and the side-by-side
+  // window for that camera, so collect the tracks first and stop each one
+  // only once.
+  const tracks = new Set();
+  for (const video of [live360Els.roadVideo, live360Els.driverVideo, live360Els.sideRoadVideo, live360Els.sideDriverVideo]) {
     if (!video) continue;
     try {
       const stream = video.srcObject;
       video.srcObject = null;
       if (stream && typeof stream.getTracks === "function") {
-        for (const track of stream.getTracks()) { try { track.stop(); } catch (_) {} }
+        for (const track of stream.getTracks()) tracks.add(track);
       }
     } catch (_) {}
+  }
+  for (const track of tracks) {
+    try { track.stop(); } catch (_) {}
   }
 }
 
@@ -234,10 +247,7 @@ function live360ClosePeer() {
   try { pc.close(); } catch (_) {}
 }
 
-function live360AttachTrack(track, mid) {
-  const isDriver = mid === "1" || (mid !== "0" && live360TrackCount >= 1);
-  const video = isDriver ? live360Els.driverVideo : live360Els.roadVideo;
-  live360TrackCount += 1;
+function live360AttachVideo(video, track) {
   if (!video) return;
   let stream = video.srcObject;
   if (!stream || typeof stream.addTrack !== "function") {
@@ -247,6 +257,15 @@ function live360AttachTrack(track, mid) {
     stream.addTrack(track);
   }
   video.play().catch(() => {});
+}
+
+function live360AttachTrack(track, mid) {
+  const isDriver = mid === "1" || (mid !== "0" && live360TrackCount >= 1);
+  live360TrackCount += 1;
+  // The same track feeds both the rotatable viewer and the side-by-side
+  // window for this camera, so both layouts are live at once.
+  live360AttachVideo(isDriver ? live360Els.driverVideo : live360Els.roadVideo, track);
+  live360AttachVideo(isDriver ? live360Els.sideDriverVideo : live360Els.sideRoadVideo, track);
   live360SetStatus("라이브 연결됨");
   live360ShowRetry(false);
 }
@@ -413,6 +432,8 @@ async function live360OnToggleChange(event) {
 export function initLive360() {
   live360Els.roadVideo = document.getElementById("live360RoadVideo");
   live360Els.driverVideo = document.getElementById("live360DriverVideo");
+  live360Els.sideRoadVideo = document.getElementById("live360SideRoadVideo");
+  live360Els.sideDriverVideo = document.getElementById("live360SideDriverVideo");
   live360Els.status = document.getElementById("live360Status");
   live360Els.toggle = document.getElementById("live360ParkedToggle");
   live360Els.retry = document.getElementById("live360Retry");
