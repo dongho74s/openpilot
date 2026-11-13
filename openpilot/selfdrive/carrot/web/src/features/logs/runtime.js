@@ -44,6 +44,7 @@ import {
   screenrecordState,
   showScreenrecordMenu,
 } from "./screenrecord.js";
+import { initLive360, startLive360, stopLive360 } from "./live360.js";
 
 // Logs page — shared infra used by both the Dashcam and Screen Recording tabs.
 // Owns: tab state, scroll persistence, lazy-image observer, generic helpers,
@@ -54,13 +55,14 @@ const LOGS_MENU_SORT = "sort";
 const LOGS_MENU_UPLOAD = "upload_recent";
 const LOGS_RECENT_UPLOAD_LIMITS = Object.freeze([2, 5, 10]);
 
-let logsActiveTab = "dashcam";
-const logsScrollTops = { dashcam: 0, screen: 0 };
+let logsActiveTab = "live";
+const logsScrollTops = { live: 0, dashcam: 0, screen: 0 };
 let logsLazyImageObserver = null;
 let logsMenuOpen = false;
 let logsTabsController = null;
 
 function normalizeLogsTab(tab) {
+  if (tab === "live") return "live";
   return tab === "screen" ? "screen" : "dashcam";
 }
 
@@ -74,6 +76,7 @@ function isLogsPageActive() {
 }
 
 function getLogsScroller(tab = logsActiveTab) {
+  if (tab === "live") return null;
   return document.getElementById(tab === "screen" ? "screenrecordVideos" : "dashcamRoutes");
 }
 
@@ -755,6 +758,15 @@ function activateLogsTab(tab, options = {}) {
   }
   logsTabsController?.sync();
 
+  // The Live tab owns the 360 session: start it when the tab becomes
+  // active, stop it as soon as the user leaves, so the camera pipeline
+  // (and battery) is only used while someone is actually watching.
+  if (logsActiveTab === "live") {
+    startLive360().catch(() => {});
+  } else {
+    stopLive360();
+  }
+
   if (shouldLoad) {
     if (logsActiveTab === "screen" && !screenrecordState.initialized) {
       screenrecordState.initialized = true;
@@ -791,6 +803,9 @@ function bindLogsTabs(tabList) {
 function handleLogsPageChange(event) {
   const page = event?.detail?.page || "";
   if (page === "logs") return;
+  // Leaving the Log page stops the 360 live session so the camera
+  // pipeline (and battery) is not used while nobody is watching.
+  stopLive360();
   // The menu is a modal dialog now: it owns its own dismissal, and its backdrop
   // blocks the navigation that would fire this handler while it is open.
   saveLogsScrollTop(logsActiveTab);
@@ -941,6 +956,7 @@ function bindLogsPage() {
 }
 
 function initLogsPage() {
+  initLive360();
   bindLogsPage();
   activateLogsTab(logsActiveTab, { load: false });
   startDashcamAutoRefresh();
@@ -954,13 +970,16 @@ function initLogsPage() {
       renderScreenrecordVideos({ preserve: true });
       loadScreenrecordVideos({ silent: true }).catch(() => {});
     }
-  } else if (!dashcamState.initialized) {
-    dashcamState.initialized = true;
-    loadDashcamRoutes().catch(() => {});
-  } else {
-    renderDashcamRoutes({ animate: false, preserve: true });
-    loadDashcamRoutes({ silent: true }).catch(() => {});
+  } else if (logsActiveTab === "dashcam") {
+    if (!dashcamState.initialized) {
+      dashcamState.initialized = true;
+      loadDashcamRoutes().catch(() => {});
+    } else {
+      renderDashcamRoutes({ animate: false, preserve: true });
+      loadDashcamRoutes({ silent: true }).catch(() => {});
+    }
   }
+  // live: nothing to preload; the 360 session already started via activateLogsTab.
 }
 
 const CarrotLogsRuntime = Object.freeze({

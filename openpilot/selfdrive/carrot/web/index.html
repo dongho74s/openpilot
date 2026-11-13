@@ -474,15 +474,20 @@
         <div class="logs-tabbar">
           <div id="logsTabs" class="logs-tabs c-segmented-control c-segmented-control--equal"
                role="tablist" aria-label="로그">
-            <button id="logsTabDashcam" class="c-segmented-control__item is-active" type="button"
-                    role="tab" aria-selected="true" aria-controls="logsDashcamPanel" tabindex="0"
+            <button id="logsTabLive" class="c-segmented-control__item is-active" type="button"
+                    role="tab" aria-selected="true" aria-controls="logsLivePanel" tabindex="0"
+                    data-logs-tab="live">
+              <span id="logsLiveTitle" class="c-segmented-control__label">라이브</span>
+            </button>
+            <button id="logsTabDashcam" class="c-segmented-control__item" type="button"
+                    role="tab" aria-selected="false" aria-controls="logsDashcamPanel" tabindex="-1"
                     data-logs-tab="dashcam">
               <span id="logsDashcamTitle" class="c-segmented-control__label">대시캠</span>
             </button>
             <button id="logsTabScreen" class="c-segmented-control__item" type="button"
                     role="tab" aria-selected="false" aria-controls="logsScreenPanel" tabindex="-1"
                     data-logs-tab="screen">
-              <span id="logsScreenTitle" class="c-segmented-control__label">화면녹화</span>
+              <span id="logsScreenTitle" class="c-segmented-control__label">녹화영상</span>
             </button>
           </div>
           <!-- Menu contents live in the shared choice dialog (see logs runtime),
@@ -499,7 +504,31 @@
           </div>
         </div>
 
-        <section id="logsDashcamPanel" class="logs-panel" role="tabpanel" aria-labelledby="logsTabDashcam">
+        <section id="logsLivePanel" class="logs-panel logs-live-panel" role="tabpanel" aria-labelledby="logsTabLive">
+          <div class="logs-live">
+            <div id="live360Status" class="logs-live__status" role="status" aria-live="polite">연결 중…</div>
+            <div class="logs-live__grid">
+              <figure class="logs-live__cell">
+                <video id="live360RoadVideo" class="logs-live__video" autoplay playsinline muted disablepictureinpicture></video>
+                <figcaption class="logs-live__caption">전방 · 광각</figcaption>
+              </figure>
+              <figure class="logs-live__cell">
+                <video id="live360DriverVideo" class="logs-live__video" autoplay playsinline muted disablepictureinpicture></video>
+                <figcaption class="logs-live__caption">실내</figcaption>
+              </figure>
+            </div>
+            <div class="logs-live__controls">
+              <label class="logs-live__toggle">
+                <input id="live360ParkedToggle" type="checkbox" />
+                <span>주차 중 360 라이브 켜기</span>
+              </label>
+              <button id="live360Retry" class="smallBtn logs-live__retry" type="button" hidden>다시 연결</button>
+            </div>
+            <p class="logs-live__hint">주행 중에는 자동으로 켜집니다. 주차 중에는 위 토글을 켜야 보입니다. 주차 중 카메라를 켜두면 배터리가 빨리 닳으니 안 볼 때는 꺼두세요.</p>
+          </div>
+        </section>
+
+        <section id="logsDashcamPanel" class="logs-panel" role="tabpanel" hidden aria-labelledby="logsTabDashcam">
           <div id="dashcamStatus" class="dashcam-status" hidden></div>
           <div id="dashcamRoutes" class="dashcam-routes"></div>
         </section>

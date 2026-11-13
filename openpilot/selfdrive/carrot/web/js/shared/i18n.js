@@ -279,6 +279,7 @@ function renderUIText() {
   setText("btnTerminalCtrlC", s.terminal_ctrl_c);
   setText("btnTerminalClear", s.terminal_clear);
   setText("btnTerminalReconnect", s.terminal_reconnect);
+  setText("logsLiveTitle", s.logs_live || "Live");
   setText("logsDashcamTitle", s.logs_dashcam || "Dashcam");
   setText("logsScreenTitle", s.logs_screenrecord || "Screen Record");
   setText("btnStartVision", `▶ ${s.start_vision || "Start Drive Vision"}`);
