@@ -6,6 +6,7 @@ import numpy as np
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm import gmcan
+from opendbc.car.gm.manual_auto_hold import ManualAutoHold, manual_hold_supported
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CC_ONLY_CAR, CAMERA_ACC_CAR
 from opendbc.car.interfaces import CarStateBase
 
@@ -50,6 +51,12 @@ class CarState(CarStateBase):
     self.cam_stock_long_cancel = False
     self.cam_acc_status = None
     self.is_metric = False
+
+    # Manual auto hold (disengaged stop hold). The interface reads this on
+    # every update, so it must exist even when the car does not support it.
+    self.manual_auto_hold = ManualAutoHold() if manual_hold_supported(CP) else None
+    self.manual_hold_controls_active = False
+    self.brake_pedal_position = float("nan")
 
     self.buttons_counter = 0
     self.single_pedal_mode = False
@@ -142,9 +149,11 @@ class CarState(CarStateBase):
       ret.gearShifter = self.parse_gear_shifter(self.shifter_values.get(pt_cp.vl["ECMPRDNL2"]["PRNDL2"], None))
 
     if self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value:
-      ret.brake = pt_cp.vl["EBCMBrakePedalPosition"]["BrakePedalPosition"] / 0xd0
+      self.brake_pedal_position = pt_cp.vl["EBCMBrakePedalPosition"]["BrakePedalPosition"]
+      ret.brake = self.brake_pedal_position / 0xd0
     else:
-      ret.brake = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"]
+      self.brake_pedal_position = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"]
+      ret.brake = self.brake_pedal_position
     if self.CP.networkLocation == NetworkLocation.fwdCamera:
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
     else:
