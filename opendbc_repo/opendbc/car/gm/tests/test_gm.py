@@ -111,15 +111,17 @@ class TestTrailblazerLongitudinalIntegrity:
     ("active", True),
     ("inactive", False),
   ])
-  def test_uses_actual_stock_gas_regen_counter(self, _, stock_active):
+  def test_advances_stock_gas_regen_counter(self, _, stock_active):
     CP = SimpleNamespace(openpilotLongitudinalControl=True, carFingerprint=CAR.CHEVROLET_TRAILBLAZER,
                          networkLocation=NetworkLocation.fwdCamera)
     CS = SimpleNamespace(cam_ascm_2cb_counter_ts_nanos=1, cam_ascm_2cb_counter_updated=True,
                          cam_ascm_2cb_counter=3, cam_stock_long_active=stock_active, cam_acc_status={})
-    assert get_longitudinal_command_timing(CP, CS, frame=41) == (True, 3)
+    # The stock camera is absent, so the counter read back is our own echo.
+    # The command advances it so the 0x2CB rolling counter increments.
+    assert get_longitudinal_command_timing(CP, CS, frame=41) == (True, 0)
 
     CS.cam_ascm_2cb_counter_updated = False
-    assert get_longitudinal_command_timing(CP, CS, frame=44) == (False, 3)
+    assert get_longitudinal_command_timing(CP, CS, frame=44) == (False, 0)
 
   @parameterized.expand([
     ("neither_reference", 0, None, None),

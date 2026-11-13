@@ -32,7 +32,11 @@ def get_longitudinal_command_timing(CP, CS, frame):
     )
     if not stock_references_ready:
       return False, 0
-    return CS.cam_ascm_2cb_counter_updated, CS.cam_ascm_2cb_counter
+    # The stock camera is absent, so the counter read back is our own echo.
+    # Sending it unchanged freezes the 0x2CB rolling counter and trips the
+    # CAN validity check (canValid=False). Advance it so the counter
+    # increments each cycle.
+    return CS.cam_ascm_2cb_counter_updated, (CS.cam_ascm_2cb_counter + 1) % 4
   return frame % 4 == 0, (frame // 4) % 4
 
 
