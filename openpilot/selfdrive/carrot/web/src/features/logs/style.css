@@ -1443,37 +1443,104 @@
   min-height: 20px;
 }
 
-.logs-live__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
-}
-
-@media (max-width: 640px) {
-  .logs-live__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.logs-live__cell {
-  margin: 0;
+.logs-live__viewer {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
+}
+
+.logs-live__stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+  border-radius: 12px;
+  touch-action: pan-y;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.logs-live__stage:active {
+  cursor: grabbing;
 }
 
 .logs-live__video {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 100%;
   object-fit: cover;
   background: #000;
-  border-radius: 12px;
   display: block;
+  will-change: opacity, transform;
 }
 
-.logs-live__caption {
+.logs-live__stage--animating .logs-live__video,
+.logs-live__stage--animating .logs-live__compass-marker {
+  transition: opacity .35s ease, transform .35s ease, left .35s ease;
+}
+
+.logs-live__viewlabel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
   font-size: 13px;
   font-weight: 700;
+  pointer-events: none;
+}
+
+.logs-live__compass {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logs-live__compass-stop {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--md-on-surface-variant, #b0b0b0);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.logs-live__compass-stop.is-active {
+  color: var(--md-primary, #e8823a);
+}
+
+.logs-live__compass-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--md-outline-var) 45%, transparent);
+}
+
+.logs-live__compass-marker {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--md-primary, #e8823a);
+  transform: translate(-50%, -50%);
+  will-change: left;
+}
+
+.logs-live__rotate-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--md-on-surface-variant, #b0b0b0);
   text-align: center;
 }

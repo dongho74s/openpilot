@@ -2,10 +2,17 @@
 
 // 360 live view for the Log section (Logs > Live).
 //
-// Shows the wide-angle road camera and the indoor driver camera side by
-// side over a single WebRTC session (cameras: ["road", "driver"]). The
-// server sends one video track per camera; the track order follows the
-// cameras list, so transceiver mid "0" is road and "1" is driver.
+// One rotatable viewer over a single WebRTC session (cameras: ["road",
+// "driver"]). The server sends one video track per camera; the track order
+// follows the cameras list, so transceiver mid "0" is road and "1" is
+// driver. Dragging the viewer horizontally rotates between the two views
+// (front <-> indoor) with a crossfade + slide, and the compass strip shows
+// which way you are facing. Both tracks stay live so switching is instant.
+//
+// Honest hardware limit: the C4 has only two cameras (front wide-angle
+// road + indoor driver), no rear or side outward camera, so a true stitched
+// 360 panorama is impossible. The viewer rotates between the two real
+// views instead of faking a panorama.
 //
 // The session starts when the Live tab becomes active and stops when the
 // user leaves it, so the camera pipeline (and battery) is only used while
@@ -18,6 +25,8 @@ const LIVE360_BUSY_CODE = "carrot_vision_busy";
 const LIVE360_ICE_TIMEOUT_MS = 1500;
 const LIVE360_FETCH_TIMEOUT_MS = 10000;
 const LIVE360_PARKED_STARTUP_WAIT_MS = 4000;
+const LIVE360_ROTATE_SNAP_MS = 400;
+const LIVE360_SLIDE_PX = 24;
 
 const live360Els = {
   roadVideo: null,
@@ -25,6 +34,10 @@ const live360Els = {
   status: null,
   toggle: null,
   retry: null,
+  stage: null,
+  viewLabel: null,
+  compassMarker: null,
+  compassStops: [],
 };
 
 let live360Pc = null;
@@ -32,6 +45,13 @@ let live360Generation = 0;
 let live360Started = false;
 let live360Starting = false;
 let live360TrackCount = 0;
+
+// Rotation angle in degrees: 0 = front (road), 180 = indoor (driver).
+// Dragging across the full viewer width turns 180 degrees, and the angle
+// wraps at 360 so you can keep rotating in either direction.
+let live360Angle = 0;
+let live360Drag = null;
+let live360SnapTimer = null;
 
 function live360DeviceId() {
   return String(
@@ -59,6 +79,97 @@ function live360SetStatus(text) {
 
 function live360ShowRetry(show) {
   if (live360Els.retry) live360Els.retry.hidden = !show;
+}
+
+// Blend between the two views from the rotation angle. t = 0 is front
+// (road), t = 1 is indoor (driver); it wraps at a full turn, so rotating
+// either way from one view reaches the other at 180 degrees.
+function live360Blend() {
+  const rad = (live360Angle * Math.PI) / 180;
+  return (1 - Math.cos(rad)) / 2;
+}
+
+function live360ApplyView() {
+  const t = live360Blend();
+  const rad = (live360Angle * Math.PI) / 180;
+  const shift = Math.sin(rad) * LIVE360_SLIDE_PX;
+  if (live360Els.roadVideo) {
+    live360Els.roadVideo.style.opacity = String(1 - t);
+    live360Els.roadVideo.style.transform = `translateX(${-shift}px)`;
+  }
+  if (live360Els.driverVideo) {
+    live360Els.driverVideo.style.opacity = String(t);
+    live360Els.driverVideo.style.transform = `translateX(${shift}px)`;
+  }
+  if (live360Els.compassMarker) {
+    live360Els.compassMarker.style.left = `${t * 100}%`;
+  }
+  const indoor = t >= 0.5;
+  if (live360Els.viewLabel) {
+    live360Els.viewLabel.textContent = indoor ? "실내" : "전방 · 광각";
+  }
+  for (const stop of live360Els.compassStops) {
+    const isIndoor = stop.dataset?.live360View === "driver";
+    stop.classList.toggle("is-active", isIndoor === indoor);
+  }
+}
+
+function live360SetAnimating(on) {
+  if (!live360Els.stage) return;
+  live360Els.stage.classList.toggle("logs-live__stage--animating", !!on);
+  if (on) {
+    clearTimeout(live360SnapTimer);
+    live360SnapTimer = setTimeout(() => live360SetAnimating(false), LIVE360_ROTATE_SNAP_MS + 50);
+  }
+}
+
+// Snap the angle to the nearest real view (0 or 180 degrees) with a smooth
+// transition, so the viewer always settles on a camera after a drag.
+function live360SnapView() {
+  const normalized = ((live360Angle % 360) + 360) % 360;
+  const target = normalized <= 90 || normalized > 270 ? 0 : 180;
+  live360Angle = target;
+  live360SetAnimating(true);
+  live360ApplyView();
+}
+
+function live360RotateTo(angle) {
+  live360Angle = ((angle % 360) + 360) % 360;
+  live360SetAnimating(true);
+  live360ApplyView();
+}
+
+function live360OnPointerDown(event) {
+  if (!live360Els.stage) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  live360Drag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startAngle: live360Angle,
+  };
+  live360SetAnimating(false);
+  try { live360Els.stage.setPointerCapture(event.pointerId); } catch (_) {}
+  event.preventDefault();
+}
+
+function live360OnPointerMove(event) {
+  if (!live360Drag || event.pointerId !== live360Drag.pointerId) return;
+  const width = live360Els.stage?.clientWidth || 1;
+  const dx = event.clientX - live360Drag.startX;
+  live360Angle = live360Drag.startAngle + (dx / width) * 180;
+  live360ApplyView();
+}
+
+function live360OnPointerEnd(event) {
+  if (!live360Drag || event.pointerId !== live360Drag.pointerId) return;
+  live360Drag = null;
+  live360SnapView();
+}
+
+function live360OnCompassClick(event) {
+  const view = event?.currentTarget?.dataset?.live360View;
+  if (view === "driver") live360RotateTo(180);
+  else if (view === "road") live360RotateTo(0);
 }
 
 async function live360FetchJson(url, options = {}) {
@@ -262,6 +373,10 @@ export function stopLive360() {
   live360Generation += 1;
   live360Started = false;
   live360Starting = false;
+  live360Drag = null;
+  live360Angle = 0;
+  live360SetAnimating(false);
+  live360ApplyView();
   live360ClosePeer();
   live360ClearVideos();
   live360ShowRetry(false);
@@ -300,11 +415,24 @@ export function initLive360() {
   live360Els.status = document.getElementById("live360Status");
   live360Els.toggle = document.getElementById("live360ParkedToggle");
   live360Els.retry = document.getElementById("live360Retry");
+  live360Els.stage = document.getElementById("live360Stage");
+  live360Els.viewLabel = document.getElementById("live360ViewLabel");
+  live360Els.compassMarker = document.getElementById("live360CompassMarker");
+  live360Els.compassStops = Array.from(document.querySelectorAll("[data-live360-view]"));
   if (!live360Els.roadVideo || !live360Els.driverVideo) return false;
   live360Els.toggle?.addEventListener("change", live360OnToggleChange);
   live360Els.retry?.addEventListener("click", () => {
     stopLive360();
     startLive360().catch(() => {});
   });
+  live360Els.stage?.addEventListener("pointerdown", live360OnPointerDown);
+  live360Els.stage?.addEventListener("pointermove", live360OnPointerMove);
+  live360Els.stage?.addEventListener("pointerup", live360OnPointerEnd);
+  live360Els.stage?.addEventListener("pointercancel", live360OnPointerEnd);
+  for (const stop of live360Els.compassStops) {
+    stop.addEventListener("click", live360OnCompassClick);
+  }
+  live360Angle = 0;
+  live360ApplyView();
   return true;
 }
