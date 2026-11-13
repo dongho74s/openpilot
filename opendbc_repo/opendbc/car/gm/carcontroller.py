@@ -263,6 +263,14 @@ class CarController(CarControllerBase):
             if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
               self.last_button_frame = self.frame
               can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.RES_ACCEL))
+          # Manual auto hold: keep the car stopped when disengaged. The hold
+          # state machine (interface._update_manual_hold) arms on a hard brake
+          # press at a standstill and releases on gas or RES; command() returns
+          # HOLD_BRAKE (400) only when active, eligible and stopped, else 0.
+          if CS.manual_auto_hold is not None:
+            hold_brake = CS.manual_auto_hold.command(CS.out, CC.enabled or CC.longActive)
+            if hold_brake:
+              self.apply_brake = hold_brake
           # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
           can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx,
                                                           acc_engaged, at_full_stop, self.CP.carFingerprint))
