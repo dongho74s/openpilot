@@ -1477,8 +1477,8 @@
   will-change: opacity, transform;
 }
 
-.logs-live__stage--animating .logs-live__video,
-.logs-live__stage--animating .logs-live__compass-marker {
+.logs-live__viewer--animating .logs-live__video,
+.logs-live__viewer--animating .logs-live__compass-marker {
   transition: opacity .35s ease, transform .35s ease, left .35s ease;
 }
 

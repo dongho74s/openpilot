@@ -34,6 +34,7 @@ const live360Els = {
   status: null,
   toggle: null,
   retry: null,
+  viewer: null,
   stage: null,
   viewLabel: null,
   compassMarker: null,
@@ -115,8 +116,8 @@ function live360ApplyView() {
 }
 
 function live360SetAnimating(on) {
-  if (!live360Els.stage) return;
-  live360Els.stage.classList.toggle("logs-live__stage--animating", !!on);
+  if (!live360Els.viewer) return;
+  live360Els.viewer.classList.toggle("logs-live__viewer--animating", !!on);
   if (on) {
     clearTimeout(live360SnapTimer);
     live360SnapTimer = setTimeout(() => live360SetAnimating(false), LIVE360_ROTATE_SNAP_MS + 50);
@@ -415,6 +416,7 @@ export function initLive360() {
   live360Els.status = document.getElementById("live360Status");
   live360Els.toggle = document.getElementById("live360ParkedToggle");
   live360Els.retry = document.getElementById("live360Retry");
+  live360Els.viewer = document.getElementById("live360Viewer");
   live360Els.stage = document.getElementById("live360Stage");
   live360Els.viewLabel = document.getElementById("live360ViewLabel");
   live360Els.compassMarker = document.getElementById("live360CompassMarker");
