@@ -7,7 +7,7 @@ The model then steers back to where it wants to be, which puts the car about tha
 for every internal or external model and in lane mode too.
 
 Two settings (centimetres, + moves the car right):
-- LanelessCenterOffset: always applied.
+- LanelessCenterOffset: always applied (after calibration).
 - LanelessEdgeOffset: only on an asymmetric road, when one side has a lane next to ours and the other side ends at
   the road edge next to our line, toward that edge; similar to lane mode's AdjustLaneOffset (lane_planner_2.py).
   Example: a two-lane road where the model hugs the centre line. Limited so the car keeps a margin in its lane.
@@ -17,6 +17,7 @@ as line-to-line and line-to-edge distances, which do not move with the car or wi
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -29,7 +30,8 @@ EDGE_LIMIT_CM = 35
 DEFAULT_HEIGHT_M = 1.22
 HEIGHT_RANGE_M = (0.5, 3.0)
 FILTER_TAU_S = 2.5
-MAX_RATE_M_S = 0.1
+MAX_RATE_M_S = 0.1           # change of the virtual camera position, also when the calibrated height changes
+ZERO_SNAP_M = 0.005          # back at the stock warp below 5 mm once the target is 0
 
 # asymmetric road (side lane widths are line-to-line or line-to-edge distances, so they do not move with the car)
 LANE_EXISTS_M = 2.2
@@ -44,45 +46,55 @@ HOLD_OFF_S = 3.0
 AFTER_LANE_CHANGE_S = 2.0
 
 
-def view_shift_matrix(offset_right_m: float, height_m: float, bigmodel_frame: bool) -> np.ndarray:
-  """Matrix S in model-input pixels: get_warp_matrix(...) @ S shows the road plane as seen from a camera moved
-  left by offset_right_m, so the model steers the car about offset_right_m to the right.
+def _finite(*values) -> bool:
+  try:
+    return all(math.isfinite(float(v)) for v in values)
+  except (TypeError, ValueError):
+    return False
+
+
+def shear_matrix(slope: float, bigmodel_frame: bool) -> np.ndarray:
+  """Matrix S in model-input pixels for a virtual camera moved right by slope * height.
 
   In the road-aligned model frame a road point (X ahead, Y right, Z = height down) is at u = fx*Y/X + cx,
   v = fy*h/X + cy. From a camera moved right by d it is at u - fx*d/X = u - (fx/fy)*(d/h)*(v - cy): each pixel of
-  the moved view samples the real view (fx/fy)*(d/h)*(v - cy) further right. Exact for the road plane; objects
-  above it shift less, like they do for a real camera move.
+  the moved view samples the real view (fx/fy)*(d/h)*(v - cy) further right, so get_warp_matrix(...) @ S is that
+  view. Exact for the road plane; objects above it shift less, like they do for a real camera move.
   """
   intrinsics = sbigmodel_intrinsics if bigmodel_frame else medmodel_intrinsics
   fx, fy, cy = float(intrinsics[0, 0]), float(intrinsics[1, 1]), float(intrinsics[1, 2])
-  d = -offset_right_m  # camera displacement to the right
-  k = (fx / fy) * d / height_m
+  k = (fx / fy) * slope
   return np.array([[1.0, k, -k * cy], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 
 
-def shift_transform(transform: np.ndarray, offset_right_m: float, height_m: float, bigmodel_frame: bool) -> np.ndarray:
-  if offset_right_m == 0.0:
+def shear_transform(transform: np.ndarray, slope: float, bigmodel_frame: bool) -> np.ndarray:
+  if slope == 0.0:
     return transform
-  shifted = transform.astype(np.float64) @ view_shift_matrix(offset_right_m, height_m, bigmodel_frame)
-  return shifted.astype(np.float32)
+  return (transform.astype(np.float64) @ shear_matrix(slope, bigmodel_frame)).astype(np.float32)
 
 
-def calibration_height(live_calibration) -> float:
+def offset_slope(offset_right_m: float, height_m: float) -> float:
+  """Moving the car right by the offset means showing the model the view from a camera moved left by it."""
+  return -offset_right_m / height_m
+
+
+def shift_transform(transform: np.ndarray, offset_right_m: float, height_m: float, bigmodel_frame: bool) -> np.ndarray:
+  return shear_transform(transform, offset_slope(offset_right_m, height_m), bigmodel_frame)
+
+
+def calibration_height(live_calibration, previous: float) -> float:
+  """The calibrated camera height when it is plausible, else the last good one."""
   try:
     height = float(live_calibration.height[0])
   except (AttributeError, IndexError, TypeError, ValueError):
-    return DEFAULT_HEIGHT_M
-  return height if HEIGHT_RANGE_M[0] <= height <= HEIGHT_RANGE_M[1] else DEFAULT_HEIGHT_M
+    return previous
+  return height if _finite(height) and HEIGHT_RANGE_M[0] <= height <= HEIGHT_RANGE_M[1] else previous
 
 
 def setting_m(value_cm, limit_cm: int, allow_negative: bool) -> float:
-  try:
-    cm = float(value_cm)
-  except (TypeError, ValueError):
+  if not _finite(value_cm):
     return 0.0
-  if not np.isfinite(cm):
-    return 0.0
-  return float(np.clip(cm, -limit_cm if allow_negative else 0.0, limit_cm)) / 100.0
+  return float(np.clip(float(value_cm), -limit_cm if allow_negative else 0.0, limit_cm)) / 100.0
 
 
 @dataclass
@@ -104,7 +116,8 @@ def _ramp(x: float, lo: float, hi: float) -> float:
 
 
 class EdgeOffset:
-  """Target edge offset in metres (+ right) with hold times so a flickering road edge does not move the car."""
+  """Target edge offset in metres (+ right). Hold times only bridge a road shape that briefly stops matching;
+  missing or unreliable inputs, no steering, low speed and lane changes turn it off at once."""
 
   def __init__(self, dt: float):
     self.dt = dt
@@ -120,12 +133,14 @@ class EdgeOffset:
     self.pending_t = self.release_t = 0.0
 
   @staticmethod
+  def inputs_ok(inp: EdgeInputs) -> bool:
+    if not _finite(inp.left_width, inp.right_width, inp.left_edge, inp.right_edge, inp.left_prob, inp.right_prob,
+                   inp.own_width, inp.v_ego):
+      return False
+    return min(inp.left_prob, inp.right_prob) > MIN_LINE_PROB
+
+  @staticmethod
   def road_side(inp: EdgeInputs) -> int:
-    if min(inp.left_prob, inp.right_prob) < MIN_LINE_PROB:
-      return 0
-    values = (inp.left_width, inp.right_width, inp.left_edge, inp.right_edge, inp.own_width)
-    if not all(np.isfinite(v) for v in values):
-      return 0
     # no room: the road edge itself is next to our line (a stray outer line alone does not count)
     if inp.left_width > LANE_EXISTS_M and inp.right_width < NO_ROOM_M and inp.right_edge < NO_ROOM_M:
       return 1
@@ -133,13 +148,14 @@ class EdgeOffset:
       return -1
     return 0
 
-  def update(self, edge_m: float, inp: EdgeInputs) -> float:
-    if inp.lane_changing:
+  def update(self, edge_m: float, inp: EdgeInputs | None) -> float:
+    lane_changing = inp is not None and bool(inp.lane_changing)
+    if lane_changing:
       self.lane_change_t = AFTER_LANE_CHANGE_S
     else:
       self.lane_change_t = max(0.0, self.lane_change_t - self.dt)
-    if edge_m <= 0.0 or not inp.lat_active or inp.lane_changing or self.lane_change_t > 0.0 \
-       or not np.isfinite(inp.v_ego) or inp.v_ego * 3.6 < SPEED_RAMP_KPH[0]:
+    if inp is None or not _finite(edge_m) or edge_m <= 0.0 or not inp.lat_active or lane_changing \
+       or self.lane_change_t > 0.0 or not self.inputs_ok(inp) or inp.v_ego * 3.6 < SPEED_RAMP_KPH[0]:
       self.reset()
       return 0.0
 
@@ -164,17 +180,29 @@ class EdgeOffset:
 
 
 class ViewOffset:
-  """The applied view offset: centre + edge target, limited, low-pass filtered and rate limited."""
+  """The applied view offset: centre + edge target, limited, low-pass filtered and rate limited.
+
+  `applied` is the offset in metres; `slope` (virtual camera move / height) is what the warp uses. The slope is
+  rate limited too, so a change of the calibrated height cannot move the view faster than MAX_RATE_M_S."""
 
   def __init__(self, dt: float):
     self.dt = dt
     self.edge = EdgeOffset(dt)
     self.applied = 0.0
+    self.slope = 0.0
     self.target = 0.0
     self.edge_target = 0.0
 
-  def update(self, center_m: float, edge_m: float, inp: EdgeInputs | None, calibrated: bool) -> float:
-    if inp is None or not calibrated:
+  def reset(self) -> None:
+    self.edge.reset()
+    self.applied = self.slope = self.target = self.edge_target = 0.0
+
+  def update(self, center_m: float, edge_m: float, inp: EdgeInputs | None, calibrated: bool, height_m: float) -> float:
+    if not _finite(height_m) or not HEIGHT_RANGE_M[0] <= height_m <= HEIGHT_RANGE_M[1]:
+      height_m = DEFAULT_HEIGHT_M
+    if not _finite(center_m):
+      center_m = 0.0
+    if not calibrated:
       self.edge.reset()
       self.edge_target = 0.0
     else:
@@ -183,10 +211,18 @@ class ViewOffset:
         allowed = max(0.0, self.edge.cap - abs(center_m))
         self.edge_target = float(np.sign(self.edge_target)) * min(abs(self.edge_target), allowed)
     target = (center_m + self.edge_target) if calibrated else 0.0
-    self.target = float(np.clip(target, -MAX_OFFSET_M, MAX_OFFSET_M))
+    self.target = float(np.clip(target, -MAX_OFFSET_M, MAX_OFFSET_M)) if _finite(target) else 0.0
+
     alpha = self.dt / (FILTER_TAU_S + self.dt)
     step = float(np.clip(alpha * (self.target - self.applied), -MAX_RATE_M_S * self.dt, MAX_RATE_M_S * self.dt))
     self.applied += step
-    if abs(self.applied) < 1e-4 and self.target == 0.0:
+    if self.target == 0.0 and abs(self.applied) < ZERO_SNAP_M:
       self.applied = 0.0
+
+    max_slope_step = MAX_RATE_M_S * self.dt / height_m
+    self.slope += float(np.clip(offset_slope(self.applied, height_m) - self.slope, -max_slope_step, max_slope_step))
+    if self.applied == 0.0 and abs(self.slope) * height_m < ZERO_SNAP_M:
+      self.slope = 0.0
+    if not _finite(self.applied, self.slope):
+      self.reset()
     return self.applied

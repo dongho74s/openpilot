@@ -510,7 +510,7 @@ def main(demo=False):
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
 
       calib_done = sm["liveCalibration"].calStatus == log.LiveCalibrationData.Status.calibrated
-      calib_height = lvo.calibration_height(sm["liveCalibration"])
+      calib_height = lvo.calibration_height(sm["liveCalibration"], calib_height)
       applied_yaw_trim_deg = camera_yaw_trim_deg if calib_done else 0.0
 
       if applied_yaw_trim_deg != 0.0:
@@ -543,9 +543,8 @@ def main(demo=False):
       cloudlog.error(f"camera dropped {vipc_dropped_frames} frames; advancing model history")
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
-    view_m = view_offset.applied
-    transform_main = lvo.shift_transform(model_transform_main, view_m, calib_height, False)
-    transform_extra = lvo.shift_transform(model_transform_extra, view_m, calib_height, True)
+    transform_main = lvo.shear_transform(model_transform_main, view_offset.slope, False)
+    transform_extra = lvo.shear_transform(model_transform_extra, view_offset.slope, True)
     transforms = {name: transform_extra if 'big' in name else transform_main for name in model.vision_input_names}
     frame_delay = DT_MDL # compensate for time passed since the frame was captured: current_time - timestamp_eof is 50ms on average
     action_delay = DT_MDL / 2 # middle of the interval between model output (current state) and next frame (expected state)
@@ -657,8 +656,10 @@ def main(demo=False):
       modelv2_send.modelV2.meta.laneChangeAvailableRight = DH.lane_change_available_right
 
       # next frame's view offset; the side lane widths are line-to-line distances, unaffected by the offset itself
-      if view_center_m != 0.0 or view_edge_m != 0.0 or view_offset.applied != 0.0:
+      if view_center_m != 0.0 or view_edge_m != 0.0 or view_offset.applied != 0.0 or view_offset.slope != 0.0:
         md = modelv2_send.modelV2
+        calib_ok = calib_done and sm.valid['liveCalibration'] and sm.alive['liveCalibration']
+        inputs_fresh = model_output_valid and all(sm.valid[s] and sm.alive[s] for s in ('carState', 'carControl'))
         try:
           own_width = float(np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[2].y)) -
                             np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[1].y)))
@@ -670,14 +671,16 @@ def main(demo=False):
             lane_changing=DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none)
         except (IndexError, ValueError):
           edge_inputs = None
-        view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_done)
+        if not inputs_fresh:
+          edge_inputs = None  # invalid or stale: the edge target is off at once, not held
+        view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_ok, calib_height)
         if view_offset.edge.side != view_side_logged or (frame % 20 == 0 and view_offset.applied != 0.0):
           view_side_logged = view_offset.edge.side
           road = edge_inputs
           cloudlog.event("laneless_view_offset", applied=round(view_offset.applied, 3), target=round(view_offset.target, 3),
                          center=view_center_m, edge_setting=view_edge_m, edge_target=round(view_offset.edge_target, 3),
                          edge_side=view_offset.edge.side, edge_cap=round(view_offset.edge.cap, 3), height=round(calib_height, 2),
-                         calibrated=bool(calib_done),
+                         calibrated=bool(calib_ok), fresh=bool(inputs_fresh),
                          road=None if road is None else [round(x, 2) for x in (road.left_width, road.right_width, road.left_edge,
                                                                                  road.right_edge, road.own_width, road.left_prob,
                                                                                  road.right_prob)])

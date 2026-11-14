@@ -72,9 +72,10 @@ class Calib:
     self.height = height
 
 
-@pytest.mark.parametrize("height,expected", [([1.4], 1.4), ([], 1.22), ([0.1], 1.22), ([9.0], 1.22), (None, 1.22)])
-def test_calibration_height_falls_back_when_missing_or_implausible(height, expected):
-  assert lvo.calibration_height(Calib(height)) == pytest.approx(expected)
+@pytest.mark.parametrize("height,expected", [([1.4], 1.4), ([], 1.5), ([0.1], 1.5), ([9.0], 1.5), (None, 1.5),
+                                             ([float("nan")], 1.5), ([float("inf")], 1.5)])
+def test_calibration_height_keeps_the_last_good_value_when_missing_or_implausible(height, expected):
+  assert lvo.calibration_height(Calib(height), 1.5) == pytest.approx(expected)
 
 
 def two_lane(**changes):
@@ -148,7 +149,7 @@ def test_edge_offset_keeps_a_margin_in_narrow_lanes_and_scales_with_speed():
 
 def test_view_offset_is_limited_filtered_and_rate_limited():
   view = lvo.ViewOffset(DT)
-  steps = [view.update(0.35, 0.35, two_lane(), True) for _ in range(int(20 / DT))]
+  steps = [view.update(0.35, 0.35, two_lane(), True, 1.4) for _ in range(int(20 / DT))]
   assert max(abs(b - a) for a, b in zip([0.0, *steps], steps, strict=False)) <= lvo.MAX_RATE_M_S * DT + 1e-9
   assert steps[-1] == pytest.approx(lvo.MAX_OFFSET_M, abs=1e-3)   # 0.35 + 0.35 is limited to 0.35
   assert abs(steps[int(1 / DT) - 1]) <= lvo.MAX_RATE_M_S + 1e-9   # at most 10 cm in the first second
@@ -157,17 +158,17 @@ def test_view_offset_is_limited_filtered_and_rate_limited():
 def test_view_offset_returns_to_zero_without_calibration_or_inputs():
   view = lvo.ViewOffset(DT)
   for _ in range(int(20 / DT)):
-    view.update(-0.2, 0.0, two_lane(), True)
+    view.update(-0.2, 0.0, two_lane(), True, 1.4)
   assert view.applied == pytest.approx(-0.2, abs=1e-3)
   for _ in range(int(20 / DT)):
-    view.update(-0.2, 0.3, None, False)
+    view.update(-0.2, 0.3, None, False, 1.4)
   assert view.applied == 0.0 and view.edge.side == 0
 
 
 def test_centre_and_edge_offsets_add_up():
   view = lvo.ViewOffset(DT)
   for _ in range(int(20 / DT)):
-    view.update(-0.1, 0.25, two_lane(), True)
+    view.update(-0.1, 0.25, two_lane(), True, 1.4)
   assert view.applied == pytest.approx(0.15, abs=1e-3)
 
 
@@ -183,11 +184,11 @@ def test_the_side_flips_only_through_off():
 def test_centre_in_the_same_direction_uses_up_the_edge_margin():
   view = lvo.ViewOffset(DT)
   for _ in range(int(30 / DT)):
-    view.update(0.15, 0.30, two_lane(own_width=2.74), True)   # margin cap 0.22: edge adds only 0.07
+    view.update(0.15, 0.30, two_lane(own_width=2.74), True, 1.4)   # margin cap 0.22: edge adds only 0.07
   assert view.applied == pytest.approx(0.22, abs=2e-3)
   view = lvo.ViewOffset(DT)
   for _ in range(int(30 / DT)):
-    view.update(0.30, 0.30, two_lane(own_width=2.74), True)   # the centre alone is the user's choice
+    view.update(0.30, 0.30, two_lane(own_width=2.74), True, 1.4)   # the centre alone is the user's choice
   assert view.applied == pytest.approx(0.30, abs=2e-3)
 
 
@@ -205,3 +206,66 @@ def test_the_largest_offset_still_samples_inside_the_camera_image(cam_key, bigmo
         _, y0 = project(warp, np.array([u, v, 1.0]))
         # the shift only moves samples sideways: rows stay where the stock warp has them
         assert -1 <= x <= sensor.width + 1 and y == pytest.approx(y0, abs=1e-3), (offset, u, v, x, y)
+
+
+# --- review fixes: bad inputs, stale inputs, height changes, return time ---------------------------------------------
+@pytest.mark.parametrize("changes", [{"left_prob": 0.4}, {"left_prob": 0.5}, {"right_prob": float("nan")},
+                                     {"left_width": float("nan")}, {"own_width": float("nan")}, {"right_edge": float("inf")}])
+def test_unreliable_inputs_turn_the_edge_offset_off_at_once(changes):
+  edge = lvo.EdgeOffset(DT)
+  assert run(edge, two_lane(), 2.0) == pytest.approx(0.3)
+  assert edge.update(0.3, two_lane(**changes)) == 0.0 and edge.side == 0
+
+
+def test_missing_inputs_turn_the_edge_offset_off_and_need_the_hold_again():
+  edge = lvo.EdgeOffset(DT)
+  run(edge, two_lane(), 2.0)
+  assert edge.update(0.3, None) == 0.0
+  assert run(edge, two_lane(), 1.4) == 0.0
+
+
+@pytest.mark.parametrize("changes", [{"left_prob": float("nan")}, {"own_width": float("nan")}])
+def test_nan_inputs_never_reach_the_view_offset(changes):
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(5 / DT)):
+    view.update(0.1, 0.3, two_lane(**changes), True, 1.4)
+  assert np.isfinite(view.applied) and np.isfinite(view.slope) and view.edge.side == 0
+  for _ in range(int(30 / DT)):
+    view.update(float("nan"), float("nan"), two_lane(), True, float("nan"))
+  assert view.applied == 0.0 and view.slope == 0.0
+
+
+def test_a_height_change_moves_the_view_no_faster_than_the_rate_limit():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(30 / DT)):
+    view.update(0.35, 0.0, None, True, 1.6)
+  assert view.slope == pytest.approx(-0.35 / 1.6, rel=1e-3)
+  previous = view.slope
+  for _ in range(int(3 / DT)):
+    view.update(0.35, 0.0, None, True, 1.22)
+    # virtual camera position change over the road at the new height
+    assert abs(view.slope - previous) * 1.22 <= lvo.MAX_RATE_M_S * DT + 1e-9
+    previous = view.slope
+  assert view.slope == pytest.approx(-0.35 / 1.22, rel=1e-3)
+
+
+@pytest.mark.parametrize("start,max_s", [(0.35, 11.0), (0.24, 10.0)])
+def test_turning_it_off_returns_to_the_stock_warp_in_about_ten_seconds(start, max_s):
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(40 / DT)):
+    view.update(start, 0.0, None, True, 1.4)
+  frames = 0
+  while view.applied != 0.0 or view.slope != 0.0:
+    view.update(0.0, 0.0, None, True, 1.4)
+    frames += 1
+    assert frames < 400
+  assert frames * DT <= max_s
+
+
+def test_without_calibration_the_view_returns_to_stock():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(20 / DT)):
+    view.update(0.2, 0.0, None, True, 1.4)
+  for _ in range(int(15 / DT)):
+    view.update(0.2, 0.3, two_lane(), False, 1.4)
+  assert view.applied == 0.0 and view.slope == 0.0
