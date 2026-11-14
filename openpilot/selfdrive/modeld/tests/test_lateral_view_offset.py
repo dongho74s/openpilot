@@ -78,8 +78,8 @@ def test_calibration_height_falls_back_when_missing_or_implausible(height, expec
 
 
 def two_lane(**changes):
-  values = dict(left_width=3.0, right_width=0.6, left_prob=0.9, right_prob=0.9, own_width=2.9, v_ego=20.0,
-                lat_active=True, lane_changing=False)
+  values = dict(left_width=3.0, right_width=0.6, left_edge=6.0, right_edge=0.6, left_prob=0.9, right_prob=0.9,
+                own_width=2.9, v_ego=20.0, lat_active=True, lane_changing=False)
   values.update(changes)
   return lvo.EdgeInputs(**values)
 
@@ -96,7 +96,7 @@ def test_edge_offset_moves_toward_the_road_edge_after_the_hold_time():
   assert run(edge, two_lane(), 1.4) == 0.0
   assert run(edge, two_lane(), 0.2) == pytest.approx(0.3)
   mirrored = lvo.EdgeOffset(DT)
-  assert run(mirrored, two_lane(left_width=0.5, right_width=3.2), 2.0) == pytest.approx(-0.3)
+  assert run(mirrored, two_lane(left_width=0.5, left_edge=0.5, right_width=3.2, right_edge=6.0), 2.0) == pytest.approx(-0.3)
 
 
 @pytest.mark.parametrize("changes", [
@@ -106,6 +106,7 @@ def test_edge_offset_moves_toward_the_road_edge_after_the_hold_time():
   {"right_width": 2.05},                      # right side not clearly without room
   {"left_prob": 0.4},                         # our lines not visible
   {"own_width": float("nan")},
+  {"right_edge": 3.0},                        # a close but stray outer line, the road edge is far
 ])
 def test_edge_offset_stays_off_without_a_clear_asymmetric_road(changes):
   assert run(lvo.EdgeOffset(DT), two_lane(**changes), 5.0) == 0.0
@@ -135,9 +136,11 @@ def test_a_short_gap_in_the_road_edge_does_not_release_but_a_long_one_does():
   assert run(edge, two_lane(right_width=3.0), 3.1) == 0.0
 
 
-def test_edge_offset_scales_with_lane_width_and_speed():
+def test_edge_offset_keeps_a_margin_in_narrow_lanes_and_scales_with_speed():
+  # (lane - 2.0 m car) / 2 - 0.15 m margin
   assert run(lvo.EdgeOffset(DT), two_lane(own_width=2.3), 2.0) == 0.0
   assert run(lvo.EdgeOffset(DT), two_lane(own_width=2.6), 2.0) == pytest.approx(0.15)
+  assert run(lvo.EdgeOffset(DT), two_lane(own_width=2.74), 2.0) == pytest.approx(0.22)
   assert run(lvo.EdgeOffset(DT), two_lane(own_width=4.8), 2.0) == 0.0
   assert run(lvo.EdgeOffset(DT), two_lane(v_ego=30 / 3.6), 2.0) == pytest.approx(0.15)
   assert run(lvo.EdgeOffset(DT), two_lane(), 2.0, edge_m=0.0) == 0.0
@@ -166,3 +169,39 @@ def test_centre_and_edge_offsets_add_up():
   for _ in range(int(20 / DT)):
     view.update(-0.1, 0.25, two_lane(), True)
   assert view.applied == pytest.approx(0.15, abs=1e-3)
+
+
+def test_the_side_flips_only_through_off():
+  edge = lvo.EdgeOffset(DT)
+  run(edge, two_lane(), 2.0)
+  flipped = two_lane(left_width=0.5, left_edge=0.5, right_width=3.2, right_edge=6.0)
+  assert run(edge, flipped, 2.9) == pytest.approx(0.3)   # still right until released after 3 s
+  assert run(edge, flipped, 0.2) == 0.0
+  assert run(edge, flipped, 1.5) == pytest.approx(-0.3)
+
+
+def test_centre_in_the_same_direction_uses_up_the_edge_margin():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(30 / DT)):
+    view.update(0.15, 0.30, two_lane(own_width=2.74), True)   # margin cap 0.22: edge adds only 0.07
+  assert view.applied == pytest.approx(0.22, abs=2e-3)
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(30 / DT)):
+    view.update(0.30, 0.30, two_lane(own_width=2.74), True)   # the centre alone is the user's choice
+  assert view.applied == pytest.approx(0.30, abs=2e-3)
+
+
+@pytest.mark.parametrize("cam_key", [("mici", "os04c10"), ("tici", "ar0231")])
+@pytest.mark.parametrize("bigmodel_frame,camera", [(False, "fcam"), (True, "ecam"), (False, "ecam")])
+def test_the_largest_offset_still_samples_inside_the_camera_image(cam_key, bigmodel_frame, camera):
+  cam = DEVICE_CAMERAS[cam_key]
+  sensor = getattr(cam, camera)
+  warp = get_warp_matrix(np.zeros(3), sensor.intrinsics, bigmodel_frame)
+  for offset in (-lvo.MAX_OFFSET_M, lvo.MAX_OFFSET_M):
+    shifted = lvo.shift_transform(warp.astype(np.float32), offset, 1.1, bigmodel_frame).astype(np.float64)
+    for u in (0, 512):
+      for v in (0, 256):
+        x, y = project(shifted, np.array([u, v, 1.0]))
+        _, y0 = project(warp, np.array([u, v, 1.0]))
+        # the shift only moves samples sideways: rows stay where the stock warp has them
+        assert -1 <= x <= sensor.width + 1 and y == pytest.approx(y0, abs=1e-3), (offset, u, v, x, y)

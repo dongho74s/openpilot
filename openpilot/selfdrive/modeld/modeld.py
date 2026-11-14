@@ -664,6 +664,7 @@ def main(demo=False):
                             np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[1].y)))
           edge_inputs = lvo.EdgeInputs(
             left_width=float(DH.left.lane_width), right_width=float(DH.right.lane_width),
+            left_edge=float(DH.left.dist_to_edge), right_edge=float(DH.right.dist_to_edge),
             left_prob=float(md.laneLineProbs[1]), right_prob=float(md.laneLineProbs[2]), own_width=own_width,
             v_ego=v_ego, lat_active=bool(sm['carControl'].latActive),
             lane_changing=DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none)
@@ -672,9 +673,14 @@ def main(demo=False):
         view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_done)
         if view_offset.edge.side != view_side_logged or (frame % 20 == 0 and view_offset.applied != 0.0):
           view_side_logged = view_offset.edge.side
+          road = edge_inputs
           cloudlog.event("laneless_view_offset", applied=round(view_offset.applied, 3), target=round(view_offset.target, 3),
-                         center=view_center_m, edge_target=round(view_offset.edge_target, 3), edge_side=view_offset.edge.side,
-                         height=round(calib_height, 2))
+                         center=view_center_m, edge_setting=view_edge_m, edge_target=round(view_offset.edge_target, 3),
+                         edge_side=view_offset.edge.side, edge_cap=round(view_offset.edge.cap, 3), height=round(calib_height, 2),
+                         calibrated=bool(calib_done),
+                         road=None if road is None else [round(x, 2) for x in (road.left_width, road.right_width, road.left_edge,
+                                                                                 road.right_edge, road.own_width, road.left_prob,
+                                                                                 road.right_prob)])
       mt3 = time.perf_counter()
       drivingdata_send.drivingModelData.modelExecutionTime = mt3 - mt1
 

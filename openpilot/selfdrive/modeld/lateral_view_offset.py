@@ -8,9 +8,12 @@ for every internal or external model and in lane mode too.
 
 Two settings (centimetres, + moves the car right):
 - LanelessCenterOffset: always applied.
-- LanelessEdgeOffset: only on an asymmetric road, when one side has a lane next to ours and the other side has no
-  room (road edge next to our line), toward the side without room; the same rule as lane mode's AdjustLaneOffset
-  (lane_planner_2.py). Example: a two-lane road where the model hugs the centre line.
+- LanelessEdgeOffset: only on an asymmetric road, when one side has a lane next to ours and the other side ends at
+  the road edge next to our line, toward that edge; similar to lane mode's AdjustLaneOffset (lane_planner_2.py).
+  Example: a two-lane road where the model hugs the centre line. Limited so the car keeps a margin in its lane.
+
+The road shape comes from DesireHelper, evaluated where the lane lines are about 19 m ahead (its "t = 1" sample),
+as line-to-line and line-to-edge distances, which do not move with the car or with this offset.
 """
 from __future__ import annotations
 
@@ -32,7 +35,8 @@ MAX_RATE_M_S = 0.1
 LANE_EXISTS_M = 2.2
 NO_ROOM_M = 2.0
 MIN_LINE_PROB = 0.5
-OWN_WIDTH_RAMP_M = (2.4, 2.8)      # no room to move in a narrow lane
+VEHICLE_WIDTH_M = 2.0             # most cars, the Traverse included, are at most this wide
+EDGE_MARGIN_M = 0.15               # kept between the car and our lane line after the edge offset
 OWN_WIDTH_MAX_M = (4.2, 4.6)       # a very wide "lane" means the lines are not ours
 SPEED_RAMP_KPH = (25.0, 35.0)
 HOLD_ON_S = 1.5
@@ -85,6 +89,8 @@ def setting_m(value_cm, limit_cm: int, allow_negative: bool) -> float:
 class EdgeInputs:
   left_width: float      # DesireHelper side lane width: our left line to the next line or road edge
   right_width: float
+  left_edge: float       # DesireHelper: our left line to the left road edge
+  right_edge: float
   left_prob: float       # our own lane lines
   right_prob: float
   own_width: float       # our lane width
@@ -107,6 +113,7 @@ class EdgeOffset:
     self.pending_t = 0.0
     self.release_t = 0.0
     self.lane_change_t = 0.0
+    self.cap = 0.0         # largest edge offset that keeps EDGE_MARGIN_M in our lane
 
   def reset(self) -> None:
     self.side = self.pending = 0
@@ -116,12 +123,13 @@ class EdgeOffset:
   def road_side(inp: EdgeInputs) -> int:
     if min(inp.left_prob, inp.right_prob) < MIN_LINE_PROB:
       return 0
-    values = (inp.left_width, inp.right_width, inp.own_width)
+    values = (inp.left_width, inp.right_width, inp.left_edge, inp.right_edge, inp.own_width)
     if not all(np.isfinite(v) for v in values):
       return 0
-    if inp.left_width > LANE_EXISTS_M and inp.right_width < NO_ROOM_M:
+    # no room: the road edge itself is next to our line (a stray outer line alone does not count)
+    if inp.left_width > LANE_EXISTS_M and inp.right_width < NO_ROOM_M and inp.right_edge < NO_ROOM_M:
       return 1
-    if inp.right_width > LANE_EXISTS_M and inp.left_width < NO_ROOM_M:
+    if inp.right_width > LANE_EXISTS_M and inp.left_width < NO_ROOM_M and inp.left_edge < NO_ROOM_M:
       return -1
     return 0
 
@@ -136,7 +144,7 @@ class EdgeOffset:
       return 0.0
 
     raw = self.road_side(inp)
-    if raw != 0 and raw != self.side:
+    if raw != 0 and self.side == 0:  # the other side only after this one was released
       self.pending_t = self.pending_t + self.dt if raw == self.pending else self.dt
       self.pending = raw
       if self.pending_t >= HOLD_ON_S:
@@ -150,9 +158,9 @@ class EdgeOffset:
     if self.side == 0:
       return 0.0
 
-    scale = _ramp(inp.own_width, *OWN_WIDTH_RAMP_M) * (1.0 - _ramp(inp.own_width, *OWN_WIDTH_MAX_M))
-    scale *= _ramp(inp.v_ego * 3.6, *SPEED_RAMP_KPH)
-    return self.side * edge_m * scale
+    self.cap = max(0.0, (inp.own_width - VEHICLE_WIDTH_M) / 2.0 - EDGE_MARGIN_M)
+    scale = (1.0 - _ramp(inp.own_width, *OWN_WIDTH_MAX_M)) * _ramp(inp.v_ego * 3.6, *SPEED_RAMP_KPH)
+    return self.side * min(edge_m, self.cap) * scale
 
 
 class ViewOffset:
@@ -171,6 +179,9 @@ class ViewOffset:
       self.edge_target = 0.0
     else:
       self.edge_target = self.edge.update(edge_m, inp)
+      if self.edge_target * center_m > 0.0:  # same direction: together they keep the margin too
+        allowed = max(0.0, self.edge.cap - abs(center_m))
+        self.edge_target = float(np.sign(self.edge_target)) * min(abs(self.edge_target), allowed)
     target = (center_m + self.edge_target) if calibrated else 0.0
     self.target = float(np.clip(target, -MAX_OFFSET_M, MAX_OFFSET_M))
     alpha = self.dt / (FILTER_TAU_S + self.dt)
