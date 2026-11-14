@@ -48,10 +48,18 @@ def get_driving_mode_comfort_brake_factor(driving_mode: DrivingMode) -> float:
   return 0.9 if driving_mode == DrivingMode.Safe else 1.0
 
 
-# ComfortBrake setting (select index -> m/s^2). The same value is used for both
-# the ego stopping term and the lead stopping term in the longitudinal MPC, so
-# the steady following distance does not change -- only when deceleration
-# starts when there is a speed difference. Index 1 (2.0) is the default.
+# ComfortBrake setting (m/s^2, 0.1 steps in [1.5, 3.0], default 2.0). The same
+# value is used for both the ego stopping term and the lead stopping term in
+# the longitudinal MPC, so the steady following distance does not change --
+# only when deceleration starts when there is a speed difference.
+COMFORT_BRAKE_MIN = 1.5
+COMFORT_BRAKE_MAX = 3.0
+COMFORT_BRAKE_DEFAULT = 2.0
+
+# Legacy select-index values (0.5 steps: 1.5/2.0/2.5/3.0). Kept only for the
+# one-time migration of params stored before the 0.1-step slider change.
+# put_float writes via std::to_string (e.g. "2.000000"), so a stored value
+# without a decimal point can only be an old index.
 COMFORT_BRAKE_VALUES = (1.5, 2.0, 2.5, 3.0)
 COMFORT_BRAKE_DEFAULT_INDEX = 1
 
@@ -61,6 +69,35 @@ def comfort_brake_from_index(index) -> float:
     return COMFORT_BRAKE_VALUES[int(np.clip(int(index), 0, len(COMFORT_BRAKE_VALUES) - 1))]
   except (TypeError, ValueError):
     return COMFORT_BRAKE_VALUES[COMFORT_BRAKE_DEFAULT_INDEX]
+
+
+def comfort_brake_parse_raw(raw) -> tuple:
+  """Parse a stored ComfortBrake raw string.
+
+  Returns (value, is_old_index). A raw value without a decimal point is an
+  old select index (0..3); anything with a decimal point is already a float
+  in m/s^2. Out-of-range values are clamped to [1.5, 3.0].
+  """
+  if raw is None:
+    return COMFORT_BRAKE_DEFAULT, False
+  text = str(raw).strip()
+  if not text:
+    return COMFORT_BRAKE_DEFAULT, False
+  if "." not in text:
+    # Old index format ("0".."3"). A float written by put_float is always
+    # std::to_string, e.g. "2.000000", so it always carries a decimal point.
+    try:
+      idx = int(text)
+    except ValueError:
+      return COMFORT_BRAKE_DEFAULT, False
+    if 0 <= idx < len(COMFORT_BRAKE_VALUES):
+      return comfort_brake_from_index(idx), True
+    return COMFORT_BRAKE_DEFAULT, False
+  try:
+    value = float(text)
+  except ValueError:
+    return COMFORT_BRAKE_DEFAULT, False
+  return float(np.clip(value, COMFORT_BRAKE_MIN, COMFORT_BRAKE_MAX)), False
 
 
 # FollowDecelStrength setting (select index -> MPC obstacle-cost factor).
@@ -225,10 +262,19 @@ class CarrotPlanner:
   def _read_comfort_brake(self) -> float:
     # Falls back to the default if the key is not registered yet (params table
     # not rebuilt after an update), so a missing key never breaks the planner.
+    # A legacy select index ("0".."3") is migrated to the float value once
+    # and written back, so the braking feel never silently changes.
     try:
-      return comfort_brake_from_index(self.params.get_int("ComfortBrake"))
+      raw = self.params.get("ComfortBrake")
     except Exception:
-      return COMFORT_BRAKE_VALUES[COMFORT_BRAKE_DEFAULT_INDEX]
+      return COMFORT_BRAKE_DEFAULT
+    value, is_old_index = comfort_brake_parse_raw(raw)
+    if is_old_index:
+      try:
+        self.params.put_float("ComfortBrake", value)
+      except Exception:
+        pass
+    return value
 
   def _read_follow_decel_strength(self) -> float:
     # Same fallback as the comfort brake: a missing key (params table not
