@@ -674,10 +674,13 @@ def main(demo=False):
         if not inputs_fresh:
           edge_inputs = None  # invalid or stale: the edge target is off at once, not held
         view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_ok, calib_height)
-        if view_offset.edge.side != view_side_logged or (frame % 20 == 0 and view_offset.applied != 0.0):
+        if view_offset.edge.side != view_side_logged or \
+           (frame % 20 == 0 and (view_offset.applied != 0.0 or view_offset.slope != 0.0)):
           view_side_logged = view_offset.edge.side
           road = edge_inputs
-          cloudlog.event("laneless_view_offset", applied=round(view_offset.applied, 3), target=round(view_offset.target, 3),
+          # warp/slope: what the model input actually has now; applied: the filtered offset it follows
+          cloudlog.event("laneless_view_offset", warp=round(view_offset.warp_offset_m, 4), slope=round(view_offset.slope, 5),
+                         applied=round(view_offset.applied, 3), target=round(view_offset.target, 3),
                          center=view_center_m, edge_setting=view_edge_m, edge_target=round(view_offset.edge_target, 3),
                          edge_side=view_offset.edge.side, edge_cap=round(view_offset.edge.cap, 3), height=round(calib_height, 2),
                          calibrated=bool(calib_ok), fresh=bool(inputs_fresh),

@@ -269,3 +269,29 @@ def test_without_calibration_the_view_returns_to_stock():
   for _ in range(int(15 / DT)):
     view.update(0.2, 0.3, two_lane(), False, 1.4)
   assert view.applied == 0.0 and view.slope == 0.0
+
+
+def test_the_return_to_stock_including_the_last_step_keeps_the_rate_limit_even_with_a_height_change():
+  for height_after in (1.22, 1.40, 1.60):
+    view = lvo.ViewOffset(DT)
+    for _ in range(int(40 / DT)):
+      view.update(0.35, 0.0, None, True, 1.22)
+    height, frames = 1.22, 0
+    while view.applied != 0.0 or view.slope != 0.0:
+      if view.applied < 0.006:
+        height = height_after   # the height changes right at the end of the return
+      previous = view.slope
+      view.update(0.0, 0.0, None, True, height)
+      assert abs(view.slope - previous) * height <= lvo.MAX_RATE_M_S * DT + 1e-12
+      frames += 1
+      assert frames < 600
+    assert view.warp_offset_m == 0.0
+
+
+def test_the_logged_warp_offset_is_what_the_warp_applies():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(40 / DT)):
+    view.update(0.35, 0.0, None, True, 1.22)
+  view.update(0.35, 0.0, None, True, 1.60)
+  assert view.applied == pytest.approx(0.35, abs=1e-3)
+  assert view.warp_offset_m == pytest.approx(-view.slope * 1.60) and view.warp_offset_m > 0.4   # not yet at 0.35

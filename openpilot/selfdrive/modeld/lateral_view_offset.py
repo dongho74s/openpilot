@@ -190,8 +190,14 @@ class ViewOffset:
     self.edge = EdgeOffset(dt)
     self.applied = 0.0
     self.slope = 0.0
+    self.height = DEFAULT_HEIGHT_M
     self.target = 0.0
     self.edge_target = 0.0
+
+  @property
+  def warp_offset_m(self) -> float:
+    """What the warp applies now, as a car offset over the road plane at the last height (+ right)."""
+    return -self.slope * self.height
 
   def reset(self) -> None:
     self.edge.reset()
@@ -219,10 +225,10 @@ class ViewOffset:
     if self.target == 0.0 and abs(self.applied) < ZERO_SNAP_M:
       self.applied = 0.0
 
+    # the last step to 0 is within the limit too: slope + (-slope) is exactly 0
     max_slope_step = MAX_RATE_M_S * self.dt / height_m
     self.slope += float(np.clip(offset_slope(self.applied, height_m) - self.slope, -max_slope_step, max_slope_step))
-    if self.applied == 0.0 and abs(self.slope) * height_m < ZERO_SNAP_M:
-      self.slope = 0.0
+    self.height = height_m
     if not _finite(self.applied, self.slope):
       self.reset()
     return self.applied
