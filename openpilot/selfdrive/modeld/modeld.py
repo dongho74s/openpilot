@@ -32,6 +32,7 @@ from openpilot.selfdrive.modeld.camera_sync import FrameMeta, receive_camera_pai
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.signal_shadow import ShadowClient
 from openpilot.selfdrive.modeld import internal_model
+from openpilot.selfdrive.modeld import lateral_view_offset as lvo
 from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
                                                 refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
                                                 usbgpu_pcie_not_ready, usbgpu_present, wait_for_usbgpu_present)
@@ -462,6 +463,13 @@ def main(demo=False):
   lat_smooth_seconds = LAT_SMOOTH_SECONDS
   vEgoStopping = get_stopping_speed(params)
   camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
+  # sideways view offset for laneless position (lateral_view_offset.py); applied to every frame's warp
+  view_offset = lvo.ViewOffset(DT_MDL)
+  view_center_m = lvo.setting_m(params.get_int("LanelessCenterOffset"), lvo.CENTER_LIMIT_CM, True)
+  view_edge_m = lvo.setting_m(params.get_int("LanelessEdgeOffset"), lvo.EDGE_LIMIT_CM, False)
+  calib_done = False
+  calib_height = lvo.DEFAULT_HEIGHT_M
+  view_side_logged = 0
   lat_delay_dynamic = lat_smooth_seconds
   diagnostics = RuntimeDiagnostics('modeld', cloudlog.event)
   while True:
@@ -473,6 +481,8 @@ def main(demo=False):
       long_delay = params.get_float("LongActuatorDelay")*0.01
       vEgoStopping = get_stopping_speed(params)
       camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
+      view_center_m = lvo.setting_m(params.get_int("LanelessCenterOffset"), lvo.CENTER_LIMIT_CM, True)
+      view_edge_m = lvo.setting_m(params.get_int("LanelessEdgeOffset"), lvo.EDGE_LIMIT_CM, False)
       # eGPU power follows ignition on the vehicle. Keep UI state current when
       # the shared USB hub is connected or removed after modeld starts.
       usbgpu_present_now = usbgpu_present()
@@ -500,6 +510,7 @@ def main(demo=False):
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
 
       calib_done = sm["liveCalibration"].calStatus == log.LiveCalibrationData.Status.calibrated
+      calib_height = lvo.calibration_height(sm["liveCalibration"])
       applied_yaw_trim_deg = camera_yaw_trim_deg if calib_done else 0.0
 
       if applied_yaw_trim_deg != 0.0:
@@ -532,7 +543,10 @@ def main(demo=False):
       cloudlog.error(f"camera dropped {vipc_dropped_frames} frames; advancing model history")
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
-    transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
+    view_m = view_offset.applied
+    transform_main = lvo.shift_transform(model_transform_main, view_m, calib_height, False)
+    transform_extra = lvo.shift_transform(model_transform_extra, view_m, calib_height, True)
+    transforms = {name: transform_extra if 'big' in name else transform_main for name in model.vision_input_names}
     frame_delay = DT_MDL # compensate for time passed since the frame was captured: current_time - timestamp_eof is 50ms on average
     action_delay = DT_MDL / 2 # middle of the interval between model output (current state) and next frame (expected state)
     lat_action_t = lat_delay_dynamic + frame_delay + action_delay
@@ -641,6 +655,26 @@ def main(demo=False):
       modelv2_send.modelV2.meta.modelTurnSpeed = 200.0
       modelv2_send.modelV2.meta.laneChangeAvailableLeft = DH.lane_change_available_left
       modelv2_send.modelV2.meta.laneChangeAvailableRight = DH.lane_change_available_right
+
+      # next frame's view offset; the side lane widths are line-to-line distances, unaffected by the offset itself
+      if view_center_m != 0.0 or view_edge_m != 0.0 or view_offset.applied != 0.0:
+        md = modelv2_send.modelV2
+        try:
+          own_width = float(np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[2].y)) -
+                            np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[1].y)))
+          edge_inputs = lvo.EdgeInputs(
+            left_width=float(DH.left.lane_width), right_width=float(DH.right.lane_width),
+            left_prob=float(md.laneLineProbs[1]), right_prob=float(md.laneLineProbs[2]), own_width=own_width,
+            v_ego=v_ego, lat_active=bool(sm['carControl'].latActive),
+            lane_changing=DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none)
+        except (IndexError, ValueError):
+          edge_inputs = None
+        view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_done)
+        if view_offset.edge.side != view_side_logged or (frame % 20 == 0 and view_offset.applied != 0.0):
+          view_side_logged = view_offset.edge.side
+          cloudlog.event("laneless_view_offset", applied=round(view_offset.applied, 3), target=round(view_offset.target, 3),
+                         center=view_center_m, edge_target=round(view_offset.edge_target, 3), edge_side=view_offset.edge.side,
+                         height=round(calib_height, 2))
       mt3 = time.perf_counter()
       drivingdata_send.drivingModelData.modelExecutionTime = mt3 - mt1
 

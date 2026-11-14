@@ -177,12 +177,12 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 `WIP-FR`의 `NavigationSetSpeed`를 켜면 SET 인게이지에 유효한 내비 제한속도 +10km/h(30 제한은 +5)와 현재속도 중 큰 값을 사용하는 [내비 기반 초기 설정속도](buttons-presets.md#button-modes)가 적용됩니다. 기본값은 꺼짐이며, 변경은 약 0.1초 내 반영되어 다음 SET 진입부터 적용됩니다. 내비가 없거나 오래된 경우, 순정 ACC 및 이미 인게이지된 상태의 버튼 동작은 기존과 같습니다.
 
 <a id="vehicle-steering"></a>
-### 차량 조향 — 상위 37개 + ONNX 상세 6개 + 검색 전용 1개
+### 차량 조향 — 상위 39개 + ONNX 상세 6개 + 검색 전용 1개
 
 | 세부 구역 | 파라미터 | 용도 |
 |---|---|---|
 | ONNX 차선·BSD | `ShareData`, `OnnxBsdEnabled`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | 차선 종류 인식과 별도 카메라 BSD 실행 및 세부 조정 |
-| 중앙 보정 | `PathOffset`, `CameraYawTrimDeg` | 레인모드 경로의 좌우 위치와 카메라 YAW 미세 보정 |
+| 중앙 보정 | `PathOffset`, `CameraYawTrimDeg`, `LanelessCenterOffset`, `LanelessEdgeOffset` | 레인모드 경로의 좌우 위치, 카메라 YAW 미세 보정, 레인리스에서도 적용되는 좌우·도로끝 보정 |
 | 조향감 | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | 조향 시점, 평활화, 일시중지 각도와 조향비 |
 | [차로 변경](lane-change.md)·자동 턴 | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | 차로 변경 진입 조건과 ATC 동작 |
 | 레인모드 | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | 레인모드 MPC 가중치와 차선 사용 조건 |
@@ -193,6 +193,13 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 `ONNX 차선·BSD 인식`(`ShareData`)은 장치에서 차선 종류를 계산하는 설정입니다. 시각 BSD는 상세 화면의 별도 `OnnxBsdEnabled` 설정으로 켜야 하며 기본값은 꺼짐입니다. 켜면 모델이 추정한 차로 폭이 2m 이상인 설정된 좌우 영역을 번갈아 검사하고 속도나 차로 변경 방향은 실행 조건으로 사용하지 않습니다. BSD 모델은 사각지대 위협, 근접 차량 없음, 멀거나 뒤쪽에 있는 차량을 구분합니다. `OnnxBsdEnabled`가 꺼지면 BSD ONNX 네트워크를 언로드하지만 차선 인식은 계속됩니다. 차선 인식과 스냅샷을 위해 비전 서비스와 카메라 구독은 유지되며 차량 자체 BSD에는 영향이 없습니다. 상세 화면은 기능 토글을 맨 위에 유지하고, 바로 아래의 분리된 카드에 BSD 감지영역 편집기를 표시합니다. 좌우 선택, 영상 갱신, 점 되돌리기, 점 초기화와 영역 저장만 기본 화면에 두며, 영상 왼쪽 위의 사각형 점 목록은 `1(좌)`, `1(우)` 형식으로 표시됩니다. 선택된 점이 없을 때 빈 화면을 누르면 별도 모드 없이 점이 추가되고, 확대·화면 이동·영역 전체 이동 없이 선택된 점만 이동합니다. 4개 편집 버튼 바로 아래의 좌우 2열 버튼으로 도로·와이드 카메라 영상을 팝업에서 확인합니다. 실행 상태·좌우 신뢰도·처리 성능과 6개 상세 설정은 우측 아래의 **고급 설정 펼치기/접기** 텍스트로 봅니다. 편집기는 마지막 카메라 영상 한 장을 보관하고, 영상이 없으면 흐린 기본 주행 예시 화면을 표시합니다. 영역 저장은 현재 세션에서 실제 카메라 영상을 받은 뒤에만 가능합니다. BSD는 기본값이 꺼짐이며 저장한 설정은 서비스 재시작 후에도 유지됩니다. 필요한 OpenCV는 업데이트에 포함되어 정상 시작 시 자동 준비됩니다. ShareData가 켜져 있어도 서비스는 onroad 초기화와 모델·CAN·Panda 준비가 완료되어 주행 준비 상태가 0.5초 유지된 뒤 시작합니다. 실제 크루즈 활성화는 필요하지 않습니다. Offroad에서는 종료하고 다음 onroad에서도 다시 기다립니다. [동작 조건과 세부값](lane-change.md#sharedata--onnx-차선bsd-인식)을 참고하세요.
 
 `UseLaneLineSpeed`로 레인모드를 사용하더라도 모델 속도 궤적의 시작값이 실제 차속의 70% 미만이거나 끝값이 시작값의 70% 미만이면 일시적으로 레인리스로 전환합니다. 속도 조건이 약 1초간 연속으로 정상이고 기존 차선·속도 조건도 충족해야 레인모드로 복귀합니다.
+
+레인리스 주행은 모델이 낸 곡률로 조향하므로 `PathOffset`(레인모드 경로)과 `AdjustLaneOffset`(레인모드)은 레인리스에서 차 위치를 바꾸지 않습니다. 레인리스에서 위치를 옮기려면 다음 두 설정을 씁니다. 둘 다 모델이 보는 영상을 도로면 기준으로 옆으로 옮겨서(카메라를 옆으로 옮긴 것처럼) 모델이 스스로 그만큼 반대쪽으로 가게 하는 방식이라, 어떤 주행 모델(CD210, RDF, 젯슨)에도, 레인모드에도 같이 적용됩니다. 기본값은 둘 다 `0`(끔)입니다.
+
+- `LanelessCenterOffset`(레인리스 좌우 센터보정, cm, -35~35): 항상 적용합니다. (+)는 차가 오른쪽, (-)는 왼쪽으로 갑니다.
+- `LanelessEdgeOffset`(레인리스 도로끝 보정, cm, 0~35): 한쪽에는 옆 차로(2.2m 이상)가 있고 반대쪽은 차선 바로 옆이 도로 끝(2.0m 미만)일 때만 도로 끝 쪽으로 옮깁니다. 레인모드 `AdjustLaneOffset`과 같은 규칙이며, 왕복 2차로에서 중앙선 쪽으로 붙는 현상을 줄이려는 용도입니다. 조건이 1.5초 이어져야 켜지고 3초 풀리면 꺼집니다. 조향 중일 때, 자기 차선 양쪽 선이 보일 때, 시속 25km 이상(35km에서 전부)일 때만 적용하고, 차로 변경 중과 끝난 뒤 2초는 끕니다. 자기 차선이 2.4m보다 좁으면 적용하지 않고 2.8m에서 전부 적용합니다.
+- 두 값을 합친 이동량은 ±35cm로 제한하고, 2.5초에 걸쳐 서서히(초당 최대 10cm) 바뀝니다. 캘리브레이션이 끝난 뒤에만 적용합니다.
+- 모델 출력 좌표(차선·경로·앞차 좌우 위치·도로 끝 거리)도 이동량만큼 옮겨진 값이 되므로, 화면의 차선·경로 그림과 차선 이탈 경고, 차로 변경 가능 판단에 그만큼 차이가 생깁니다. 이동량이 cm 단위로 정확히 따라오지는 않으니 주행해 보며 조금씩 맞추세요. `CameraYawTrimDeg`와 함께 쓰면 두 보정이 겹칩니다.
 
 `SteerActuatorDelay`는 높을수록 더 일찍 조향하도록 보상하고, `LatSmoothSec`는 높을수록 부드러워지는 대신 반응이 늦어질 수 있습니다. 두 값을 동시에 바꾸면 원인을 구분하기 어렵습니다.
 
