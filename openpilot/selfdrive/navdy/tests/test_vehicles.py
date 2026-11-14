@@ -7,7 +7,7 @@ import zlib
 import pytest
 
 from openpilot.selfdrive.navdy import bridge
-from openpilot.selfdrive.navdy.display import navdy_lead_geometry, navdy_model_line
+from openpilot.selfdrive.navdy.display import lateral_scale, navdy_lead_geometry, navdy_model_line, navdy_project_point
 from openpilot.selfdrive.navdy.tests.test_bridge import Messages
 from openpilot.selfdrive.navdy.tests.test_display import lead, model, payload, selfdrive
 from openpilot.selfdrive.navdy.transport import encode_frame
@@ -173,9 +173,10 @@ def test_short_path_vehicles_match_lane_projection(distance, offset, lane):
   result = confirmed(radar=radar, m=m)
   assert len(result['navVehicles']) == 1
   actual = result['navVehicles'][0]
-  x = distance + 1.52  # radar dRel -> camera; drawn where the camera view puts that road point
-  assert [actual['screenX'], actual['screenY']] == [round(160 + 473.0 * lateral / x, 1), round(8 + 473.0 * 1.36 / x, 1)]
-  assert actual['pxPerM'] == round(473.0 / x, 2)
+  x = distance + 1.52  # radar dRel -> camera; drawn like the lanes at that distance (beyond the plan: its end held)
+  path_y = min(x, 20.) * .05
+  assert [actual['screenX'], actual['screenY']] == navdy_project_point(x, lateral, path_y)
+  assert actual['pxPerM'] == round(lateral_scale(x), 2)
   assert actual['lane'] == lane
   assert actual['lateralM'] == round(lateral, 2)
   assert actual['distanceM'] == distance
@@ -339,3 +340,12 @@ def test_disengaging_keeps_the_road_preview_tracks():
   confirmed(overlay)
   result = render(overlay, timestamp=100.3, selfdrive_state=selfdrive(enabled=False, active=False))
   assert result['roadPreview'] and len(result['navVehicles']) == 1 and overlay.tracks
+
+
+
+def test_every_drawn_vehicle_has_a_colour_role():
+  # HUD v185: lead one 1 (sky blue), lead two 2 (pale sky blue), every other vehicle 0 (grey), whatever its source.
+  m = model()
+  radar = data([point(ident=7, distance=25., lateral=3.6)])
+  result = confirmed(radar=radar, m=m)
+  assert result['navVehicles'] and all(v['colorRole'] == 0 for v in result['navVehicles'] if v['source'] == 'radar')

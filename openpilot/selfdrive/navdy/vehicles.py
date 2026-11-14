@@ -5,7 +5,8 @@ from itertools import islice
 import math
 
 from openpilot.selfdrive.navdy.display import (
-  _lead_lane, _view_uv, camera_x, finite_float, model_line_y_at, navdy_vehicle_view, road_depth_at, rounded,
+  _lead_lane, camera_x, drawing_path_y_at, finite_float, model_line_y_at, navdy_project_point, navdy_vehicle_view,
+  rounded,
 )
 
 MAX_TRACKS = 64
@@ -70,19 +71,19 @@ SPRITE_PITCH_DEG = 2.5  # pitch the Navdy v180 vehicle sprites were rendered at
 
 
 def vehicle_yaw(model, lane, distance, lateral):
-  """Sprite yaw that makes a vehicle's body follow its lane in the Navdy road view.
+  """Sprite yaw that makes a vehicle's body follow its lane in the Navdy road drawing.
 
-  Step one metre along the lane and read the screen motion (dx sideways, dy up) in the view's perspective
-  (display.navdy_vehicle_view). A sprite rendered at a fixed pitch p with yaw y has its long axis at
-  tan(tilt) = tan(y) / sin(p) on screen, so matching the lane's tilt dx/dy gives y = atan(sin(p) * dx / dy).
-  Payload sign: negative for a left-lane vehicle, whose front leans right on screen.
+  The HUD road (display.navdy_project_point) squeezes distance far more than width. Step one metre along the lane
+  and read the screen motion (dx sideways, dy up). A sprite rendered at a fixed pitch p with yaw y has its long axis
+  at tan(tilt) = tan(y) / sin(p) on screen, so matching the lane's tilt dx/dy gives y = atan(sin(p) * dx / dy):
+  adjacent lanes come out ~3-4 degrees at every distance. Payload sign: negative for a left-lane vehicle, whose
+  front leans right on screen.
   """
   heading = lane_heading(model, lane, distance)
-  step = 1.0 if distance + 1.0 <= MAX_DISTANCE else -1.0
+  step = 1.0 if camera_x(distance) + 1.0 <= MAX_DISTANCE else -1.0
   x0 = camera_x(distance)
-  y1 = lateral + math.tan(heading) * step
-  start = _view_uv(x0, lateral, road_depth_at(model, x0, lateral))
-  end = _view_uv(x0 + step, y1, road_depth_at(model, x0 + step, y1))
+  start = navdy_project_point(x0, lateral, drawing_path_y_at(model, x0))
+  end = navdy_project_point(x0 + step, lateral + math.tan(heading) * step, drawing_path_y_at(model, x0 + step))
   if not start or not end:
     return 0.0
   dx, dy = (end[0] - start[0]) / step, (start[1] - end[1]) / step
@@ -110,8 +111,9 @@ class VehicleOverlay:
   def update(self, payload, model, data, *, timestamp, now, radar_alignment=None):
     """radar_alignment (car.radar_display_alignment.RadarDisplayAlignment or None): radar lateral -> camera frame.
 
-    Every confirmed radar point is its own entry. A truck's side can return several points; they are not merged,
-    since nothing here tells one long body from a dense queue (Codex review 2026-11-13)."""
+    Every confirmed radar point is its own entry. A truck's side can return several points; they are not merged
+    here, since radar alone does not tell one long body from a dense queue (Codex review 2026-11-13). With the
+    camera's truck, sprite_overlap drops the unconfirmed points inside its body at the end."""
     errors = getattr(data, 'errors', None)
     if (not (payload['active'] or payload.get('roadPreview')) or not payload.get('navPathLeft') or data is None or errors is None
         or any(bool(getattr(errors, name, False)) for name in
@@ -189,7 +191,7 @@ class VehicleOverlay:
         'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'], 'pxPerM': view['pxPerM'],
         'yawDeg': vehicle_yaw(model, lane, distance, lateral), 'distanceM': rounded(distance),
         'relativeSpeedMps': rounded(track['vRel']), 'lateralM': rounded(lateral, 2),
-        'lane': lane, 'source': 'radar', 'longitudinalLead': False, 'confidence': 0.65,
+        'lane': lane, 'source': 'radar', 'longitudinalLead': False, 'confidence': 0.65, 'colorRole': 0,
       })
     surrounding.sort(key=lambda vehicle: vehicle['distanceM'])
     selected = leads + surrounding[:max(0, MAX_VEHICLES - len(leads))]
@@ -199,6 +201,30 @@ class VehicleOverlay:
 CAMERA_GATE_DISTANCE = 5.0  # metres, same gates as the phone live view
 CAMERA_GATE_LATERAL = 1.8
 CAMERA_TRACK_ID_BASE = 900000
+# The stock camera puts a truck ~10% farther than the radar does (11/14, camera lead vs radar lead, every 10th frame:
+# trucks median 1.102, 5-95% 1.04-1.13 over 116 frames; cars 1.015). Beyond ~30 m nearly every lead truck missed the
+# 5 m gate, so the radar point stayed a car and the camera truck was drawn again ~6 m behind it (user report
+# 2026-11-15: a truck and a car icon on top of each other). Matching therefore runs twice: first on the camera's own
+# positions exactly as before; then a truck still unmatched is tried at its position scaled back by this, and only
+# lends its kind when exactly one unmatched entry of the same lane is within the gates there. Scaling every truck up
+# front picked a nearer car over the truck it had matched (Codex review 2026-11-15, N4); a wider distance gate merged
+# another lane on a curve (N5). Camera-only entries keep the camera's own position.
+CAMERA_TRUCK_RANGE_SCALE = 1.10
+
+
+def _camera_pairs(vehicles, objects, model, scale):
+  """(score, vehicle index, object index) within the gates, objects' positions divided by scale (trucks only)."""
+  pairs = []
+  for o_index, obj in objects:
+    distance, lateral = obj['distance'] / scale, obj['lateral'] / scale
+    lane = vehicle_lane(model, distance, lateral) if scale != 1.0 else None
+    if lane == '':
+      continue                       # a scaled position outside the lanes vouches for nothing
+    for v_index, vehicle in vehicles:
+      dd, dl = abs(vehicle['distanceM'] - distance), abs(vehicle['lateralM'] - lateral)
+      if dd < CAMERA_GATE_DISTANCE and dl < CAMERA_GATE_LATERAL and (lane is None or lane == vehicle.get('lane')):
+        pairs.append((dd / CAMERA_GATE_DISTANCE + dl / CAMERA_GATE_LATERAL, v_index, o_index))
+  return pairs
 
 
 def _camera_vehicle(model, obj):
@@ -215,7 +241,7 @@ def _camera_vehicle(model, obj):
     'trackId': CAMERA_TRACK_ID_BASE + int(obj['id']), 'screenX': view['screenX'], 'screenY': view['screenY'],
     'pxPerM': view['pxPerM'], 'yawDeg': vehicle_yaw(model, lane, distance, lateral), 'distanceM': rounded(distance),
     'relativeSpeedMps': 0.0, 'lateralM': rounded(lateral, 2), 'lane': lane, 'source': 'vision',
-    'longitudinalLead': False, 'confidence': 0.6, 'kind': obj['kind'],
+    'longitudinalLead': False, 'confidence': 0.6, 'kind': obj['kind'], 'colorRole': 0,
   }
 
 
@@ -223,8 +249,9 @@ def annotate_camera(payload, model, objects, lamps):
   """Give navVehicles the stock camera's kind and lead lamps, and add camera-only objects.
 
   Display only. Radar/lead entries keep their positions; a camera object within 5 m / 1.8 m lends
-  its kind. Track 1's lamps go to whichever entry carries track 1. Camera objects nobody covers
-  (pedestrians, motorcycles, vehicles radar missed) are added like the phone live view does.
+  its kind (an unmatched truck is tried once more on the radar's range, see CAMERA_TRUCK_RANGE_SCALE).
+  Track 1's lamps go to whichever entry carries track 1. Camera objects nobody covers (pedestrians,
+  motorcycles, vehicles radar missed) are added like the phone live view does.
   """
   vehicles = payload.get('navVehicles')
   if not isinstance(vehicles, list):
@@ -232,22 +259,28 @@ def annotate_camera(payload, model, objects, lamps):
   for vehicle in vehicles:
     if 'yawDeg' not in vehicle:
       vehicle['yawDeg'] = vehicle_yaw(model, vehicle.get('lane', ''), vehicle['distanceM'], vehicle['lateralM'])
-  pairs = []
-  for v_index, vehicle in enumerate(vehicles):
-    for o_index, obj in enumerate(objects):
-      dd, dl = abs(vehicle['distanceM'] - obj['distance']), abs(vehicle['lateralM'] - obj['lateral'])
-      if dd < CAMERA_GATE_DISTANCE and dl < CAMERA_GATE_LATERAL:
-        pairs.append((dd / CAMERA_GATE_DISTANCE + dl / CAMERA_GATE_LATERAL, v_index, o_index))
   matched_vehicles, matched_objects, track1 = set(), set(), None
   track1_id = next((obj['id'] for obj in objects if obj.get('track1')), None)
-  for _, v_index, o_index in sorted(pairs):
-    if v_index in matched_vehicles or o_index in matched_objects:
-      continue
+
+  def match(v_index, o_index):
+    nonlocal track1
     matched_vehicles.add(v_index)
     matched_objects.add(o_index)
-    vehicles[v_index]['kind'] = objects[o_index]['kind']
+    vehicles[v_index]['kind'] = objects[o_index]['kind']   # a radar entry with 'kind' is camera-confirmed (sprite_overlap)
     if objects[o_index].get('track1'):
       track1 = vehicles[v_index]
+
+  for _, v_index, o_index in sorted(_camera_pairs(list(enumerate(vehicles)), list(enumerate(objects)), model, 1.0)):
+    if v_index not in matched_vehicles and o_index not in matched_objects:
+      match(v_index, o_index)
+  trucks = [(o_index, obj) for o_index, obj in enumerate(objects) if o_index not in matched_objects and obj.get('kind') == 'truck']
+  free = [(v_index, vehicle) for v_index, vehicle in enumerate(vehicles) if v_index not in matched_vehicles]
+  scaled = _camera_pairs(free, trucks, model, CAMERA_TRUCK_RANGE_SCALE)
+  for _, v_index, o_index in sorted(scaled):
+    candidates = {v for _, v, o in scaled if o == o_index}
+    claimants = {o for _, v, o in scaled if v == v_index}
+    if len(candidates) == 1 and len(claimants) == 1 and v_index not in matched_vehicles and o_index not in matched_objects:
+      match(v_index, o_index)
   extra = []
   if (payload.get('active') or payload.get('roadPreview')) and payload.get('navPathLeft'):
     for o_index, obj in enumerate(objects):

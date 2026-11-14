@@ -4,7 +4,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from openpilot.selfdrive.navdy import camera_objects as co
-from openpilot.selfdrive.navdy.display import _view_uv
+from openpilot.selfdrive.navdy.display import navdy_project_point
 from openpilot.selfdrive.navdy.tests.test_display import model, payload
 from openpilot.selfdrive.navdy.vehicles import MAX_VEHICLES, SPRITE_PITCH_DEG, annotate_camera, vehicle_yaw
 
@@ -149,13 +149,14 @@ def test_door_monitor_feeds_the_camera_only_onroad_on_gm_and_never_raises():
 
 def road_motion(distance, lateral):
   """Straight road: screen motion (dx right, dy up) per metre forward, from the projection itself."""
-  step = 1.0 if distance + 1.0 <= 80.0 else -1.0
   x = distance + 1.52  # radar dRel -> camera
-  a, b = _view_uv(x, lateral, 1.36), _view_uv(x + step, lateral, 1.36)
+  step = 1.0 if x + 1.0 <= 80.0 else -1.0
+  a = navdy_project_point(x, lateral, 0.0)
+  b = navdy_project_point(x + step, lateral, 0.0)
   return (b[0] - a[0]) / step, (a[1] - b[1]) / step
 
 
-@pytest.mark.parametrize('distance', [8.0, 20.0, 45.0, 70.0, 79.5])
+@pytest.mark.parametrize('distance', [8.0, 20.0, 45.0, 70.0, 78.0])
 def test_sprite_axis_follows_the_lane_lines(distance):
   straight = model()
   left = vehicle_yaw(straight, 'left', distance, -3.6)
@@ -165,8 +166,8 @@ def test_sprite_axis_follows_the_lane_lines(distance):
   sprite_tilt = math.tan(math.radians(-left)) / math.sin(math.radians(SPRITE_PITCH_DEG))
   assert sprite_tilt == pytest.approx(dx / dy, rel=0.05)
   assert right == pytest.approx(-left, abs=0.15)
-  # In the camera view a straight lane 3.6 m over tilts by 3.6 / 1.36 at every distance: about 6.6 degrees.
-  assert left == pytest.approx(-math.degrees(math.atan(math.sin(math.radians(SPRITE_PITCH_DEG)) * 3.6 / 1.36)), abs=0.15)
+  # The squeezed road gives adjacent lanes ~3.7 degrees at every distance, never the old 8-24.
+  assert -4.5 < left < -3.0
   assert vehicle_yaw(straight, 'center', distance, 0.0) == pytest.approx(0.0, abs=0.15)
   assert abs(vehicle_yaw(straight, 'left', distance, -7.2)) > abs(left)
 
@@ -237,6 +238,63 @@ def test_camera_only_entries_need_an_active_drive_and_respect_the_vehicle_limit(
   assert len(result['navVehicles']) == MAX_VEHICLES
   distances = [v['distanceM'] for v in result['navVehicles']]
   assert distances == sorted(distances, reverse=True)
+
+
+def test_a_truck_the_camera_reads_10_percent_far_is_the_radar_lead_not_a_second_vehicle():
+  # 11/14 00000217--22 frame 26463: camera truck (its lead) at 57.2 m, radar lead at 51.0 m. Unscaled it missed the
+  # 5 m gate and was drawn again behind the lead, which stayed a car.
+  result = car_payload()
+  result['active'] = True
+  result['navPathLeft'] = result.get('navPathLeft') or [1.0]
+  result['navVehicles'][0].update(distanceM=51.0, lateralM=0.4)
+  annotate_camera(result, model(), [obj(1, 'truck', 57.2, 0.51, track1=True)], {'brake': True, 'turn': None, 'id': 1})
+  lead = next(v for v in result['navVehicles'] if v['trackId'] == 1)
+  assert lead['kind'] == 'truck' and lead['brakeLight'] is True and lead['distanceM'] == 51.0
+  assert not [v for v in result['navVehicles'] if v['trackId'] >= 900000]
+
+
+def test_a_camera_only_truck_keeps_the_cameras_position():
+  result = car_payload()
+  result['active'] = True
+  result['navPathLeft'] = result.get('navPathLeft') or [1.0]
+  annotate_camera(result, model(), [obj(7, 'truck', 49.5, 3.85)], None)
+  added = [v for v in result['navVehicles'] if v['trackId'] >= 900000]
+  assert len(added) == 1 and added[0]['distanceM'] == 49.5 and added[0]['lateralM'] == 3.85
+
+
+def test_a_truck_that_matches_as_reported_is_never_rescaled_onto_a_nearer_car():
+  # Codex review 2026-11-15 (N4): car A 70 m, truck B 77 m, the camera reports B at 80.1 m (3.1 m off). Scaled by
+  # 1.10 first it read 72.8 m, took A, and B was then dropped as A's body.
+  result = car_payload()
+  result['navVehicles'] = [
+    dict(result['navVehicles'][0], trackId=1, distanceM=70.0, lateralM=0.0, longitudinalLead=True),
+    dict(result['navVehicles'][0], trackId=2, distanceM=77.0, lateralM=0.0, longitudinalLead=False),
+  ]
+  annotate_camera(result, model(), [obj(1, 'truck', 80.1, 0.0)], None)
+  kinds = {v['trackId']: v.get('kind') for v in result['navVehicles']}
+  assert kinds == {1: None, 2: 'truck'}
+
+
+def test_a_rescaled_truck_needs_a_single_candidate_in_its_lane():
+  result = car_payload()
+  result['navVehicles'] = [
+    dict(result['navVehicles'][0], trackId=1, distanceM=50.0, lateralM=0.0),
+    dict(result['navVehicles'][0], trackId=2, distanceM=53.5, lateralM=0.3, longitudinalLead=False),
+  ]
+  annotate_camera(result, model(), [obj(1, 'truck', 59.5, 0.2, track1=True)], None)   # 54.1 m scaled: both fit
+  assert not any('kind' in v for v in result['navVehicles'] if v['trackId'] in (1, 2))
+  result = car_payload()
+  result['navVehicles'][0].update(distanceM=50.0, lateralM=0.0, lane='left')           # another lane than the truck's
+  annotate_camera(result, model(), [obj(1, 'truck', 55.5, 0.2)], None)
+  assert 'kind' not in next(v for v in result['navVehicles'] if v['trackId'] == 1)
+
+
+def test_the_match_gate_stays_five_metres_for_cars():
+  # Codex review 2026-11-15 (N5): a wider gate merged another lane on a curve.
+  result = car_payload()
+  result['navVehicles'][0].update(distanceM=70.0)
+  annotate_camera(result, model(), [obj(1, 'car', 76.5, 0.2)], None)
+  assert 'kind' not in next(v for v in result['navVehicles'] if v['trackId'] == 1)
 
 
 # ---- Radar tunnel flag (bus1 0x460 byte3 bit3), for the dark-ambient tunnel exception ----

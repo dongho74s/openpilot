@@ -29,6 +29,7 @@ from openpilot.selfdrive.navdy.feedback import is_no_observation
 from openpilot.selfdrive.navdy.journal import CONNECT_TIMINGS, LocalJournal, sanitize
 from openpilot.selfdrive.navdy.camera_objects import CameraObjects
 from openpilot.selfdrive.navdy.vehicles import VehicleOverlay, annotate_camera
+from openpilot.selfdrive.navdy.sprite_overlap import settle_overlaps
 from openpilot.selfdrive.navdy.policy import read_transport_mode, transport_policy
 from openpilot.selfdrive.car.radar_display_alignment import read_alignment
 from openpilot.selfdrive.navdy.usb_health import RecoveryGuard, UsbHealth, recovery_messages
@@ -234,6 +235,12 @@ def live_payload(sm, sequence, *, sources=None, door_open=False, ambient_overrid
     now = time.monotonic()
     objects, lamps = camera.snapshot(now)  # one consistent observation: lamps carry the id they belong to
     annotate_camera(payload, recent('modelV2'), objects, lamps)
+  if vehicles is not None:
+    try:
+      settle_overlaps(payload, recent('modelV2'))  # last: needs every entry's kind, yaw and sprite scale
+    except Exception:
+      from openpilot.common.swaglog import cloudlog
+      cloudlog.exception('navdy sprite overlap pass failed; drawing every vehicle')
   # Offroad has no card/selfdrived messages. Ambient/power state instead comes
   # from fresh device/panda state; never grant active telemetry from this path.
   payload['displayPower'] = 'unknown' if known_road is None else 'onroad' if known_road else 'offroad'
