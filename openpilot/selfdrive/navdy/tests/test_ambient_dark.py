@@ -10,15 +10,22 @@ from openpilot.selfdrive.navdy.ambient_dark import (
 )
 
 WALL = 1_794_180_000.0
+KST = 9 * 3600
+
+
+def night(wall):
+  """Most tests use a morning WALL to test the light and camera rules, so the sun is down for them."""
+  return -20.0
+
 AUTO = {'mode': 'auto'}
 PROFILE = {'mode': 'profile', 'profile': {'driving': {'zone1': {'brightness': 30}}}}
 NONE, CITY, HIGH_BEAM = 0, 1, 2
 OFF_HOLD_S = max(DARK_HOLD_S, NO_LIGHTS_HOLD_S)
 
 
-def driver(enabled=True):
+def driver(enabled=True, sun=night):
   state = {'enabled': enabled}
-  ambient = DarkAmbient(read=lambda: state['enabled'])
+  ambient = DarkAmbient(read=lambda: state['enabled'], sun=sun)
   return ambient, state
 
 
@@ -444,3 +451,59 @@ def test_tunnel_offroad_is_ignored_and_state_reports_it():
   assert ambient.state()['tunnel'] is True
   ambient.observe(now=0.4, dark=True, onroad=True, camera=NONE, tunnel=False)
   assert ambient.state()['tunnel'] is False
+
+
+
+def kst(y, mo, d, h, mi, sec=0):
+  return datetime(y, mo, d, h, mi, sec, tzinfo=timezone.utc).timestamp() - KST
+
+
+@pytest.mark.parametrize('wall,low,high', [
+  (kst(2026, 11, 14, 16, 48, 23), 4.8, 6.6),    # 11/14: the light went off here while still bright
+  (kst(2026, 11, 8, 17, 44), -4.5, -3.0),       # 11/08: 16 min after sunset (about 0.19 deg/min)
+  (kst(2026, 6, 21, 12, 30), 74.0, 77.0),       # summer noon in Seoul
+  (kst(2028, 12, 31, 17, 30), -2.2, -2.05),     # leap year's last day: 366-day year (NOAA); 365 gives -1.99
+])
+def test_sun_elevation_matches_known_times(wall, low, high):
+  assert low <= mod.sun_elevation_deg(wall) <= high
+
+
+def overcast_afternoon(ambient, start_wall):
+  """11/14 16:48: dark sensor, the camera reports lights once, then nothing; long enough to switch off at night."""
+  results = [step(ambient, t, wall=start_wall + t, camera=CITY) for t in (0.0, 0.5)]
+  t = 1.0
+  while t < 40.0:
+    results.append(step(ambient, t, wall=start_wall + t, camera=NONE))
+    t += 0.5
+  return results
+
+
+def test_an_overcast_afternoon_never_switches_off():
+  ambient, _ = driver(sun=None)
+  results = overcast_afternoon(ambient, kst(2026, 11, 14, 16, 48))
+  assert not ambient.active and all(r is None or r.get('mode') != 'manual' for r in results)
+
+
+def test_the_same_road_after_sunset_switches_off():
+  ambient, _ = driver(sun=None)
+  results = overcast_afternoon(ambient, kst(2026, 11, 14, 18, 30))
+  assert ambient.active and results[-1]['mode'] == 'manual'
+
+
+def test_an_off_light_comes_back_on_after_dawn():
+  ambient, _ = driver(sun=None)
+  overcast_afternoon(ambient, kst(2026, 11, 15, 6, 0))     # before dawn: off
+  assert ambient.active
+  step(ambient, 100.0, wall=kst(2026, 11, 15, 7, 0), camera=NONE)   # sun up
+  assert not ambient.active
+
+
+@pytest.mark.parametrize('wall', [1000.0, 1_600_000_000.0])
+def test_an_unset_clock_keeps_the_old_rules(wall):
+  ambient, _ = driver(sun=None)
+  step(ambient, 0.0, wall=wall, camera=CITY)
+  t = 0.5
+  while t < 30.0:
+    step(ambient, t, wall=wall, camera=NONE)
+    t += 0.5
+  assert ambient.active

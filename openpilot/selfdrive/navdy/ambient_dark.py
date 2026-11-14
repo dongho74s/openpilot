@@ -17,6 +17,11 @@ Releasing in Park, before the ignition goes off, lets the HUD's own
 onroad-to-offroad transition (exit courtesy lighting) run unmodified. If the link
 is down from Park until the ignition is off, that transition can still be missed.
 
+Only after sunset: the sun must be at least SUN_DOWN_DEG below the horizon (computed for Seoul, within about 1.5
+degrees anywhere in Korea). On an overcast afternoon the car's sensor reads dark and the camera can briefly report
+lights and then nothing; 11/14 16:48 (sun +5.7 deg) switched the light off while it was still bright. With a clock
+that is not set (before MIN_VALID_WALL) this check is skipped. After sunrise passes SUN_UP_DEG it comes back on.
+
 Tunnels are an exception. The camera reads most lit tunnels as city lights but not all
 (11/12 20:50: a lit tunnel read "nothing" for 25 s and the light went off). While the front
 radar reports a tunnel (bus1 0x460 byte3 bit3), "nothing" never counts, and a light that was
@@ -40,6 +45,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 
 PARAM = 'NavdyAmbientDarkOff'
@@ -55,6 +61,26 @@ LEASE_ROTATIONS = 3     # expiresAt lands 10-15 minutes ahead
 PARAM_REFRESH_S = 2.0
 USER_OVERRIDE_MODES = ('manual', 'auto')
 CAMERA_NONE, CAMERA_CITY_LIGHTS, CAMERA_HIGH_BEAM = 0, 1, 2
+SUN_DOWN_DEG = -4.0       # switch off only once the sun is this far below the horizon
+SUN_UP_DEG = -3.0         # an off light comes back on once the sun is above this (dawn)
+SEOUL_LAT_LON = (37.5, 127.0)
+MIN_VALID_WALL = 1_700_000_000.0  # 2023-11-14: an earlier wall clock is not set; the sun check is skipped
+
+
+def sun_elevation_deg(wall: float, lat: float = SEOUL_LAT_LON[0], lon: float = SEOUL_LAT_LON[1]) -> float:
+  """Sun height above the horizon in degrees at Unix time wall (NOAA approximation, within about 0.5 deg)."""
+  t = datetime.fromtimestamp(wall, timezone.utc)
+  hours = t.hour + t.minute / 60.0 + t.second / 3600.0
+  days = 366.0 if t.year % 4 == 0 and (t.year % 100 != 0 or t.year % 400 == 0) else 365.0   # NOAA: 366 in leap years
+  g = 2.0 * math.pi / days * (t.timetuple().tm_yday - 1 + (hours - 12.0) / 24.0)
+  declination = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g) - 0.006758 * math.cos(2 * g)
+                 + 0.000907 * math.sin(2 * g) - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+  equation_min = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g) - 0.014615 * math.cos(2 * g)
+                           - 0.040849 * math.sin(2 * g))
+  hour_angle = math.radians((hours * 60.0 + equation_min + 4.0 * lon) / 4.0 - 180.0)
+  latitude = math.radians(lat)
+  return math.degrees(math.asin(math.sin(latitude) * math.sin(declination)
+                                + math.cos(latitude) * math.cos(declination) * math.cos(hour_angle)))
 
 
 def read_enabled(params=None) -> bool:
@@ -79,8 +105,9 @@ def off_override(wall: float) -> dict:
 
 
 class DarkAmbient:
-  def __init__(self, read=read_enabled):
+  def __init__(self, read=read_enabled, sun=None):
     self._read = read
+    self._sun = sun                        # sun elevation function (tests); None: sun_elevation_deg
     self.enabled = False
     self._checked_at: float | None = None
     self._started = False
@@ -157,6 +184,17 @@ class DarkAmbient:
       self.forwarded_profile = profile_key(user_override)
     return result
 
+  def _sun_elevation(self, wall) -> float | None:
+    """Sun height for the wall clock, or None when the clock is not set or anything fails (check skipped)."""
+    try:
+      wall = float(wall)
+      if not math.isfinite(wall) or wall < MIN_VALID_WALL:
+        return None
+      elevation = float((self._sun or sun_elevation_deg)(wall))
+      return elevation if math.isfinite(elevation) else None
+    except Exception:
+      return None
+
   def _decide(self, now, wall, dark, onroad, door_open, parked, user_override, camera, tunnel=None):
     self._refresh(now)
     if not self._started:
@@ -167,11 +205,13 @@ class DarkAmbient:
     no_lights = self._track(now, dark, onroad, camera, tunnel)
     user_blocks = isinstance(user_override, dict) and user_override.get('mode') in USER_OVERRIDE_MODES
     gated = self.enabled and onroad is True and not door_open and not parked and not user_blocks
+    sun = self._sun_elevation(wall)
     if self.active:
-      if not gated:
+      if not gated or (sun is not None and sun > SUN_UP_DEG):
         self.active = False
     elif (gated and dark is True and now - self.dark_since >= DARK_HOLD_S
-          and no_lights and now - self.no_lights_since >= NO_LIGHTS_HOLD_S):
+          and no_lights and now - self.no_lights_since >= NO_LIGHTS_HOLD_S
+          and (sun is None or sun <= SUN_DOWN_DEG)):
       self.active = True
     if self.active:
       # The HUD can hold the last off command for up to RELEASE_S after it arrives.
