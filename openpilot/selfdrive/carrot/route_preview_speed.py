@@ -391,6 +391,8 @@ class RouteSpeedMap:
   LOST_S = 1.0
   MAX_GAP_S = 0.5
   SAME_GAP_M = 10.0
+  TIGHTER = 0.85     # a curve this much slower is another curve
+  APART_M = 100.0    # ... and so is one this far apart
   GOOD_VIEWS = 7
 
   def __init__(self):
@@ -400,7 +402,7 @@ class RouteSpeedMap:
     self.missing_since = None
     self.last_time = None
     self.number = 0        # changes when a different curve binds (an accelerator floor resets)
-    self.binding = None    # (start, end, direction) of that curve
+    self.binding = None    # (start, end, direction, curve m/s) of that curve
 
   def clear(self):
     self.route = self.key = self.binding = self.missing_since = None
@@ -491,19 +493,24 @@ class RouteSpeedMap:
       if approach_kph < best.approach_kph:
         best = PreviewCurve(approach_kph, min(NO_LIMIT_KPH, speed * 3.6 / ratio), float(ahead), cell.direction,
                             cell.curve[0] - odometer, cell.curve[1] - odometer, allowance * (3.6 / ratio) ** 2)
-        chosen = (cell.curve[0], cell.curve[1], cell.direction)
+        chosen = (cell.curve[0], cell.curve[1], cell.direction, speed)
     if chosen is not None:
       previous = self.binding
-      # A different curve: the other direction, or, once the car is past the curve it had, a stretch apart from it.
-      # Before then a binding moving between parts of a long gentle arc (drawn as several curves) stays this curve
-      # (review 6 W2); a later curve the same way takes over at the earlier one's end.
-      if (previous is None or chosen[2] != previous[2]
-          or (odometer > previous[1] and (chosen[0] > previous[1] + self.SAME_GAP_M
-                                          or chosen[1] < previous[0] - self.SAME_GAP_M))):
+      # Another curve (the accelerator floor resets): the other direction; a stretch apart that is clearly tighter
+      # (the driver's speed was for the gentler one, review 7 X1); or one far apart. Parts of one long gentle arc
+      # (drawn as several curves with similar speeds) and stretches that overlap stay one curve (review 6 W2).
+      if previous is None or chosen[2] != previous[2]:
+        is_new = True
+      elif chosen[0] <= previous[1] + self.SAME_GAP_M and chosen[1] >= previous[0] - self.SAME_GAP_M:
+        is_new = False
+      else:
+        gap = max(chosen[0] - previous[1], previous[0] - chosen[1])
+        is_new = chosen[3] < previous[3] * self.TIGHTER or gap > self.APART_M
+      if is_new:
         self.number += 1
         self.binding = chosen
       else:
-        self.binding = (min(previous[0], chosen[0]), max(previous[1], chosen[1]), chosen[2])
+        self.binding = (min(previous[0], chosen[0]), max(previous[1], chosen[1]), chosen[2], min(previous[3], chosen[3]))
     return best
 
 
