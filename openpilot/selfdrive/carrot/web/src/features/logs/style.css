@@ -1533,6 +1533,19 @@
   color: var(--md-primary, #e8823a);
 }
 
+/* The "360° 전체" mode button reads as a toggle, not a compass stop. */
+.logs-live__flat-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--md-outline-var) 55%, transparent);
+  border-radius: 999px;
+}
+
+.logs-live__flat-btn.is-active {
+  background: color-mix(in srgb, var(--md-primary, #e8823a) 18%, transparent);
+  border-color: var(--md-primary, #e8823a);
+}
+
 .logs-live__compass-track {
   position: relative;
   flex: 1 1 auto;

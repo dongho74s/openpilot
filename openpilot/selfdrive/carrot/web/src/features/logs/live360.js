@@ -30,6 +30,12 @@
 // someone is actually watching. While driving it just works; while parked
 // it needs the "주차 중 360 라이브" toggle (CarrotVisionParkedEnabled),
 // which is also offered right here in the panel.
+//
+// "360° 전체" mode shows the whole circle in one frame instead of a
+// rotating 100-degree viewport: the road camera already spans 180 degrees
+// of the strip (0-180), so the full circle is just both halves side by
+// side — road on the left, driver on the right. Dragging and the compass
+// stops only apply to the rotating view.
 
 const LIVE360_CAMERAS = Object.freeze(["road", "driver"]);
 const LIVE360_BUSY_CODE = "carrot_vision_busy";
@@ -44,6 +50,8 @@ const LIVE360_FOV_DEG = 100;
 // make the curve smoother; 48 is a good balance on a phone.
 const LIVE360_SLICES = 48;
 const LIVE360_MAX_DPR = 2;
+const LIVE360_HINT_ROTATE = "좌우로 밀면 360도 파노라마처럼 돌아가요 · 전방 ↔ 실내 (카메라는 앞·실내 2대라 뒤·옆은 없습니다)";
+const LIVE360_HINT_FLAT = "360° 전체: 왼쪽 전방 · 오른쪽 실내를 한 화면에 봅니다 (카메라는 앞·실내 2대라 뒤·옆은 없습니다)";
 
 const live360Els = {
   roadVideo: null,
@@ -59,6 +67,8 @@ const live360Els = {
   viewLabel: null,
   compassMarker: null,
   compassStops: [],
+  flatBtn: null,
+  hint: null,
 };
 
 let live360Pc = null;
@@ -74,6 +84,9 @@ let live360Angle = 0;
 let live360Drag = null;
 let live360Tween = 0;
 let live360Raf = 0;
+// Flat full-strip mode: the whole 360-degree circle in one frame instead
+// of the rotating 100-degree viewport.
+let live360Flat = false;
 
 function live360DeviceId() {
   return String(
@@ -130,6 +143,11 @@ function live360DrawFrame() {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
 
+  if (live360Flat) {
+    live360DrawFlatFrame(ctx, W, H);
+    return;
+  }
+
   const fovRad = (LIVE360_FOV_DEG * Math.PI) / 180;
   const f = (W / 2) / Math.tan(fovRad / 2);
   const sliceW = W / LIVE360_SLICES;
@@ -152,6 +170,30 @@ function live360DrawFrame() {
     sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
     ctx.drawImage(video, sx, 0, sw, video.videoHeight, x0, 0, sliceW + 1, H);
   }
+}
+
+// Draw one camera feed cover-fit into a target rect (no distortion, the
+// overflow is cropped), the way object-fit: cover works for <video>.
+function live360DrawCover(ctx, video, x, y, w, h) {
+  if (!video || !video.videoWidth || !video.videoHeight || video.readyState < 2) return false;
+  const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
+  const sw = w / scale;
+  const sh = h / scale;
+  const sx = (video.videoWidth - sw) / 2;
+  const sy = (video.videoHeight - sh) / 2;
+  ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+  return true;
+}
+
+// Flat full-strip view: the road camera already spans 180 degrees of the
+// strip (0-180), so the whole circle is both halves side by side — road
+// on the left, driver on the right — with a seam line between them.
+function live360DrawFlatFrame(ctx, W, H) {
+  const half = W / 2;
+  live360DrawCover(ctx, live360Els.roadVideo, 0, 0, half, H);
+  live360DrawCover(ctx, live360Els.driverVideo, half, 0, half, H);
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.fillRect(half - 1, 0, 2, H);
 }
 
 function live360RenderLoop() {
@@ -177,6 +219,12 @@ function live360StopRenderLoop() {
 // the middle). If the render loop is not running, draw one frame so the
 // canvas follows the angle immediately.
 function live360ApplyView() {
+  if (live360Flat) {
+    if (live360Els.viewLabel) live360Els.viewLabel.textContent = "360° 전체";
+    for (const stop of live360Els.compassStops) stop.classList.remove("is-active");
+    if (!live360Raf) live360DrawFrame();
+    return;
+  }
   const norm = ((live360Angle % 360) + 360) % 360;
   if (live360Els.compassMarker) {
     live360Els.compassMarker.style.left = `${(norm / 360) * 100}%`;
@@ -220,6 +268,7 @@ function live360RotateTo(angle) {
 }
 
 function live360OnPointerDown(event) {
+  if (live360Flat) return;
   if (!live360Els.stage) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
   live360Drag = {
@@ -254,8 +303,23 @@ function live360OnPointerEnd(event) {
 
 function live360OnCompassClick(event) {
   const view = event?.currentTarget?.dataset?.live360View;
+  // Tapping a compass stop while flat switches back to the rotating view.
+  if (live360Flat) live360SetFlat(false);
   if (view === "driver") live360RotateTo(180);
   else if (view === "road") live360RotateTo(0);
+}
+
+// Switch between the rotating 100-degree viewport and the flat full-strip
+// view (whole 360 degrees in one frame). Dragging and the compass stops
+// only apply to the rotating view.
+function live360SetFlat(flat) {
+  live360Flat = !!flat;
+  if (live360Els.flatBtn) {
+    live360Els.flatBtn.classList.toggle("is-active", live360Flat);
+    live360Els.flatBtn.setAttribute("aria-pressed", live360Flat ? "true" : "false");
+  }
+  if (live360Els.hint) live360Els.hint.textContent = live360Flat ? LIVE360_HINT_FLAT : LIVE360_HINT_ROTATE;
+  live360ApplyView();
 }
 
 async function live360FetchJson(url, options = {}) {
@@ -527,6 +591,8 @@ export function initLive360() {
   live360Els.viewLabel = document.getElementById("live360ViewLabel");
   live360Els.compassMarker = document.getElementById("live360CompassMarker");
   live360Els.compassStops = Array.from(document.querySelectorAll("[data-live360-view]"));
+  live360Els.flatBtn = document.getElementById("live360FlatBtn");
+  live360Els.hint = document.getElementById("live360RotateHint");
   if (!live360Els.roadVideo || !live360Els.driverVideo || !live360Els.canvas) return false;
   live360Els.toggle?.addEventListener("change", live360OnToggleChange);
   live360Els.retry?.addEventListener("click", () => {
@@ -540,7 +606,8 @@ export function initLive360() {
   for (const stop of live360Els.compassStops) {
     stop.addEventListener("click", live360OnCompassClick);
   }
+  live360Els.flatBtn?.addEventListener("click", () => live360SetFlat(!live360Flat));
   live360Angle = 0;
-  live360ApplyView();
+  live360SetFlat(live360Flat);
   return true;
 }
