@@ -367,13 +367,14 @@ def test_one_odd_tight_estimate_does_not_hold_a_gentle_curve_down(radius, spacin
   assert inside and min(inside) >= 0.88 * kph(radius, BUDGET)
 
 
+@pytest.mark.parametrize('second', [(40, 90), (30, 40)])
 @pytest.mark.parametrize('straight', [50, 80, 150])
-def test_a_tighter_curve_the_same_way_after_a_straight_is_another_curve(straight):
-  """Review 7 X1: R86 right 60 degrees, a straight, then R40 right 90 degrees: the accelerator floor taken in the
-  first must not hide the second."""
+def test_a_tighter_curve_the_same_way_after_a_straight_is_another_curve(straight, second):
+  """Reviews 7 X1, 8: R86 right 60 degrees, a straight, then a tighter right curve (R40 90 degrees, or R30 drawn
+  with four 5 m chords, first estimated gently): the accelerator floor taken in the first must not hide the second."""
   def arc(start, heading, radius, turn):
     points, (x, y), h = [], start, heading
-    for _ in range(int(radius * math.radians(turn) / 5)):
+    for _ in range(int(round(radius * math.radians(turn) / 5))):
       h += 5 / radius
       x, y = x + 5 * math.sin(h), y + 5 * math.cos(h)
       points.append((x, y))
@@ -381,11 +382,11 @@ def test_a_tighter_curve_the_same_way_after_a_straight_is_another_curve(straight
   first, h = arc((0.0, 0.0), 0.0, 86, 60)
   end = first[-1]
   begin = (end[0] + straight * math.sin(h), end[1] + straight * math.cos(h))
-  second, h = arc(begin, h, 40, 90)
+  second, h = arc(begin, h, *second)
   vertices = split([(0.0, -150.0), (0.0, 0.0)] + first + [begin] + second +
                    [(second[-1][0] + 400 * math.sin(h), second[-1][1] + 400 * math.cos(h))])
   second_start = 150 + 86 * math.radians(60) + straight
-  runs = drive(vertices, second_start + 40, v=20.0)
+  runs = drive(vertices, second_start + 25, v=20.0)
   numbers = {number for odometer, _, result, number in runs if odometer < 170 and number}
   later = {number for odometer, _, result, number in runs if odometer > second_start and number}
   assert numbers == {1} and later and min(later) >= 2

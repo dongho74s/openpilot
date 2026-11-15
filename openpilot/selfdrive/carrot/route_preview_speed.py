@@ -496,16 +496,16 @@ class RouteSpeedMap:
         chosen = (cell.curve[0], cell.curve[1], cell.direction, speed)
     if chosen is not None:
       previous = self.binding
-      # Another curve (the accelerator floor resets): the other direction; a stretch apart that is clearly tighter
-      # (the driver's speed was for the gentler one, review 7 X1); or one far apart. Parts of one long gentle arc
-      # (drawn as several curves with similar speeds) and stretches that overlap stay one curve (review 6 W2).
-      if previous is None or chosen[2] != previous[2]:
+      # Another curve (the accelerator floor resets): the other direction; anything clearly tighter than the curve
+      # the floor was taken for, even a part merged before its estimate came down (reviews 7 X1, 8); or a stretch
+      # far apart. Parts of one long gentle arc (drawn as several curves with similar speeds) and overlapping
+      # stretches of similar speed stay one curve (review 6 W2).
+      if previous is None or chosen[2] != previous[2] or chosen[3] < previous[3] * self.TIGHTER:
         is_new = True
       elif chosen[0] <= previous[1] + self.SAME_GAP_M and chosen[1] >= previous[0] - self.SAME_GAP_M:
         is_new = False
       else:
-        gap = max(chosen[0] - previous[1], previous[0] - chosen[1])
-        is_new = chosen[3] < previous[3] * self.TIGHTER or gap > self.APART_M
+        is_new = max(chosen[0] - previous[1], previous[0] - chosen[1]) > self.APART_M
       if is_new:
         self.number += 1
         self.binding = chosen
