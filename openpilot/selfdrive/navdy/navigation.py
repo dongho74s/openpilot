@@ -1,7 +1,7 @@
 """Bounded Navdy feedback, separate from vehicle control and USB ownership."""
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict
 from dataclasses import dataclass
 import json
 import math
@@ -44,10 +44,14 @@ def camera_distance(value):
 # Route preview (TMAP RoadPreviewSender, Naver through the phone bridge): the phone matches its position to the route
 # and samples the next 400 m every 5 m as east/north offsets in metres from that point, once per second.
 PREVIEW_MAX_AGE = 2.5
-# The preview's age is the comma's wall clock minus the phone's observedAtMs (both network-synced; the comma was 0.13 s
-# ahead of the phone on 2026-11-16), never the HUD's ageMs: the HUD clock was 1.3 s behind the phone that day and the
-# HUD clamps negative ages to 0. A comma clock this far behind the phone cannot give an age.
-PREVIEW_CLOCK_SLACK = 1.0
+# The preview's age is the comma's wall clock minus the phone's observedAtMs when it arrives (both network-synced; the
+# comma was 0.13 s ahead of the phone on 2026-11-16), then the comma's monotonic clock: never the HUD's ageMs (the HUD
+# clock was 1.3 s behind the phone that day and the HUD clamps negative ages to 0), and a later wall-clock step does
+# not change it. A comma clock this far behind the phone cannot give an age; one never NTP-synced since boot is not
+# trusted at all.
+PREVIEW_CLOCK_SLACK = 0.5
+CLOCK_SYNCED_PATH = Path('/run/systemd/timesync/synchronized')
+PREVIEW_PRODUCERS = 16
 PREVIEW_POINTS = (7, 81)
 PREVIEW_STEP_M = (3.0, 7.0)
 PREVIEW_MAX_OFFSET_M = 500.0
@@ -56,8 +60,14 @@ PREVIEW_MAX_OFFSET_M = 500.0
 @dataclass(frozen=True)
 class RoutePreview:
   points: tuple   # ((east, north), ...) metres from the matched position at observation, 5 m apart
-  age: float      # seconds since the phone observed it (comma wall clock - observedAtMs, never less than since arrival)
+  age: float      # seconds since the phone observed it
   key: tuple      # (session, sequence): one observation
+  min_age: float = 0.0   # seconds since the comma received it: a lower bound of age that needs no clock
+
+
+def clock_synced(path=CLOCK_SYNCED_PATH):
+  """systemd-timesyncd creates this file once the clock is NTP-synchronized."""
+  return path.exists()
 
 
 def preview_points(value):
@@ -110,8 +120,14 @@ class FeedbackTracker:
     self.speed_signature = None
     self.speed_sequence = 0
     self.section = SectionTracker()
-    self.retired_road_sessions = deque(maxlen=16)
-    self.preview_cache = (None, None)
+    # The route preview keeps its own producer state, apart from the 'road' component the road limit uses: a
+    # producer's observation counts once, in sequence order, so a late packet of a producer that has since sent a
+    # newer one (or of one replaced by another app) cannot bring back an old route; an app that comes back sends
+    # higher sequences and is accepted again.
+    self.preview_sequences = OrderedDict()
+    self.preview = None   # (key, points, arrived (monotonic), age on arrival)
+    self.clock_synced = clock_synced
+    self.clock_checked = (-math.inf, False)
 
   def _component(self, name, value, received_at):
     if value is None:
@@ -141,7 +157,30 @@ class FeedbackTracker:
     self.revision += 1
     self.revisions[name] += 1
 
-  def accept(self, packet, received_at, now):
+  def _accept_preview(self, value, received_at, received_wall):
+    if not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1:
+      return
+    session, sequence = value.get('session'), value.get('sequence')
+    if not isinstance(session, str) or not 1 <= len(session) <= 64 or type(sequence) is not int or sequence < 0:
+      return
+    last = self.preview_sequences.get(session)
+    if last is not None and sequence <= last:
+      return   # the same observation again, or an older one arriving late
+    self.preview_sequences[session] = sequence
+    self.preview_sequences.move_to_end(session)
+    while len(self.preview_sequences) > PREVIEW_PRODUCERS:
+      self.preview_sequences.popitem(last=False)
+    self.preview = None   # the newest observation decides, even when it carries no usable window
+    observed = number(value.get('observedAtMs'), 1, 2**53)
+    if value.get('guidance') is not True or value.get('reason') != 'ok' or observed is None:
+      return
+    clock_age = received_wall - observed / 1000
+    points = preview_points(value.get('points'))
+    if points is None or not -PREVIEW_CLOCK_SLACK <= clock_age <= PREVIEW_MAX_AGE:
+      return
+    self.preview = ((session, sequence), points, received_at, max(0.0, clock_age))
+
+  def accept(self, packet, received_at, now, wall=None):
     if (not isinstance(packet, dict) or is_no_observation(packet) or number(received_at, 0, now) is None
         or now - received_at > LINK_TTL or received_at <= self.received_at):
       return False
@@ -149,13 +188,8 @@ class FeedbackTracker:
       self.section.clear()
     self.received_at = received_at
     self.extended = 'navigationFeedback' in packet
-    old_road = self.sequences.get('road', ('',))[0]
     self._component('road', packet.get('roadPreview'), received_at)
-    new_road = self.sequences.get('road', ('',))[0]
-    # A producer that was replaced (app restart, provider change) never supplies a route preview again, even when a
-    # delayed packet of it arrives after its successor.
-    if new_road != old_road and old_road and new_road not in self.retired_road_sessions:
-      self.retired_road_sessions.append(old_road)
+    self._accept_preview(packet.get('roadPreview'), received_at, (time.time() if wall is None else wall) - (now - received_at))
     old_session = self.sequences.get('guidance', ('',))[0]
     self._component('guidance', packet.get('navigationFeedback'), received_at)
     if self.sequences.get('guidance', ('',))[0] != old_session:
@@ -187,35 +221,24 @@ class FeedbackTracker:
       self.revisions[name] += 1
     return None, 0
 
-  def route_preview(self, now, wall=None):
-    """The fresh route preview, or None. It needs an accepted, guided ('ok') packet of a current producer while the
-    HUD reports active guidance, observed no more than PREVIEW_MAX_AGE ago."""
-    if not 0 <= now - self.received_at < LINK_TTL:
+  def route_preview(self, now):
+    """The fresh route preview, or None. It needs the newest observation of a producer to be a guided ('ok') window
+    while the HUD reports active guidance, observed no more than PREVIEW_MAX_AGE ago by an NTP-synced comma clock."""
+    if not 0 <= now - self.received_at < LINK_TTL or self.preview is None:
+      return None
+    if now - self.clock_checked[0] >= 10.0:
+      self.clock_checked = (now, bool(self.clock_synced()))
+    if not self.clock_checked[1]:
       return None
     raw_guidance, _ = self._fresh('guidance', now)
     guidance = raw_guidance.get('guidance') if raw_guidance else None
     if not isinstance(guidance, dict) or guidance.get('active') is not True:
       return None
-    road, _ = self._fresh('road', now)
-    if not road or road.get('guidance') is not True or road.get('reason') != 'ok':
+    key, points, arrived, arrival_age = self.preview
+    since = now - arrived
+    if since < 0 or arrival_age + since > PREVIEW_MAX_AGE:
       return None
-    key = (road.get('session'), road.get('sequence'))
-    observed = number(road.get('observedAtMs'), 1, 2**53)
-    if key[0] in self.retired_road_sessions or observed is None:
-      return None
-    _, captured, _ = self.components['road']
-    arrived = captured + road['ageMs'] / 1000   # the comma's receive time of this observation
-    wall = time.time() if wall is None else wall
-    clock_age = wall - observed / 1000
-    age = max(clock_age, now - arrived)
-    if clock_age < -PREVIEW_CLOCK_SLACK or not 0 <= age <= PREVIEW_MAX_AGE:
-      return None
-    if self.preview_cache[0] != key:
-      self.preview_cache = (key, preview_points(road.get('points')))
-    points = self.preview_cache[1]
-    if points is None:
-      return None
-    return RoutePreview(points, age, key)
+    return RoutePreview(points, arrival_age + since, key, since)
 
   def section_end(self, now):
     """Explicit, fresh producer evidence that a section cap must end: 'stopped', 'off_route' or ''.
@@ -373,9 +396,9 @@ class NavigationReader:
     with self.lock:
       return self.tracker.section_end(time.monotonic() if now is None else now)
 
-  def route_preview(self, now=None, wall=None):
+  def route_preview(self, now=None):
     with self.lock:
-      return self.tracker.route_preview(time.monotonic() if now is None else now, wall)
+      return self.tracker.route_preview(time.monotonic() if now is None else now)
 
   def _invalidate_model(self, reason):
     self.model_tracker.clear(reason)

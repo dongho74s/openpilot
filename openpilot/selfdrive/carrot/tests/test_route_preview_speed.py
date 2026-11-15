@@ -10,6 +10,15 @@ from openpilot.selfdrive.carrot.route_preview_speed import (
 )
 from openpilot.selfdrive.navdy.navigation import FeedbackTracker, RoutePreview, preview_points
 
+
+def split(vertices, gap=39.0):
+  """Map vertices no more than `gap` m apart, as the producers require (straights get intermediate vertices)."""
+  out = [vertices[0]]
+  for a, b in zip(vertices, vertices[1:]):
+    n = max(1, math.ceil(math.dist(a, b) / gap))
+    out += [(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n) for k in range(1, n + 1)]
+  return out
+
 BUDGET = 1.9 / 0.8   # AutoCurveSpeedFactor 80 %, the user's setting
 
 
@@ -128,6 +137,25 @@ def test_a_long_hairpin_keeps_its_radius():
   assert preview_curve_speed(points, 0.0, 20.0, 0.8, 30).curve_kph == pytest.approx(kph(86, BUDGET), rel=0.03)
 
 
+def test_curves_beyond_a_straight_are_separate():
+  """Review 2 N1: a gentle bend, 200 m of straight, then a junction turn the same way. The turn's limit starts at
+  the turn, not at the bend."""
+  h = math.radians(20)
+  p1, p2 = (0.0, 50.0), (200 * math.sin(h), 50 + 200 * math.cos(h))
+  p3 = (p2[0] + 300 * math.sin(h + math.pi / 2), p2[1] + 300 * math.cos(h + math.pi / 2))
+  points = resample(split([(0, -50), (0, 0), p1, p2, p3]))
+  turn = [c for c in corners(points) if abs(c.turn) > math.radians(80)][0]
+  assert turn.start_m > 280 and turn.curve_start_m > 280
+  assert preview_curve_speed(points, 0.0, 20.0, 0.8, 30).approach_kph > 72.0
+
+
+@pytest.mark.parametrize('radius,spacing,turn', [(86, 5, 33.32), (40, 30, 44.05), (86, 20, 40), (60, 15, 50)])
+def test_short_arcs_between_straights_keep_their_radius(radius, spacing, turn):
+  """Review 2 N7: a short arc drawn with a few vertices between straights."""
+  points = resample(polygon_curve(radius, spacing, turn_deg=turn))
+  assert preview_curve_speed(points, 0.0, 20.0, 0.8, 5).curve_kph == pytest.approx(kph(radius, BUDGET), rel=0.03)
+
+
 def test_small_map_zigzags_and_kinks_are_not_curves():
   points = list(route(radius=0))
   points[40], points[41] = (points[40][0] + 1.0, points[40][1]), (points[41][0] + 1.0, points[41][1])
@@ -164,6 +192,9 @@ def test_a_passed_curve_no_longer_limits_but_lag_keeps_it_a_little_longer():
   assert preview_curve_speed(short, (end + 5) / v, v, lag=0.0).approach_kph == NO_LIMIT_KPH
   assert preview_curve_speed(short, (end + 5) / v, v).approach_kph == pytest.approx(30.0)   # 20 m of lag: may not have passed
   assert preview_curve_speed(short, (end + 25) / v, v).approach_kph == NO_LIMIT_KPH
+  # Review 2 N5: passing is judged by the clock-free lower bound (time since arrival), never by a wall-clock age that
+  # a fast comma clock inflates.
+  assert preview_curve_speed(short, (end + 25) / v, v, min_age=0.1).approach_kph == pytest.approx(30.0)
 
 
 def test_sensitivity_and_floor_follow_the_curve_settings():
@@ -197,31 +228,67 @@ def test_release_is_rate_limited_and_missing_preview_holds():
 
 
 def test_a_frozen_window_with_a_corner_is_rejected_until_it_changes():
-  """Review R4: a phone whose matched position stopped keeps sending the same window as new observations."""
+  """Review R4 / review 2 N2: new observations with the same cornered window although the car drove on are a
+  stalled phone position; the same observation re-read every cycle (normal between 1 Hz updates) is not."""
   guard = FrozenPreviewGuard()
-  curve = RoutePreview(route(straight_m=100), 0.2, ('s', 1))
   t = 0.0
-  assert guard.update(curve, 20.0, t) is curve
-  for _ in range(3):   # 0.3 s at 20 m/s: 6 m, not yet suspicious
-    t += 0.1
-    assert guard.update(curve, 20.0, t) is curve
-  for _ in range(3):   # 12 m driven with the corner no nearer
-    t += 0.1
-    guard.update(curve, 20.0, t)
-  assert guard.update(curve, 20.0, t + 0.1) is None
-  moved = RoutePreview(route(straight_m=80), 0.2, ('s', 2))
-  assert guard.update(moved, 20.0, t + 0.2) is moved
-  straight = RoutePreview(route(radius=0), 0.2, ('s', 3))   # a straight window is the same however far the car moves
-  for i in range(30):
-    assert guard.update(straight, 20.0, t + 0.3 + 0.1 * i) is straight
+
+  def run(preview, seconds, v=20.0):
+    nonlocal t
+    out = []
+    for _ in range(int(round(seconds / 0.05))):
+      t += 0.05
+      out.append(guard.update(preview, v, t))
+    return out
+
+  # Normal 1 Hz at 72 km/h: every observation is used for its whole second.
+  for k in range(4):
+    preview = RoutePreview(route(straight_m=150 - 20 * k), 0.1, ('s', k))
+    assert all(p is preview for p in run(preview, 1.0))
+  # The phone repeats the last window as new observations while the car drives on: rejected.
+  for k in range(4, 6):
+    stale = RoutePreview(route(straight_m=150 - 20 * 3), 0.1, ('s', k))
+    assert all(p is None for p in run(stale, 1.0))
+  # ... also with a few centimetres of noise.
+  noisy = RoutePreview(tuple((x + 0.06, y) if i == 30 else (x, y) for i, (x, y) in
+                             enumerate(route(straight_m=150 - 20 * 3))), 0.1, ('s', 6))
+  assert all(p is None for p in run(noisy, 1.0))
+  moved = RoutePreview(route(straight_m=60), 0.1, ('s', 7))
+  assert all(p is moved for p in run(moved, 1.0))
+  # A straight window, or a stopped car, repeats legitimately.
+  for k in range(8, 11):
+    straight = RoutePreview(route(radius=0), 0.1, ('s', k))
+    assert all(p is straight for p in run(straight, 1.0))
   stopped = FrozenPreviewGuard()
-  for i in range(30):
-    assert stopped.update(curve, 0.0, 0.1 * i) is curve
+  for k in range(3):
+    preview = RoutePreview(route(straight_m=100), 0.1, ('t', k))
+    assert stopped.update(preview, 0.0, float(k)) is preview
+
+
+def test_one_continuous_curve_keeps_its_identity_while_the_binding_corner_moves():
+  """Review 2 N3: the stretch of road of the curve a corner belongs to identifies it across previews; successive
+  previews of one curve overlap (carrot_man counts a new curve only when they do not)."""
+  previous, changes = None, 0
+  for travelled in range(0, 240, 20):
+    points = resample(polygon_curve(86, 20, straight=50, turn_deg=180), start=travelled)
+    result = preview_curve_speed(points, 0.0, 20.0, 0.8, 30)
+    assert result.approach_kph < NO_LIMIT_KPH
+    span = (travelled + result.curve_start, travelled + result.curve_end)
+    if previous is not None and (span[0] > previous[1] + 10.0 or span[1] < previous[0] - 10.0):
+      changes += 1
+    previous = span
+  assert changes == 0
 
 
 # --- tracker ---------------------------------------------------------------------------------------------------------
 
 WALL = 1_800_000_000.0
+
+
+def tracker():
+  out = FeedbackTracker()
+  out.clock_synced = lambda: True
+  return out
 
 
 def packet(observed=WALL - 0.3, guidance_active=True, session='12345678-1234-1234-1234-123456789012', sequence=7,
@@ -238,50 +305,64 @@ def packet(observed=WALL - 0.3, guidance_active=True, session='12345678-1234-123
 
 
 def test_tracker_returns_a_fresh_guided_preview():
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(), 100.0, 100.0)
-  preview = tracker.route_preview(100.5, WALL + 0.5)
+  t = tracker()
+  assert t.accept(packet(), 100.0, 100.0, WALL)
+  preview = t.route_preview(100.5)
   assert preview is not None and len(preview.points) == 81
-  assert preview.age == pytest.approx(0.8) and preview.key[1] == 7
-  assert tracker.route_preview(102.5, WALL + 2.5) is None   # observed 2.8 s ago
+  assert preview.age == pytest.approx(0.8) and preview.min_age == pytest.approx(0.5) and preview.key[1] == 7
+  assert t.route_preview(102.3) is None   # observed 2.6 s ago
 
 
-def test_tracker_age_is_the_comma_clock_not_the_hud_clock():
-  """Review R2/R3: the HUD clock was 1.3 s behind the phone (2026-11-16) and clamps the age at 0, and its age leaves
-  out the HUD-to-comma leg. The comma's own clock against observedAtMs covers the whole way."""
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(observed=WALL - 1.2, ageMs=0), 100.0, 100.0)   # the HUD says 0 ms
-  assert tracker.route_preview(100.0, WALL).age == pytest.approx(1.2)
-  # The comma clock a little behind the phone: never younger than its time since arrival.
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(observed=WALL + 0.5, ageMs=0), 100.0, 100.0)
-  assert tracker.route_preview(100.4, WALL + 0.4).age == pytest.approx(0.4)
-  # Far behind: no age can be trusted.
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(observed=WALL + 1.5, ageMs=0), 100.0, 100.0)
-  assert tracker.route_preview(100.1, WALL + 0.1) is None
+def test_tracker_age_is_fixed_on_arrival_by_the_comma_clock():
+  """Review R2/R3, review 2 N5/N6: the HUD clock was 1.3 s behind the phone (2026-11-16), clamps the age at 0, and
+  its age left out the USB leg; the comma's clock against observedAtMs covers the whole way, once, on arrival."""
+  t = tracker()
+  assert t.accept(packet(observed=WALL - 1.2, ageMs=0), 100.0, 100.0, WALL)   # the HUD says 0 ms
+  assert t.route_preview(100.0).age == pytest.approx(1.2)
+  assert t.route_preview(100.5).age == pytest.approx(1.7)   # monotonic from there: a later wall-clock step is moot
+  t = tracker()
+  assert t.accept(packet(observed=WALL - 0.1, ageMs=3900), 100.0, 100.0, WALL)   # a HUD clock far ahead
+  assert t.route_preview(101.9).age == pytest.approx(2.0)
+  t = tracker()
+  assert t.accept(packet(observed=WALL + 0.4, ageMs=0), 100.0, 100.0, WALL)   # comma a little behind: age 0
+  assert t.route_preview(100.2).age == pytest.approx(0.2)
+  t = tracker()
+  assert t.accept(packet(observed=WALL + 0.8, ageMs=0), 100.0, 100.0, WALL)   # too far behind
+  assert t.route_preview(100.1) is None
+
+
+def test_tracker_needs_an_ntp_synced_comma_clock():
+  t = tracker()
+  t.clock_synced = lambda: False
+  assert t.accept(packet(), 100.0, 100.0, WALL)
+  assert t.route_preview(100.1) is None
 
 
 @pytest.mark.parametrize('kwargs', [{'guidance_active': False}, {'with_guidance': False}])
 def test_tracker_needs_active_guidance(kwargs):
   """Review R5: a preview left over after guidance stopped does not limit."""
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(**kwargs), 100.0, 100.0)
-  assert tracker.route_preview(100.1, WALL) is None
+  t = tracker()
+  assert t.accept(packet(**kwargs), 100.0, 100.0, WALL)
+  assert t.route_preview(100.1) is None
 
 
-def test_a_replaced_producer_never_comes_back():
-  """Review R5: A seq 10, then B seq 2, then a late A seq 9 must not revive A's route."""
-  a, b = '12345678-1234-1234-1234-12345678900a', '12345678-1234-1234-1234-12345678900b'
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(session=a, sequence=10), 100.0, 100.0)
-  assert tracker.route_preview(100.0, WALL).key == (a, 10)
-  assert tracker.accept(packet(session=b, sequence=2), 100.1, 100.1)
-  assert tracker.route_preview(100.1, WALL).key == (b, 2)
-  assert tracker.accept(packet(session=a, sequence=9), 100.2, 100.2)
-  assert tracker.route_preview(100.2, WALL) is None
-  assert tracker.accept(packet(session=b, sequence=3), 100.3, 100.3)
-  assert tracker.route_preview(100.3, WALL).key == (b, 3)
+def test_late_packets_never_bring_back_an_old_route_but_a_returning_app_does():
+  """Review R5 / review 2 N4: A10, B20, late A9, C30, late B19: C stays. A coming back with A11 is accepted."""
+  a, b, c = ('12345678-1234-1234-1234-12345678900' + x for x in 'abc')
+  t = tracker()
+  received = 100.0
+  for session, sequence, expected in ((a, 10, (a, 10)), (b, 20, (b, 20)), (a, 9, (b, 20)), (c, 30, (c, 30)),
+                                      (b, 19, (c, 30)), (a, 11, (a, 11))):
+    received += 0.1
+    assert t.accept(packet(session=session, sequence=sequence), received, received, WALL)
+    assert t.route_preview(received).key == expected
+
+
+def test_the_newest_observation_without_a_window_clears_it():
+  t = tracker()
+  assert t.accept(packet(sequence=7), 100.0, 100.0, WALL)
+  assert t.accept(packet(sequence=8, reason='off_route_or_heading', points=[]), 100.1, 100.1, WALL)
+  assert t.route_preview(100.1) is None
 
 
 @pytest.mark.parametrize('overrides', [
@@ -292,9 +373,9 @@ def test_a_replaced_producer_never_comes_back():
   {'observedAtMs': None}, {'observedAtMs': 'x'},
 ])
 def test_tracker_rejects_unusable_previews(overrides):
-  tracker = FeedbackTracker()
-  assert tracker.accept(packet(**overrides), 100.0, 100.0)
-  assert tracker.route_preview(100.1, WALL) is None
+  t = tracker()
+  assert t.accept(packet(**overrides), 100.0, 100.0, WALL)
+  assert t.route_preview(100.1) is None
 
 
 def test_points_round_trip_and_bounds():
@@ -352,7 +433,7 @@ def test_carrot_man_runs_only_in_navdy_route_modes_and_forgets_when_off(monkeypa
   man.route_preview_display_target = 0.0
   man.route_preview_logged = 0.0
   man.route_preview_curve = 0
-  man.route_preview_corner_at = None
+  man.route_preview_curve_at = None
   man.autoCurveSpeedFactor = 1.0
   events = []
   monkeypatch.setattr(carrot_man.cloudlog, 'event', lambda name, **kw: events.append((name, kw)))

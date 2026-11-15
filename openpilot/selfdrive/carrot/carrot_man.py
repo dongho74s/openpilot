@@ -335,8 +335,8 @@ class CarrotMan:
     self.route_preview_guard = FrozenPreviewGuard()
     self.route_preview_display_target = 0.0
     self.route_preview_logged = 0.0
-    self.route_preview_curve = 0          # changes when a different corner binds (resets an accelerator floor)
-    self.route_preview_corner_at = None   # odometer position of the binding corner's vertex
+    self.route_preview_curve = 0          # changes when a different curve binds (resets an accelerator floor)
+    self.route_preview_curve_at = None    # odometer (start, end) of the binding curve
     self.carrot_curve_speed_params()
 
     self.is_running = True
@@ -1474,7 +1474,7 @@ class CarrotMan:
       # Off: nothing carries over to the next time it is switched on.
       self.route_preview_curve_speed = RoutePreviewCurveSpeed()
       self.route_preview_guard = FrozenPreviewGuard()
-      self.route_preview_corner_at = None
+      self.route_preview_curve_at = None
       return self.route_preview_curve_speed.speed
     result = preview = None
     if sm.alive['carState'] and sm.valid['carState']:
@@ -1482,18 +1482,23 @@ class CarrotMan:
       preview = self.route_preview_guard.update(serv.navdy_navigation.route_preview(now), CS.vEgo, now)
       if preview is not None:
         result = preview_curve_speed(preview.points, preview.age, CS.vEgo, self.autoCurveSpeedFactor,
-                                     serv.autoCurveSpeedLowerLimit, a_ego=CS.aEgo, speed_ratio=CS.vCluRatio)
+                                     serv.autoCurveSpeedLowerLimit, a_ego=CS.aEgo, speed_ratio=CS.vCluRatio,
+                                     min_age=preview.min_age)
     speed = self.route_preview_curve_speed.update(result, now)
     binding = result is not None and abs(abs(speed) - result.approach_kph) < 1e-3
     if binding:
       self.route_preview_display_target = result.curve_kph
-      if math.isfinite(result.vertex_m):
-        corner_at = self.route_preview_guard.odometer + result.vertex_m
-        if self.route_preview_corner_at is None or abs(corner_at - self.route_preview_corner_at) > 30.0:
+      if math.isfinite(result.curve_start) and math.isfinite(result.curve_end):
+        # The same curve seen from successive previews covers overlapping stretches of road; a curve beyond a
+        # straight does not.
+        odometer = self.route_preview_guard.odometer
+        curve_at = (odometer + result.curve_start, odometer + result.curve_end)
+        previous = self.route_preview_curve_at
+        if previous is None or curve_at[0] > previous[1] + 10.0 or curve_at[1] < previous[0] - 10.0:
           self.route_preview_curve += 1
-        self.route_preview_corner_at = corner_at
+        self.route_preview_curve_at = curve_at
     elif abs(speed) >= 250:
-      self.route_preview_corner_at = None
+      self.route_preview_curve_at = None
     if now - self.route_preview_logged >= 1.0 and (preview is not None or abs(speed) < 250):
       self.route_preview_logged = now
       cloudlog.event("navdy_route_preview", points=len(preview.points) if preview else 0,

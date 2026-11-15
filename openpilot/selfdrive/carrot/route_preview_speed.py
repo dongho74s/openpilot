@@ -25,13 +25,19 @@ SIMPLIFY_M = 1.5               # resampled points within this of a chord are not
 MIN_TURN = math.radians(1.0)   # smaller corners are straight for speed purposes (rounding is 0.01 m per point)
 REVERSAL_TURN = math.radians(150.0)   # a U-turn or reversed geometry: no radius can be inferred, the floor applies
 SPLIT_VERTEX_M = 5.5            # kept samples one resampling step apart that turn the same way share one map vertex
-MERGE_SPAN_M = 60.0            # neighbouring corners closer than this along the route are also checked as one
-LANE_FREEDOM_M = 1.5           # how far inside a run of corners the car can cut while staying in its lane
+MERGE_SPAN_M = 60.0            # a curve of corners spanning up to twice this is also checked as one arc
+# ... when it turns at least this much: for gentler curves a sample's position error of a metre or two changes the arc
+# through it several-fold (a 16 degree bend came out 46 m instead of 156 m), so they keep their vertices' radii.
+MERGE_MIN_TURN = math.radians(30.0)
+# Same-direction corners joined by a chord up to this long are one curve (an arc's chords after simplification are at
+# most about sqrt(8 R SIMPLIFY_M), 60 m for a 300 m radius); a longer chord is a straight between two curves.
+CURVE_CHORD_M = 60.0
 MIN_POINTS = 7
 # The age is end to end (comma clock minus the phone's observation time) but the phone's matched position itself
 # lags, and the two clocks differ by about 0.1 s (measured 2026-11-16). Approaching, assume the car is this much
 # further along (slow earlier); for a passed curve, this much less (keep it longer).
 LAG_MARGIN_S = 1.0
+FROZEN_TOLERANCE_M = 0.5
 
 
 class PreviewCurve(NamedTuple):
@@ -39,7 +45,8 @@ class PreviewCurve(NamedTuple):
   curve_kph: float = NO_LIMIT_KPH      # speed in that corner
   distance: float = 0.0                # from the car (lagged) to where the corner's arc starts, >= 0
   direction: float = 1.0               # +1 left, -1 right
-  vertex_m: float = math.inf           # from the car now to the corner's vertex (identity of the binding corner)
+  curve_start: float = math.inf        # from the car now to the start and end of the whole curve the binding corner
+  curve_end: float = math.inf          # belongs to (its identity across previews)
 
 
 class Corner(NamedTuple):
@@ -48,6 +55,8 @@ class Corner(NamedTuple):
   end_m: float
   radius: float     # 0 for a reversal
   turn: float       # signed radians, left positive
+  curve_start_m: float = 0.0   # the curve (run of same-direction corners joined by arc chords) it belongs to
+  curve_end_m: float = 0.0
 
 
 def _segment_distance(p, a, b):
@@ -122,30 +131,62 @@ def vertices(points):
   return out
 
 
-def _merged(verts, singles):
-  """Corners from runs of neighbouring same-direction corners: a sharp turn the map draws as a few close vertices
-  (three 30 degree vertices 5 m apart) is one tight corner, though each vertex alone looks gentle. The drivable arc
-  must turn the run's whole angle while staying within LANE_FREEDOM_M of the run's inner chain."""
+def _tangent_radius(vertex, a, c, point, half):
+  """Radius of the arc tangent to the lines vertex->a and vertex->c (meeting at `vertex`, turning by 2 * half) that
+  passes through `point`: the larger root, the arc whose side facing `vertex` goes through the point."""
+  ua, uc = (a[0] - vertex[0], a[1] - vertex[1]), (c[0] - vertex[0], c[1] - vertex[1])
+  la, lc = math.hypot(*ua), math.hypot(*uc)
+  bx, by = ua[0] / la + uc[0] / lc, ua[1] / la + uc[1] / lc
+  lb = math.hypot(bx, by)
+  if lb < 1e-9:
+    return math.inf
+  q = (point[0] - vertex[0], point[1] - vertex[1])
+  along = (q[0] * bx + q[1] * by) / lb
+  secant, tangent2 = 1.0 / math.cos(half), math.tan(half) ** 2
+  disc = max(0.0, (secant * along) ** 2 - tangent2 * (q[0] ** 2 + q[1] ** 2))
+  return max(0.0, (secant * along + math.sqrt(disc)) / tangent2)
+
+
+def _merged(verts, singles, groups):
+  """A curve the map draws with a few vertices: a sharp turn split over close vertices (three 30 degree vertices 5 m
+  apart) is one tight corner though each vertex alone looks gentle, and a short arc drawn with two or three vertices
+  between straights has the radius of its circle. Map vertices lie on the road, so the arc tangent to the lines the
+  curve comes from and goes to passes through its vertices."""
   out = []
-  for j in range(len(singles)):
-    for k in range(j + 1, len(singles)):
-      run = singles[j:k + 1]
-      first, last = run[0][0], run[-1][0]
-      if (any(run[i + 1][0] != run[i][0] + 1 for i in range(len(run) - 1))
-          or any(c[1].turn * run[0][1].turn <= 0 for c in run) or verts[last][1] - verts[first][1] > MERGE_SPAN_M):
-        break
-      total = sum(c[1].turn for c in run)
-      if abs(total) >= REVERSAL_TURN:
-        break
-      vertex = _meet(verts[first - 1][0], verts[first][0], verts[last][0], verts[last + 1][0])   # outer lines
-      if vertex is None:
-        continue
-      chain = [verts[i][0] for i in range(first, last + 1)]
-      inset = min(_segment_distance(vertex, p, q) for p, q in zip(chain, chain[1:]))
-      radius = (inset + LANE_FREEDOM_M) / (1.0 - math.cos(abs(total) / 2.0))
-      if radius < min(c[1].radius for c in run):
-        out.append(Corner((run[0][1].vertex_m + run[-1][1].vertex_m) / 2.0, run[0][1].start_m, run[-1][1].end_m,
-                          radius, total))
+  turn_at = {j: corner.turn for j, corner in singles}
+  for group in groups:
+    run = [singles[i] for i in group]
+    first, last = run[0][0], run[-1][0]
+    total = sum(c[1].turn for c in run)
+    if (len(run) < 2 or not MERGE_MIN_TURN <= abs(total) < REVERSAL_TURN
+        or verts[last][1] - verts[first][1] > 2 * MERGE_SPAN_M):
+      continue
+    # A neighbour turning the same way beyond a long chord: a gentle arc the simplification drew with long chords,
+    # whose outer chords are not the straights the curve is tangent to.
+    if turn_at.get(first - 1, 0.0) * total > 0 or turn_at.get(last + 1, 0.0) * total > 0:
+      continue
+    a, c = verts[first - 1][0], verts[last + 1][0]
+    # At the window's edges the outer chord may itself be part of the curve (the car is already in it, or the window
+    # ends in it), not the straight it is tangent to: only a chord clearly longer than the curve's own counts.
+    inner = max(math.dist(verts[i][0], verts[i + 1][0]) for i in range(first, last))
+    if ((first - 1 == 0 and math.dist(a, verts[first][0]) < 1.5 * inner)
+        or (last + 1 == len(verts) - 1 and math.dist(verts[last][0], c) < 1.5 * inner)):
+      continue
+    vertex = _meet(a, verts[first][0], verts[last][0], c)   # where the outer lines meet
+    if vertex is None:
+      continue
+    # The median: a vertex rebuilt where two chords meet sits a little outside a densely drawn arc, a sample kept
+    # between map vertices a little inside it; a sharp corner's vertices are all near the meeting point.
+    radii = sorted(_tangent_radius(vertex, a, c, verts[i][0], abs(total) / 2.0) for i in range(first, last + 1))
+    radius = (radii[(len(radii) - 1) // 2] + radii[len(radii) // 2]) / 2.0
+    if radius < min(corner.radius for _, corner in run):
+      # The arc meets the outer lines radius * tan(half turn) from where they meet: before the first vertex only if
+      # that vertex is nearer to the meeting point than that.
+      reach = radius * math.tan(abs(total) / 2.0)
+      start = run[0][1].vertex_m - max(0.0, reach - math.dist(vertex, verts[first][0]))
+      end = run[-1][1].vertex_m + max(0.0, reach - math.dist(vertex, verts[last][0]))
+      out.append(Corner((run[0][1].vertex_m + run[-1][1].vertex_m) / 2.0, start, end, radius, total,
+                        min(run[0][1].curve_start_m, start), max(run[-1][1].curve_end_m, end)))
   return out
 
 
@@ -177,34 +218,50 @@ def corners(points, tolerance=MAP_TOLERANCE_M):
       reach_in, reach_out = min(s1 / 2.0, tangent), min(s2 / 2.0, tangent)
     vertex = verts[j][1]
     singles.append((j, Corner(vertex, vertex - reach_in, vertex + reach_out, radius, turn)))
-  # Within one curve (neighbouring vertices turning the same way) the road already has this radius at the previous
-  # vertex and still at the next: the corner's limit covers both.
+  # A curve: neighbouring corners turning the same way joined by an arc chord (not a straight between two curves).
+  # Within it the road already has a corner's radius at the previous vertex and still at the next: its limit covers
+  # both, and the whole curve is the identity of whichever corner binds.
+  groups, group = [], []
   for i, (j, corner) in enumerate(singles):
-    start, end = corner.start_m, corner.end_m
-    if i > 0 and singles[i - 1][0] == j - 1 and singles[i - 1][1].turn * corner.turn > 0:
-      start = min(start, singles[i - 1][1].vertex_m)
-    if i + 1 < len(singles) and singles[i + 1][0] == j + 1 and singles[i + 1][1].turn * corner.turn > 0:
-      end = max(end, singles[i + 1][1].vertex_m)
-    singles[i] = (j, corner._replace(start_m=start, end_m=end))
-  return [c for _, c in singles] + _merged(verts, singles)
+    joined = (group and singles[i - 1][0] == j - 1 and singles[i - 1][1].turn * corner.turn > 0
+              and verts[j][1] - verts[j - 1][1] <= CURVE_CHORD_M)
+    if not joined and group:
+      groups.append(group)
+      group = []
+    group.append(i)
+  if group:
+    groups.append(group)
+  for group in groups:
+    curve_start, curve_end = singles[group[0]][1].start_m, singles[group[-1]][1].end_m
+    for position, i in enumerate(group):
+      j, corner = singles[i]
+      start = singles[group[position - 1]][1].vertex_m if position > 0 else corner.start_m
+      end = singles[group[position + 1]][1].vertex_m if position + 1 < len(group) else corner.end_m
+      singles[i] = (j, corner._replace(start_m=min(start, corner.start_m), end_m=max(end, corner.end_m),
+                                       curve_start_m=curve_start, curve_end_m=curve_end))
+  return [c for _, c in singles] + _merged(verts, singles, groups)
 
 
 def preview_curve_speed(points, age, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, a_ego=0.0, speed_ratio=1.0,
-                        lag=LAG_MARGIN_S):
+                        lag=LAG_MARGIN_S, min_age=None):
   """The tightest distance-adjusted speed for the previewed route, with the vision curve speed's physics.
 
   points: ((east, north), ...) metres along the route from where the phone matched the car, age seconds ago; the car
-  has since moved about v_ego * age along it. Returns None for invalid input, PreviewCurve() (no limit) when the route
-  ahead has no corner that limits.
+  has since moved about v_ego * age along it. min_age, if given, is a lower bound of the age that needs no clock
+  (seconds since the comma received it): a corner counts as passed only by that, less the lag. Returns None for
+  invalid input, PreviewCurve() (no limit) when the route ahead has no corner that limits.
   """
-  if not all(math.isfinite(value) for value in (age, v_ego, sensitivity, lower_limit_kph, speed_ratio, a_ego, lag)):
+  min_age = age if min_age is None else min_age
+  if not all(math.isfinite(value) for value in (age, min_age, v_ego, sensitivity, lower_limit_kph, speed_ratio, a_ego,
+                                               lag)):
     return None
-  if age < 0.0 or v_ego < 0.0 or sensitivity <= 0.0 or lag < 0.0 or points is None or len(points) < MIN_POINTS:
+  if (age < 0.0 or min_age < 0.0 or min_age > age or v_ego < 0.0 or sensitivity <= 0.0 or lag < 0.0 or points is None
+      or len(points) < MIN_POINTS):
     return None
   ratio = speed_ratio if 0.5 < speed_ratio <= 1.2 else 1.0
   travelled = v_ego * age
-  ahead_of = v_ego * (age + lag)              # for approach: the car may be further along
-  passed_at = v_ego * max(0.0, age - lag)     # for a passed corner: it may be less far along
+  ahead_of = v_ego * (age + lag)                 # for approach: the car may be further along
+  passed_at = v_ego * max(0.0, min_age - lag)    # for a passed corner: it may be less far along
   response_distance = v_ego * (RESPONSE_TIME + (max(0.0, a_ego) + APPROACH_DECEL) / (2.0 * APPROACH_JERK))
   floor_ms = max(5.0, lower_limit_kph) * ratio / 3.6
   lateral_budget = TARGET_LAT_ACCEL / float(min(max(sensitivity, 0.5), 3.0))
@@ -218,25 +275,30 @@ def preview_curve_speed(points, age, v_ego, sensitivity=1.0, lower_limit_kph=30.
     approach_kph = min(NO_LIMIT_KPH, approach_ms * 3.6 / ratio)
     if approach_kph < best.approach_kph:
       best = PreviewCurve(approach_kph, min(NO_LIMIT_KPH, curve_ms * 3.6 / ratio), float(ahead),
-                          math.copysign(1.0, corner.turn), corner.vertex_m - travelled)
+                          math.copysign(1.0, corner.turn), corner.curve_start_m - travelled,
+                          corner.curve_end_m - travelled)
   return best
 
 
-def same_points(a, b, tolerance=0.05):
+def same_points(a, b, tolerance=FROZEN_TOLERANCE_M):
   return a is not None and b is not None and len(a) == len(b) and all(
     abs(p[0] - q[0]) <= tolerance and abs(p[1] - q[1]) <= tolerance for p, q in zip(a, b))
 
 
 class FrozenPreviewGuard:
   """A phone whose matched position stopped updating keeps sending the same window as new observations. On a
-  straight road a moving car's window is the same anyway, so only a window with a corner can show it: the corner
-  must come nearer as the car moves. Identical windows with a corner after FROZEN_AFTER_M of driving are rejected
-  until the window changes."""
+  straight road a moving car's window is the same anyway, so only a window with a clear corner can show it: between
+  two observations the corner must come nearer as the car moves. A new observation (new key) whose window is the same
+  as the previous observation's (within FROZEN_TOLERANCE_M) although the car drove FROZEN_AFTER_M between their
+  arrivals is rejected, and so are its repeats; the same observation re-read every cycle is not judged again."""
   FROZEN_AFTER_M = 10.0
+  CLEAR_TURN = math.radians(10.0)   # moving 10 m shifts the points past such a corner by 1.7 m
 
   def __init__(self):
+    self.key = None
     self.points = None
-    self.changed_at_m = 0.0
+    self.arrived_at_m = 0.0
+    self.frozen = False
     self.odometer = 0.0
     self.last_time = None
 
@@ -247,13 +309,12 @@ class FrozenPreviewGuard:
     self.last_time = now
     if preview is None:
       return None
-    if not same_points(preview.points, self.points):
-      self.points = preview.points
-      self.changed_at_m = self.odometer
-      return preview
-    if self.odometer - self.changed_at_m >= self.FROZEN_AFTER_M and corners(preview.points):
-      return None
-    return preview
+    if preview.key != self.key:
+      self.frozen = (same_points(preview.points, self.points)
+                     and self.odometer - self.arrived_at_m >= self.FROZEN_AFTER_M
+                     and any(abs(c.turn) >= self.CLEAR_TURN for c in corners(preview.points)))
+      self.key, self.points, self.arrived_at_m = preview.key, preview.points, self.odometer
+    return None if self.frozen else preview
 
 
 class RoutePreviewCurveSpeed:
