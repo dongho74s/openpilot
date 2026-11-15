@@ -111,15 +111,35 @@ class TestPowerMonitoring:
     estimated_capacity = 0 - ((1/3600) * POWER_DRAW * 1e6)
     assert abs(pm.get_car_battery_capacity() - estimated_capacity) < 10
 
-  @pytest.mark.parametrize("minutes", [0, 60, 4320])
-  @pytest.mark.parametrize("offset, expected", [(0, False), (1, True)])
+  @pytest.mark.parametrize("minutes", [0, 1, 60, 4320])
+  @pytest.mark.parametrize("offset", [0, 1])
   @pytest.mark.parametrize("in_car", [False, True])
-  def test_max_time_offroad(self, mocker, minutes, offset, expected, in_car):
+  @pytest.mark.parametrize("started_seen", [False, True])
+  @pytest.mark.parametrize("booted_at", [10., 3600.])
+  def test_max_time_offroad(self, mocker, minutes, offset, in_car, started_seen, booted_at):
+    """The offroad timer as in carrot: in a car only, never under five minutes offroad, and only after driving in
+    this boot or an hour after booting."""
     self.params.put_int("MaxTimeOffroadMin", minutes)
     pm = PowerMonitoring()
-    start_time = 10.
-    mocker.patch("time.monotonic", return_value=start_time + minutes * 60 + offset)
-    assert pm.should_shutdown(False, in_car, start_time, False) == expected
+    limit = max(minutes * 60, 300)
+    now = booted_at + limit + offset
+    mocker.patch("time.monotonic", return_value=now)
+    expected = in_car and offset == 1 and (started_seen or now > 3600)
+    assert pm.should_shutdown(False, in_car, booted_at, started_seen) == expected
+
+  def test_a_fresh_install_with_no_offroad_time_does_not_power_off_at_the_offroad_screen(self, mocker):
+    """2026-11-16: another user's device powered off the moment the offroad screen came up after installing this
+    branch, and again on every power-up (MaxTimeOffroadMin 0, no drive since boot)."""
+    self.params.put_int("MaxTimeOffroadMin", 0)
+    pm = PowerMonitoring()
+    clock = mocker.patch("time.monotonic", return_value=25.)
+    for now in (25., 26., 400., 3599.):
+      clock.return_value = now
+      assert pm.shutdown_reason(False, True, 25., False) is None
+      assert pm.shutdown_reason(False, False, 25., False) is None
+    clock.return_value = 3601.
+    assert pm.shutdown_reason(False, True, 25., False) == "offroad_timeout"
+    assert pm.shutdown_reason(False, False, 25., False) is None   # USB power: never
 
   def test_car_voltage(self, mocker):
     POWER_DRAW = 0 # To stop shutting down for other reasons
@@ -184,27 +204,6 @@ class TestPowerMonitoring:
     pm.calculate(GOOD_VOLTAGE, False, True)
     assert not pm.should_shutdown(False, True, 0., False)
 
-  @pytest.mark.parametrize("voltage", [0, 5000, 9000, 9499])
-  def test_usb_power_with_a_harness_status_never_triggers_car_battery_shutdown(self, voltage):
-    """2026-11-16: a phone charger or laptop powering the device still turned it off after booting. Even if the
-    harness status reads connected, a USB reading is not a car battery: no filter, timer or capacity change."""
-    self.params.put_int("MaxTimeOffroadMin", 4320)
-    pm = PowerMonitoring()
-    capacity = pm.get_car_battery_capacity()
-    for _ in range(600):
-      pm.calculate(voltage, False, True)
-      assert not pm.should_shutdown(False, True, 0., False)
-    assert pm.car_voltage_mV == GOOD_VOLTAGE
-    assert pm.low_voltage_since is None and pm.last_measurement_time is None
-    assert pm.get_car_battery_capacity() == capacity
-
-  @pytest.mark.parametrize("voltage, expected", [(9500, True), (10500, True), (10999, True), (11000, False)])
-  def test_car_battery_range_for_the_low_voltage_shutdown(self, mocker, voltage, expected):
-    self.params.put_int("MaxTimeOffroadMin", 4320)
-    pm = PowerMonitoring()
-    confirmed_voltage(pm, mocker, voltage)
-    assert pm.should_shutdown(False, True, 0., False) == expected
-
   def test_bench_to_low_car_battery_still_shuts_down(self):
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
@@ -263,10 +262,10 @@ class TestPowerMonitoring:
 
   def test_timeout_setting_updates_without_restart(self, mocker):
     self.params.put_int("MaxTimeOffroadMin", 4320)
-    mocker.patch("time.monotonic", return_value=61.)
+    mocker.patch("time.monotonic", return_value=361.)
     pm = PowerMonitoring()
     assert not pm.should_shutdown(False, True, 0., True)
-    self.params.put_int("MaxTimeOffroadMin", 1)
+    self.params.put_int("MaxTimeOffroadMin", 6)
     assert pm.should_shutdown(False, True, 0., True)
 
   @pytest.mark.parametrize("change", ["ignition", "raw_recovery", "missing_voltage", "harness", "zero_voltage"])

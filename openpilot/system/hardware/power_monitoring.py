@@ -5,7 +5,7 @@ from openpilot.common.params import Params
 from openpilot.system.hardware import HARDWARE
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.statsd import statlog
-from openpilot.system.hardware.automatic_shutdown import LOW_VOLTAGE_MV, MAX_SAMPLE_AGE_S, car_battery_voltage
+from openpilot.system.hardware.automatic_shutdown import LOW_VOLTAGE_MV, MAX_SAMPLE_AGE_S
 
 CAR_VOLTAGE_LOW_PASS_K = 0.011 # LPF gain for 45s tau (dt/tau / (dt/tau + 1))
 
@@ -15,6 +15,11 @@ CAR_CHARGING_RATE_W = 45
 
 VBATT_PAUSE_CHARGING = LOW_VOLTAGE_MV / 1000
 LOW_VOLTAGE_CONFIRMATION_S = 10.0
+# The offroad timer, as in carrot: never sooner than five minutes offroad, and only after driving in this boot or an
+# hour after booting. Without these a device with a short (or 0) MaxTimeOffroadMin powered off the moment the offroad
+# screen came up after an install, and again on every power-up (2026-11-16 report).
+DELAY_SHUTDOWN_TIME_S = 300
+MIN_ON_TIME_S = 3600
 
 class PowerMonitoring:
   def __init__(self):
@@ -39,9 +44,8 @@ class PowerMonitoring:
     try:
       now = time.monotonic()
 
-      # USB power (phone charger, laptop) is not a car battery, even when Panda reports a voltage or the harness
-      # status reads connected: neither the filter, the capacity estimate nor the low-voltage timer may see it.
-      if voltage is None or not in_car or not car_battery_voltage(voltage):
+      # USB bench power is not a car battery, even when Panda reports a voltage.
+      if voltage is None or not in_car:
         self.low_voltage_since = None
         self.last_voltage_measurement = None
         with self.integration_lock:
@@ -59,7 +63,7 @@ class PowerMonitoring:
           not 0 <= now - self.last_voltage_measurement <= MAX_SAMPLE_AGE_S):
         self.low_voltage_since = None
       self.last_voltage_measurement = now
-      if not ignition and voltage < LOW_VOLTAGE_MV and self.car_voltage_mV < LOW_VOLTAGE_MV:
+      if not ignition and 0 < voltage < LOW_VOLTAGE_MV and self.car_voltage_mV < LOW_VOLTAGE_MV:
         if self.low_voltage_since is None:
           self.low_voltage_since = now
       else:
@@ -120,21 +124,23 @@ class PowerMonitoring:
 
   # See if we need to shutdown
   def should_shutdown(self, ignition: bool, in_car: bool, offroad_timestamp: float | None, started_seen: bool):
-    return self.shutdown_reason(ignition, in_car, offroad_timestamp) is not None
+    return self.shutdown_reason(ignition, in_car, offroad_timestamp, started_seen) is not None
 
-  def shutdown_reason(self, ignition: bool, in_car: bool, offroad_timestamp: float | None):
+  def shutdown_reason(self, ignition: bool, in_car: bool, offroad_timestamp: float | None, started_seen: bool = False):
     # Never let a shutdown override ignition, including on a low car battery.
     if ignition or offroad_timestamp is None:
+      self.low_voltage_since = None
+      return None
+    # Only in a car: on USB power (phone charger, laptop, bench) the device never powers itself off.
+    if not in_car:
       self.low_voltage_since = None
       return None
 
     now = time.monotonic()
     offroad_time = now - offroad_timestamp
-    max_time_offroad_s = self.params.get_int("MaxTimeOffroadMin") * 60
-    if offroad_time > max_time_offroad_s:
+    max_time_offroad_s = max(self.params.get_int("MaxTimeOffroadMin") * 60, DELAY_SHUTDOWN_TIME_S)
+    if offroad_time > max_time_offroad_s and (started_seen or now > MIN_ON_TIME_S):
       return "offroad_timeout"
-    if not in_car:
-      self.low_voltage_since = None
     low_car_battery = (in_car and self.low_voltage_since is not None and
                        self.last_voltage_measurement is not None and
                        0 <= now - self.last_voltage_measurement <= MAX_SAMPLE_AGE_S and

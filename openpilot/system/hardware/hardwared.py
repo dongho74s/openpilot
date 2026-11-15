@@ -412,7 +412,7 @@ def hardware_thread(end_event, hw_queue) -> None:
     msg.deviceState.somPowerDrawW = som_power_draw
 
     # Check if we need to shut down
-    power_reason = power_monitor.shutdown_reason(onroad_conditions["ignition"], in_car, off_ts)
+    power_reason = power_monitor.shutdown_reason(onroad_conditions["ignition"], in_car, off_ts, started_seen)
     if tesla_no_sleep or not message_is_fresh(sm, "pandaStates", time.monotonic()):
       power_reason = None
     if power_reason:

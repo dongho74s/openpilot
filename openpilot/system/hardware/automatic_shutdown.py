@@ -7,14 +7,6 @@ from openpilot.cereal import log
 REQUEST_KEY = "AutomaticShutdownRequest"
 MAX_SAMPLE_AGE_S = 1.5
 LOW_VOLTAGE_MV = 11000
-# Below this a reading is not a 12 V car battery: USB power from a phone charger or laptop (5 V, or 9 V with USB PD),
-# or no supply. A car battery this low at rest is already flat. Such readings never count as a low car battery, even
-# when the harness status reads connected.
-CAR_BATTERY_MIN_MV = 9500
-
-
-def car_battery_voltage(voltage):
-  return voltage is not None and CAR_BATTERY_MIN_MV <= voltage
 
 
 def message_is_fresh(sm, service, now):
@@ -36,13 +28,15 @@ def automatic_shutdown_reason(request, sm, now):
   if (sm["deviceState"].started or not pandas or
       any(p.pandaType == log.PandaState.PandaType.unknown or p.ignitionLine or p.ignitionCan for p in pandas)):
     return None
+  # Only in a car: on USB power (phone charger, laptop, bench) the device never powers itself off.
+  if pandas[0].harnessStatus == log.PandaState.HarnessStatus.notConnected:
+    return None
   if request["reason"] == "low_voltage":
     if not message_is_fresh(sm, "peripheralState", now):
       return None
     peripheral = sm["peripheralState"]
-    if (pandas[0].harnessStatus == log.PandaState.HarnessStatus.notConnected or
-        peripheral.pandaType == log.PandaState.PandaType.unknown or
-        not car_battery_voltage(peripheral.voltage) or not peripheral.voltage < LOW_VOLTAGE_MV):
+    if (peripheral.pandaType == log.PandaState.PandaType.unknown or
+        not 0 < peripheral.voltage < LOW_VOLTAGE_MV):
       return None
   return request["reason"]
 

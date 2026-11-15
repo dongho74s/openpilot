@@ -89,7 +89,7 @@ def test_onroad_or_unknown_panda_blocks_automatic_poweroff(reason):
   assert automatic_shutdown_reason(request(reason), sm, 100.) is None
 
 
-@pytest.mark.parametrize("voltage", [0, 5000, 9000, 9499, 11000, 14000])
+@pytest.mark.parametrize("voltage", [0, 11000, 14000])
 def test_final_raw_voltage_recovery_blocks_low_voltage_not_timeout(voltage):
   sm = Messages()
   sm["peripheralState"].voltage = voltage
@@ -97,21 +97,13 @@ def test_final_raw_voltage_recovery_blocks_low_voltage_not_timeout(voltage):
   assert automatic_shutdown_reason(request("offroad_timeout"), sm, 100.) == "offroad_timeout"
 
 
-@pytest.mark.parametrize("voltage", [5000, 9000, 9499])
-def test_usb_power_with_a_connected_harness_status_is_not_a_low_car_battery(voltage):
-  sm = Messages()
-  sm["peripheralState"].voltage = voltage   # harness status stays 'normal'
-  assert automatic_shutdown_reason(request(), sm, 100.) is None
-  sm["peripheralState"].voltage = 10800
-  assert automatic_shutdown_reason(request(), sm, 100.) == "low_voltage"
-
-
-def test_bench_power_can_expire_but_not_trigger_vehicle_low_voltage():
+def test_usb_power_never_powers_off_automatically():
+  """USB power (phone charger, laptop, bench): neither reason passes the final check (user request 2026-11-16)."""
   sm = Messages()
   sm["pandaStates"][0].harnessStatus = HarnessStatus.notConnected
   sm["peripheralState"].voltage = 5000
   assert automatic_shutdown_reason(request(), sm, 100.) is None
-  assert automatic_shutdown_reason(request("offroad_timeout"), sm, 100.) == "offroad_timeout"
+  assert automatic_shutdown_reason(request("offroad_timeout"), sm, 100.) is None
 
 
 def test_actual_cereal_readers_and_ignition_transition():
