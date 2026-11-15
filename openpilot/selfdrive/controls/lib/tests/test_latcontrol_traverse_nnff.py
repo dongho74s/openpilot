@@ -55,21 +55,33 @@ def step(controller, CP, rate, plan_jerk, lat_accel=2.0, v=20.0, frames=1):
   return torque, pid_log
 
 
-@pytest.mark.parametrize("fingerprint", [CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC,
-                                         CAR.CHEVROLET_TRAX])
-def test_parity_for_traverse_trailblazer_trax_full_nnff(make_controller, fingerprint):
+CHEVROLETS = [platform for platform in CAR if str(platform).startswith("CHEVROLET_")]
+OTHER_GM = [platform for platform in CAR if not str(platform).startswith("CHEVROLET_")]
+
+
+def test_every_chevrolet_platform_is_listed():
+  # user request 2026-11-15: every Chevrolet, not only the Traverse family
+  from openpilot.selfdrive.controls.lib.latcontrol_torque import NNFF_FROGPILOT_PARITY_CARS
+  assert sorted(NNFF_FROGPILOT_PARITY_CARS) == sorted(str(platform) for platform in CHEVROLETS)
+  assert len(CHEVROLETS) >= 16 and {"CHEVROLET_TRAVERSE", "CHEVROLET_EQUINOX", "CHEVROLET_BOLT_EUV",
+                                    "CHEVROLET_SILVERADO", "CHEVROLET_TRAX"} <= set(NNFF_FROGPILOT_PARITY_CARS)
+
+
+@pytest.mark.parametrize("fingerprint", CHEVROLETS)
+def test_parity_for_every_chevrolet_full_nnff(make_controller, fingerprint):
   assert make_controller(fingerprint=fingerprint)[0].nnff_frogpilot_parity
   assert not make_controller(fingerprint=fingerprint, use_nnff=False)[0].nnff_frogpilot_parity
 
 
-def test_parity_not_for_other_cars(make_controller):
-  assert not make_controller(fingerprint=CAR.CHEVROLET_EQUINOX)[0].nnff_frogpilot_parity
+@pytest.mark.parametrize("fingerprint", OTHER_GM)
+def test_parity_not_for_other_gm_brands(make_controller, fingerprint):
+  assert not make_controller(fingerprint=fingerprint)[0].nnff_frogpilot_parity
 
 
 def test_parity_takes_desired_jerk_over_lateral_delay(make_controller):
   controller, CP = make_controller()
   assert controller.desired_lat_jerk_time == pytest.approx(CP.steerActuatorDelay + 0.2)
-  other, _ = make_controller(fingerprint=CAR.CHEVROLET_EQUINOX)
+  other, _ = make_controller(fingerprint=CAR.GMC_YUKON)
   assert other.desired_lat_jerk_time == pytest.approx(0.3)  # SteerActuatorDelay Param 0 + 0.3 s
 
 
@@ -86,7 +98,7 @@ def test_measured_jerk_reaches_nn_when_plan_has_jerk(make_controller):
 def test_other_cars_still_drop_steering_angle_jerk(make_controller):
   requests = []
   for rate in (-20.0, 20.0):
-    controller, CP = make_controller(fingerprint=CAR.CHEVROLET_EQUINOX)
+    controller, CP = make_controller(fingerprint=CAR.GMC_YUKON)
     torque, _ = step(controller, CP, rate, plan_jerk=0.5)
     requests.append(torque)
   assert requests[0] == pytest.approx(requests[1], abs=1e-9)

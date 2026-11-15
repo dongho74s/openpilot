@@ -14,6 +14,7 @@ from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
 
 from openpilot.common.params import Params
+from opendbc.car.gm.values import CAR as GM_CAR
 
 # At higher speeds (25+mph) we can assume:
 # Lateral acceleration achieved by a specific car correlates to
@@ -32,7 +33,13 @@ LOW_SPEED_Y_NN = [12, 3, 1, 0]
 
 LAT_PLAN_MIN_IDX = 5
 
-NNFF_FROGPILOT_PARITY_CARS = ("CHEVROLET_TRAVERSE", "CHEVROLET_TRAILBLAZER", "CHEVROLET_TRAILBLAZER_CC", "CHEVROLET_TRAX")
+# FrogPilot parity (2026-11-14) for every Chevrolet platform (user request 2026-11-15; first only the Traverse,
+# Trailblazer, Trailblazer CC and Trax). As in FrogPilot it applies only while the car runs NNFF (CI.use_nnff): in this
+# fork that is a Chevrolet with its own or a substitute NNFF model, NNFF on and no comma NN feedforward (the Bolt EUV,
+# Bolt CC and Volt use comma's). The others keep the torque controller as before. A platform covers every car opendbc
+# lists under it, so the GMC Sierra 1500 2020-21 (CHEVROLET_SILVERADO) is included too; the fingerprint cannot tell it
+# apart (Codex review).
+NNFF_FROGPILOT_PARITY_CARS = tuple(str(platform) for platform in GM_CAR if str(platform).startswith("CHEVROLET_"))
 
 def get_low_speed_factor(v_ego, nn_table):
   # FrogPilot's NNFF (and twilsonco's original) uses the smaller NN low-speed table.
