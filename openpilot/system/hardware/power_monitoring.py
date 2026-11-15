@@ -5,7 +5,7 @@ from openpilot.common.params import Params
 from openpilot.system.hardware import HARDWARE
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.statsd import statlog
-from openpilot.system.hardware.automatic_shutdown import LOW_VOLTAGE_MV, MAX_SAMPLE_AGE_S
+from openpilot.system.hardware.automatic_shutdown import LOW_VOLTAGE_MV, MAX_SAMPLE_AGE_S, car_battery_voltage
 
 CAR_VOLTAGE_LOW_PASS_K = 0.011 # LPF gain for 45s tau (dt/tau / (dt/tau + 1))
 
@@ -39,8 +39,9 @@ class PowerMonitoring:
     try:
       now = time.monotonic()
 
-      # USB bench power is not a car battery, even when Panda reports a voltage.
-      if voltage is None or not in_car:
+      # USB power (phone charger, laptop) is not a car battery, even when Panda reports a voltage or the harness
+      # status reads connected: neither the filter, the capacity estimate nor the low-voltage timer may see it.
+      if voltage is None or not in_car or not car_battery_voltage(voltage):
         self.low_voltage_since = None
         self.last_voltage_measurement = None
         with self.integration_lock:
@@ -58,7 +59,7 @@ class PowerMonitoring:
           not 0 <= now - self.last_voltage_measurement <= MAX_SAMPLE_AGE_S):
         self.low_voltage_since = None
       self.last_voltage_measurement = now
-      if not ignition and 0 < voltage < LOW_VOLTAGE_MV and self.car_voltage_mV < LOW_VOLTAGE_MV:
+      if not ignition and voltage < LOW_VOLTAGE_MV and self.car_voltage_mV < LOW_VOLTAGE_MV:
         if self.low_voltage_since is None:
           self.low_voltage_since = now
       else:

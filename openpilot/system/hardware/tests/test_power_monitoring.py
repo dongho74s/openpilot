@@ -141,9 +141,9 @@ class TestPowerMonitoring:
       assert pm.should_shutdown(ignition, True, start_time, True) == expected
     assert pm.should_shutdown(ignition, True, start_time, True)
 
-  @pytest.mark.parametrize("voltage, expected", [(11299, True), (11300, False), (11301, False), (11700, False)])
+  @pytest.mark.parametrize("voltage, expected", [(10999, True), (11000, False), (11001, False), (11700, False)])
   def test_voltage_threshold(self, mocker, voltage, expected):
-    assert VBATT_PAUSE_CHARGING == 11.3
+    assert VBATT_PAUSE_CHARGING == 11.0
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
     confirmed_voltage(pm, mocker, voltage)
@@ -154,13 +154,13 @@ class TestPowerMonitoring:
     self.params.put_int("MaxTimeOffroadMin", 4320)
     mocker.patch("time.monotonic", return_value=elapsed)
     pm = PowerMonitoring()
-    pm.car_voltage_mV = 11200
-    pm.calculate(11200, False, True)
+    pm.car_voltage_mV = 10800
+    pm.calculate(10800, False, True)
     assert not pm.should_shutdown(False, True, 0., False)
-    confirmed_voltage(pm, mocker, 11200, start=elapsed)
+    confirmed_voltage(pm, mocker, 10800, start=elapsed)
     assert pm.should_shutdown(False, True, 0., False)
 
-  @pytest.mark.parametrize("voltage", [0, 5000, 9000, 11200])
+  @pytest.mark.parametrize("voltage", [0, 5000, 9000, 10800])
   def test_bench_voltage_never_triggers_car_battery_shutdown(self, voltage):
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
@@ -183,6 +183,27 @@ class TestPowerMonitoring:
     # Connecting a healthy car must not inherit the bench supply's low voltage.
     pm.calculate(GOOD_VOLTAGE, False, True)
     assert not pm.should_shutdown(False, True, 0., False)
+
+  @pytest.mark.parametrize("voltage", [0, 5000, 9000, 9499])
+  def test_usb_power_with_a_harness_status_never_triggers_car_battery_shutdown(self, voltage):
+    """2026-11-16: a phone charger or laptop powering the device still turned it off after booting. Even if the
+    harness status reads connected, a USB reading is not a car battery: no filter, timer or capacity change."""
+    self.params.put_int("MaxTimeOffroadMin", 4320)
+    pm = PowerMonitoring()
+    capacity = pm.get_car_battery_capacity()
+    for _ in range(600):
+      pm.calculate(voltage, False, True)
+      assert not pm.should_shutdown(False, True, 0., False)
+    assert pm.car_voltage_mV == GOOD_VOLTAGE
+    assert pm.low_voltage_since is None and pm.last_measurement_time is None
+    assert pm.get_car_battery_capacity() == capacity
+
+  @pytest.mark.parametrize("voltage, expected", [(9500, True), (10500, True), (10999, True), (11000, False)])
+  def test_car_battery_range_for_the_low_voltage_shutdown(self, mocker, voltage, expected):
+    self.params.put_int("MaxTimeOffroadMin", 4320)
+    pm = PowerMonitoring()
+    confirmed_voltage(pm, mocker, voltage)
+    assert pm.should_shutdown(False, True, 0., False) == expected
 
   def test_bench_to_low_car_battery_still_shuts_down(self):
     self.params.put_int("MaxTimeOffroadMin", 4320)
@@ -221,7 +242,7 @@ class TestPowerMonitoring:
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
     assert not pm.should_shutdown(False, True, 0., True)
-    confirmed_voltage(pm, mocker, 11200)
+    confirmed_voltage(pm, mocker, 10800)
     assert pm.should_shutdown(False, True, 0., True)
     assert not pm.should_shutdown(True, True, 0., True)
 
@@ -252,21 +273,21 @@ class TestPowerMonitoring:
   def test_low_voltage_confirmation_resets(self, mocker, change):
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
-    clock = confirmed_voltage(pm, mocker, 11200)
+    clock = confirmed_voltage(pm, mocker, 10800)
     assert pm.shutdown_reason(False, True, 0.) == "low_voltage"
     clock.return_value += 0.5
-    pm.calculate({"raw_recovery": 12000, "missing_voltage": None, "zero_voltage": 0}.get(change, 11200),
+    pm.calculate({"raw_recovery": 12000, "missing_voltage": None, "zero_voltage": 0}.get(change, 10800),
                  change == "ignition", change != "harness")
     assert pm.low_voltage_since is None
     assert pm.shutdown_reason(False, True, 0.) is None
     clock.return_value += 0.5
-    pm.calculate(11200, False, True)
+    pm.calculate(10800, False, True)
     assert pm.shutdown_reason(False, True, 0.) is None
 
   def test_short_crank_dip_never_requests_shutdown(self, mocker):
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
-    pm.car_voltage_mV = 11250
+    pm.car_voltage_mV = 10850
     clock = mocker.patch("time.monotonic", return_value=0.)
     for tick in range(8):
       clock.return_value = tick * 0.5
@@ -281,20 +302,20 @@ class TestPowerMonitoring:
   def test_missing_or_reversed_measurement_time_restarts_confirmation(self, mocker, gap):
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
-    clock = confirmed_voltage(pm, mocker, 11200)
+    clock = confirmed_voltage(pm, mocker, 10800)
     clock.return_value += gap
     assert not pm.should_shutdown(False, True, 0., False)
     # Avoid the independent energy integrator's deliberate negative-time error.
     pm.last_measurement_time = None
-    pm.calculate(11200, False, True)
+    pm.calculate(10800, False, True)
     assert not pm.should_shutdown(False, True, 0., False)
 
   def test_repeated_decision_without_new_samples_cannot_confirm_low_voltage(self, mocker):
     self.params.put_int("MaxTimeOffroadMin", 4320)
     pm = PowerMonitoring()
     clock = mocker.patch("time.monotonic", return_value=0.)
-    pm.car_voltage_mV = 11200
-    pm.calculate(11200, False, True)
+    pm.car_voltage_mV = 10800
+    pm.calculate(10800, False, True)
     for elapsed in (1., 10., 100.):
       clock.return_value = elapsed
       assert not pm.should_shutdown(False, True, 0., False)
