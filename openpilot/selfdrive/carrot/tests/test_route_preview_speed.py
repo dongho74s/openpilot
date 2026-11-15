@@ -6,7 +6,7 @@ import pytest
 
 from openpilot.selfdrive.carrot.curve_speed import APPROACH_DECEL, NO_LIMIT_KPH, RELEASE_HOLD, RELEASE_RATE_KPH
 from openpilot.selfdrive.carrot.route_preview_speed import (
-  LAG_MARGIN_S, CurveMemory, FrozenPreviewGuard, RoutePreviewCurveSpeed, corners, preview_curve_speed,
+  LAG_MARGIN_S, FrozenPreviewGuard, RoutePreviewCurveSpeed, RouteSpeedMap, corners, preview_curve_speed,
 )
 from openpilot.selfdrive.navdy.navigation import FeedbackTracker, RoutePreview, preview_points
 
@@ -161,6 +161,18 @@ def test_the_straight_between_two_curves_changes_the_limit_smoothly():
   assert all(b >= a for a, b in zip(limits, limits[1:])) and limits[0] > 50.0
 
 
+def test_a_metre_more_of_straight_does_not_jump_the_limit():
+  """Review 4 U6: 39 m against 40 m of straight between a bend and a junction turn the same way."""
+  limits = []
+  for straight in (39, 40):
+    h = math.radians(20)
+    p1, p2 = (0.0, 100.0), (straight * math.sin(h), 100 + straight * math.cos(h))
+    p3 = (p2[0] + 300 * math.sin(h + math.pi / 2), p2[1] + 300 * math.cos(h + math.pi / 2))
+    points = resample(split([(0, -50), (0, 0), p1, p2, p3]), start=65)
+    limits.append(preview_curve_speed(points, 0.0, 14.3, 0.8, 30).approach_kph)
+  assert abs(limits[0] - limits[1]) < 3.0
+
+
 @pytest.mark.parametrize('radius,spacing,turn', [(86, 5, 33.32), (40, 30, 44.05), (86, 20, 40), (60, 15, 50)])
 def test_short_arcs_between_straights_keep_their_radius(radius, spacing, turn):
   """Review 2 N7: a short arc drawn with a few vertices between straights."""
@@ -284,28 +296,65 @@ def test_a_frozen_window_with_a_corner_is_rejected_until_it_changes():
   assert all(p is not None for k, p in results if k <= 1) and all(p is None for k, p in results if k >= 2)
 
 
-def drive_through(vertices, until, step=5, v=14.3):
-  """Previews of the route from successive points along it, each through CurveMemory: (position, result, number)."""
-  memory, out = CurveMemory(), []
-  for travelled in range(0, until, step):
-    points = resample(vertices, start=travelled)
-    if len(points) < 7:
-      break
-    out.append((travelled, memory.update(preview_curve_speed(points, 0.0, v, 0.8, 5), float(travelled)), memory.number))
+def drive(vertices, until, v=14.3, start=0.0, switch=None):
+  """Drive along the route at v: a new observation each second (observed 0.3 s before), the map and the limiter
+  every 50 ms, as carrot_man runs them. switch=(odometer, vertices): a new route from there.
+  Returns [(odometer, applied km/h, map result, curve number)]."""
+  speed_map, limiter = RouteSpeedMap(), RoutePreviewCurveSpeed()
+  odometer, t, out, k, observation = start, 0.0, [], 0, None
+  while odometer < until:
+    if abs(t - round(t)) < 1e-9:
+      current, route_id = (switch[1], ('r', 2)) if switch and odometer >= switch[0] else (vertices, ('r', 1))
+      points = resample(current, start=odometer - v * 0.3)
+      k += 1
+      observation = (points, route_id, t, k) if len(points) >= 7 else None
+    preview = None
+    if observation is not None:
+      since = t - observation[2]
+      preview = RoutePreview(observation[0], 0.3 + since, ('s', observation[3]), since, observation[1])
+    result = speed_map.update(preview, t, odometer, v, 0.0, 0.8, 5, 1.0)
+    out.append((odometer, abs(limiter.update(result, t)), result, speed_map.number))
+    odometer += v * 0.05
+    t = round(t + 0.05, 2)
   return out
 
 
+@pytest.mark.parametrize('cold', [0.0, 120.0])
 @pytest.mark.parametrize('radius,spacing,turn,phase', [(86, 5, 33.32, 3.3), (86, 20, 60, 0), (86, 39, 90, 1.7),
                                                        (50, 10, 90, 0), (40, 30, 44.05, 0)])
-def test_driving_up_to_and_through_a_curve_keeps_its_speed(radius, spacing, turn, phase):
-  """Review 3 T1: one curve seen from moving windows. Near it and in it the speed stays the one fixed while it was
-  well in view, and it is not released before the car is past its end; it stays one curve (review 2 N3)."""
+def test_driving_up_to_and_through_a_curve_keeps_its_speed(radius, spacing, turn, phase, cold):
+  """Review 3 T1 / review 4 U3, U7: one curve seen from moving windows, from far away or first seen 30 m before it.
+  In it the applied speed stays near the physics, it is not released before the end, and soon after."""
   start = 150 + phase
   end = start + radius * math.radians(turn)
-  runs = drive_through(polygon_curve(radius, spacing, turn_deg=turn, phase=phase), int(end))
-  near = [result.curve_kph for travelled, result, _ in runs if travelled >= start - 40]
-  assert near and all(abs(kph_ - kph(radius, BUDGET)) <= 0.05 * kph(radius, BUDGET) for kph_ in near)
-  assert {number for _, _, number in runs} == {1}
+  runs = drive(polygon_curve(radius, spacing, turn_deg=turn, phase=phase), end + 120, start=cold)
+  physics = kph(radius, BUDGET)
+  inside = [applied for odometer, applied, _, _ in runs if start - 5 <= odometer <= end]
+  assert inside and all(0.8 * physics <= applied <= 1.15 * physics for applied in inside)
+  free = [odometer for odometer, _, result, _ in runs if result is not None and result.approach_kph >= NO_LIMIT_KPH
+          and odometer > start]
+  assert free and end < free[0] <= end + 60
+  assert {number for *_, number in runs} == {1}
+
+
+def test_a_tighter_part_of_one_curve_gets_its_own_speed():
+  """Review 4 U1: R86 for 60 degrees then R40 for 90 degrees, the same way."""
+  def arc(start, heading, radius, turn, left):
+    points, (x, y), h = [], start, heading
+    for _ in range(int(radius * math.radians(turn) / 5)):
+      h += (-1 if left else 1) * 5 / radius
+      x, y = x + 5 * math.sin(h), y + 5 * math.cos(h)
+      points.append((x, y))
+    return points, h
+  vertices = [(0.0, -150.0), (0.0, 0.0)]
+  first, h = arc((0.0, 0.0), 0.0, 86, 60, False)
+  second, h = arc(first[-1], h, 40, 90, False)
+  vertices += first + second + [(second[-1][0] + 400 * math.sin(h), second[-1][1] + 400 * math.cos(h))]
+  split_at = 150 + 86 * math.radians(60)
+  end = split_at + 40 * math.radians(90)
+  runs = drive(vertices, end)
+  tight = [applied for odometer, applied, _, _ in runs if split_at + 5 <= odometer <= end - 5]
+  assert tight and max(tight) <= 1.05 * kph(40, BUDGET)
 
 
 def test_a_curve_the_other_way_is_another_curve():
@@ -321,9 +370,24 @@ def test_a_curve_the_other_way_is_another_curve():
   right, h = arc((0.0, 0.0), 0.0, 86, 60, False)
   left, h = arc(right[-1], h, 50, 90, True)
   vertices += right + left + [(left[-1][0] + 400 * math.sin(h), left[-1][1] + 400 * math.cos(h))]
-  runs = drive_through(vertices, 300)
-  directions = {number: result.direction for _, result, number in runs}
+  directions = {number: result.direction for _, _, result, number in drive(vertices, 300)
+                if result is not None and result.approach_kph < NO_LIMIT_KPH}
   assert directions == {1: -1.0, 2: 1.0}
+
+
+def test_a_new_straight_route_does_not_keep_the_old_turn():
+  """Review 4 U2: a turn 150 m ahead, then after 40 m the phone reroutes onto a straight road."""
+  runs = drive([(0, -100), (0, 150), (300, 150)], 120, v=20.0, switch=(40.0, [(0, -100), (0, 600)]))
+  before = [applied for odometer, applied, _, _ in runs if odometer < 40][-1]
+  assert all(applied >= before - 1e-6 for odometer, applied, _, _ in runs if odometer >= 40)
+
+
+def test_a_lost_preview_drops_the_map():
+  speed_map = RouteSpeedMap()
+  preview = RoutePreview(route(straight_m=100), 0.3, ('s', 1), 0.0, ('r', 1))
+  assert speed_map.update(preview, 0.0, 0.0, 20.0).approach_kph < NO_LIMIT_KPH
+  assert speed_map.update(None, 0.5, 10.0, 20.0).approach_kph < NO_LIMIT_KPH   # a short gap keeps it
+  assert speed_map.update(None, 1.6, 32.0, 20.0) is None and not speed_map.cells
 
 
 # --- tracker ---------------------------------------------------------------------------------------------------------
@@ -450,6 +514,26 @@ def test_an_age_fixed_before_the_clock_was_synced_is_not_used():
   assert t.route_preview(100.2).key[1] == 8
 
 
+def test_a_future_timestamp_does_not_block_later_observations():
+  """Review 4 U4: a phone clock an hour ahead for one packet, then right again."""
+  t = tracker()
+  assert t.accept(packet(sequence=1), 100.0, 100.0, WALL)
+  assert t.accept(packet(sequence=2, observed=WALL + 3600), 100.1, 100.1, WALL + 0.1)
+  assert t.route_preview(100.1).key[1] == 1
+  assert t.accept(packet(sequence=3, observed=WALL + 1.9), 102.0, 102.0, WALL + 2.0)
+  assert t.route_preview(102.0).key[1] == 3
+
+
+def test_a_late_inactive_guidance_packet_does_not_clear_the_window():
+  """Review 4 U5: guidance 20 active with a window, then a late guidance 19 inactive."""
+  t = tracker()
+  assert t.accept(packet(sequence=20), 100.0, 100.0, WALL)
+  late = packet(sequence=19, guidance_active=False)
+  late['roadPreview']['sequence'] = 20   # the same window again
+  assert t.accept(late, 100.1, 100.1, WALL + 0.1)
+  assert t.route_preview(100.1).key[1] == 20
+
+
 def test_the_newest_observation_without_a_window_clears_it():
   t = tracker()
   assert t.accept(packet(sequence=7), 100.0, 100.0, WALL)
@@ -524,7 +608,7 @@ def test_carrot_man_runs_only_in_navdy_route_modes_and_forgets_when_off(monkeypa
   man.route_preview_guard = FrozenPreviewGuard()
   man.route_preview_display_target = 0.0
   man.route_preview_logged = 0.0
-  man.route_preview_memory = CurveMemory()
+  man.route_preview_map = RouteSpeedMap()
   man.autoCurveSpeedFactor = 1.0
   events = []
   monkeypatch.setattr(carrot_man.cloudlog, 'event', lambda name, **kw: events.append((name, kw)))
@@ -539,8 +623,8 @@ def test_carrot_man_runs_only_in_navdy_route_modes_and_forgets_when_off(monkeypa
     return man.carrot_route_preview_speed(sm)
 
   assert abs(run(True, 2)) == pytest.approx(kph(100), rel=0.02) and man.route_preview_display_target > 0
-  assert man.route_preview_memory.number == 1
-  assert abs(run(True, 3)) == pytest.approx(kph(100), rel=0.02) and man.route_preview_memory.number == 1   # same curve
+  assert man.route_preview_map.number == 1
+  assert abs(run(True, 3)) == pytest.approx(kph(100), rel=0.02) and man.route_preview_map.number == 1   # same curve
   for navdy, mode in ((True, 1), (False, 2), (True, 0)):
     assert abs(run(navdy, mode)) == NO_LIMIT_KPH and man.route_preview_display_target == 0.0
   # Switched back on with no preview: the old cap does not come back (review: mode 2 -> 0 -> 2).

@@ -36,6 +36,7 @@ STRAIGHT_SKIP_M = 6.0          # ... except next to the curve, where a sample in
 # simplification are about sqrt(8 R SIMPLIFY_M): up to 40 m for a 133 m radius; a gentler arc splits into several
 # curves next to each other.)
 CURVE_CHORD_M = 40.0
+ARC_REACHES = 2.5
 MIN_POINTS = 7
 # The age is end to end (comma clock minus the phone's observation time) but the phone's matched position itself
 # lags, and the two clocks differ by about 0.1 s (measured 2026-11-16). Approaching, assume the car is this much
@@ -234,9 +235,9 @@ def corners(points, tolerance=MAP_TOLERANCE_M):
     vertex = verts[j][1]
     singles.append((j, Corner(vertex, vertex - reach_in, vertex + reach_out, radius, turn)))
   # A curve: neighbouring corners turning the same way joined by an arc chord (not a straight between two curves).
-  # Within it the road still has a corner's radius up to the next vertex (the limit lasts until there), and the whole
-  # curve is the identity of whichever corner binds. The limit does not start earlier than the corner's own reach:
-  # whether the chord before it is arc or straight is not known (review 4 U6).
+  # Within it the road still has a corner's radius up to the next vertex (the limit lasts until there), and already
+  # from the previous one when that is as near as an arc's next vertex would be (a longer chord may be a straight
+  # between a bend and a sharper turn: review 4 U6). The whole curve is the identity of whichever corner binds.
   groups, group = [], []
   for i, (j, corner) in enumerate(singles):
     joined = (group and singles[i - 1][0] == j - 1 and singles[i - 1][1].turn * corner.turn > 0
@@ -252,7 +253,14 @@ def corners(points, tolerance=MAP_TOLERANCE_M):
     for position, i in enumerate(group):
       j, corner = singles[i]
       end = singles[group[position + 1]][1].vertex_m if position + 1 < len(group) else corner.end_m
-      singles[i] = (j, corner._replace(end_m=max(end, corner.end_m), curve_start_m=curve_start, curve_end_m=curve_end))
+      start = corner.start_m
+      if position > 0:
+        previous = singles[group[position - 1]][1].vertex_m
+        # An arc's vertices are about two reaches apart; a longer chord before the corner may be a straight.
+        if corner.vertex_m - previous <= ARC_REACHES * (corner.vertex_m - corner.start_m):
+          start = previous
+      singles[i] = (j, corner._replace(start_m=min(start, corner.start_m), end_m=max(end, corner.end_m),
+                                       curve_start_m=curve_start, curve_end_m=curve_end))
   along = [0.0]
   for a, b in zip(points, points[1:]):
     along.append(along[-1] + math.dist(a, b))
