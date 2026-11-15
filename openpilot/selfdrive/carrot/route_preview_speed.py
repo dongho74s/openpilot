@@ -29,9 +29,13 @@ MERGE_SPAN_M = 60.0            # a curve of corners spanning up to twice this is
 # ... when it turns at least this much: for gentler curves a sample's position error of a metre or two changes the arc
 # through it several-fold (a 16 degree bend came out 46 m instead of 156 m), so they keep their vertices' radii.
 MERGE_MIN_TURN = math.radians(30.0)
-# Same-direction corners joined by a chord up to this long are one curve (an arc's chords after simplification are at
-# most about sqrt(8 R SIMPLIFY_M), 60 m for a 300 m radius); a longer chord is a straight between two curves.
-CURVE_CHORD_M = 60.0
+STRAIGHT_M = 0.3               # samples along a straight lie within rounding of it (0.01 m); an arc's start does not
+STRAIGHT_SKIP_M = 6.0          # ... except next to the curve, where a sample interval cuts the corner
+# Same-direction corners joined by a chord up to this long are one curve. The producers' map segments are at most
+# 40 m, so a longer chord is several segments in a line: a straight between two curves. (An arc's chords after
+# simplification are about sqrt(8 R SIMPLIFY_M): up to 40 m for a 133 m radius; a gentler arc splits into several
+# curves next to each other.)
+CURVE_CHORD_M = 40.0
 MIN_POINTS = 7
 # The age is end to end (comma clock minus the phone's observation time) but the phone's matched position itself
 # lags, and the two clocks differ by about 0.1 s (measured 2026-11-16). Approaching, assume the car is this much
@@ -47,6 +51,7 @@ class PreviewCurve(NamedTuple):
   direction: float = 1.0               # +1 left, -1 right
   curve_start: float = math.inf        # from the car now to the start and end of the whole curve the binding corner
   curve_end: float = math.inf          # belongs to (its identity across previews)
+  extra_kph2: float = 0.0              # approach_kph**2 - curve_kph**2 before capping: the distance's allowance
 
 
 class Corner(NamedTuple):
@@ -131,6 +136,16 @@ def vertices(points):
   return out
 
 
+def _straight(points, along, s0, s1, a, b):
+  """Whether the samples between s0 and s1 m along the preview (at least two) lie within STRAIGHT_M of line a-b."""
+  inside = [p for p, s in zip(points, along) if s0 - 1e-6 <= s <= s1 + 1e-6]
+  if len(inside) < 2:
+    return False
+  dx, dy = b[0] - a[0], b[1] - a[1]
+  length = math.hypot(dx, dy)
+  return length > 1e-6 and all(abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length <= STRAIGHT_M for p in inside)
+
+
 def _tangent_radius(vertex, a, c, point, half):
   """Radius of the arc tangent to the lines vertex->a and vertex->c (meeting at `vertex`, turning by 2 * half) that
   passes through `point`: the larger root, the arc whose side facing `vertex` goes through the point."""
@@ -147,7 +162,7 @@ def _tangent_radius(vertex, a, c, point, half):
   return max(0.0, (secant * along + math.sqrt(disc)) / tangent2)
 
 
-def _merged(verts, singles, groups):
+def _merged(points, along, verts, singles, groups):
   """A curve the map draws with a few vertices: a sharp turn split over close vertices (three 30 degree vertices 5 m
   apart) is one tight corner though each vertex alone looks gentle, and a short arc drawn with two or three vertices
   between straights has the radius of its circle. Map vertices lie on the road, so the arc tangent to the lines the
@@ -166,11 +181,11 @@ def _merged(verts, singles, groups):
     if turn_at.get(first - 1, 0.0) * total > 0 or turn_at.get(last + 1, 0.0) * total > 0:
       continue
     a, c = verts[first - 1][0], verts[last + 1][0]
-    # At the window's edges the outer chord may itself be part of the curve (the car is already in it, or the window
-    # ends in it), not the straight it is tangent to: only a chord clearly longer than the curve's own counts.
-    inner = max(math.dist(verts[i][0], verts[i + 1][0]) for i in range(first, last))
-    if ((first - 1 == 0 and math.dist(a, verts[first][0]) < 1.5 * inner)
-        or (last + 1 == len(verts) - 1 and math.dist(verts[last][0], c) < 1.5 * inner)):
+    # The outer chords must be straights the curve is tangent to. The simplification can also draw the start of an
+    # arc into a chord (at the window's edges: the car already in the curve, or the window ending in it; or a straight
+    # and the arc's first metres together): then the samples along it are not on one line.
+    if (not _straight(points, along, verts[first - 1][1], verts[first][1] - STRAIGHT_SKIP_M, a, verts[first][0])
+        or not _straight(points, along, verts[last][1] + STRAIGHT_SKIP_M, verts[last + 1][1], verts[last][0], c)):
       continue
     vertex = _meet(a, verts[first][0], verts[last][0], c)   # where the outer lines meet
     if vertex is None:
@@ -239,7 +254,10 @@ def corners(points, tolerance=MAP_TOLERANCE_M):
       end = singles[group[position + 1]][1].vertex_m if position + 1 < len(group) else corner.end_m
       singles[i] = (j, corner._replace(start_m=min(start, corner.start_m), end_m=max(end, corner.end_m),
                                        curve_start_m=curve_start, curve_end_m=curve_end))
-  return [c for _, c in singles] + _merged(verts, singles, groups)
+  along = [0.0]
+  for a, b in zip(points, points[1:]):
+    along.append(along[-1] + math.dist(a, b))
+  return [c for _, c in singles] + _merged(points, along, verts, singles, groups)
 
 
 def preview_curve_speed(points, age, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, a_ego=0.0, speed_ratio=1.0,
@@ -271,12 +289,12 @@ def preview_curve_speed(points, age, v_ego, sensitivity=1.0, lower_limit_kph=30.
       continue
     ahead = max(0.0, corner.start_m - ahead_of)
     curve_ms = max(floor_ms, math.sqrt(lateral_budget * corner.radius))
-    approach_ms = math.sqrt(curve_ms ** 2 + 2.0 * APPROACH_DECEL * max(0.0, ahead - response_distance))
-    approach_kph = min(NO_LIMIT_KPH, approach_ms * 3.6 / ratio)
+    allowance = 2.0 * APPROACH_DECEL * max(0.0, ahead - response_distance)
+    approach_kph = min(NO_LIMIT_KPH, math.sqrt(curve_ms ** 2 + allowance) * 3.6 / ratio)
     if approach_kph < best.approach_kph:
       best = PreviewCurve(approach_kph, min(NO_LIMIT_KPH, curve_ms * 3.6 / ratio), float(ahead),
                           math.copysign(1.0, corner.turn), corner.curve_start_m - travelled,
-                          corner.curve_end_m - travelled)
+                          corner.curve_end_m - travelled, allowance * (3.6 / ratio) ** 2)
   return best
 
 
@@ -287,17 +305,17 @@ def same_points(a, b, tolerance=FROZEN_TOLERANCE_M):
 
 class FrozenPreviewGuard:
   """A phone whose matched position stopped updating keeps sending the same window as new observations. On a
-  straight road a moving car's window is the same anyway, so only a window with a clear corner can show it: between
-  two observations the corner must come nearer as the car moves. A new observation (new key) whose window is the same
-  as the previous observation's (within FROZEN_TOLERANCE_M) although the car drove FROZEN_AFTER_M between their
-  arrivals is rejected, and so are its repeats; the same observation re-read every cycle is not judged again."""
+  straight road a moving car's window is the same anyway, so only a window with a clear corner can show it: across
+  observations the corner must come nearer as the car moves. New observations (new keys) bringing the same window
+  (within FROZEN_TOLERANCE_M) once the car has driven FROZEN_AFTER_M since that window first arrived are rejected;
+  the same observation re-read every cycle is not judged again."""
   FROZEN_AFTER_M = 10.0
   CLEAR_TURN = math.radians(10.0)   # moving 10 m shifts the points past such a corner by 1.7 m
 
   def __init__(self):
     self.key = None
     self.points = None
-    self.arrived_at_m = 0.0
+    self.same_since_m = 0.0   # odometer when the current window first arrived (kept while new keys repeat it)
     self.frozen = False
     self.odometer = 0.0
     self.last_time = None
@@ -310,11 +328,59 @@ class FrozenPreviewGuard:
     if preview is None:
       return None
     if preview.key != self.key:
-      self.frozen = (same_points(preview.points, self.points)
-                     and self.odometer - self.arrived_at_m >= self.FROZEN_AFTER_M
-                     and any(abs(c.turn) >= self.CLEAR_TURN for c in corners(preview.points)))
-      self.key, self.points, self.arrived_at_m = preview.key, preview.points, self.odometer
+      if not same_points(preview.points, self.points):
+        self.points, self.same_since_m = preview.points, self.odometer
+      self.frozen = (self.key is not None and preview.points is not self.points and
+                     self.odometer - self.same_since_m >= self.FROZEN_AFTER_M and
+                     any(abs(c.turn) >= self.CLEAR_TURN for c in corners(preview.points)))
+      self.key = preview.key
     return None if self.frozen else preview
+
+
+class CurveMemory:
+  """The curve the binding corner belongs to, across previews, until the car is past it.
+
+  Each preview simplifies a window that has moved, so one curve's estimate changes from preview to preview, and the
+  last metres of a curve the car is in can drop out of the simplification. A curve's speed is therefore fixed from
+  the previews that saw all of it well inside the window (the tightest of those), used once it comes near, and kept
+  until the car has passed its end. The number changes when a different curve binds: another stretch of road, or the
+  other direction (it resets an accelerator floor)."""
+  NEAR_M = 40.0          # nearer than this to the car, the window's start can cut into the curve
+  WINDOW_END_M = 340.0   # ... and its end beyond this
+  SAME_GAP_M = 10.0
+
+  def __init__(self):
+    self.number = 0
+    self.curve = None   # [start, end, direction, fixed curve km/h or None] in odometer metres
+
+  def update(self, result, odometer):
+    curve = self.curve
+    if curve is not None and odometer > curve[1]:
+      curve = self.curve = None   # passed
+    if result is None:
+      return None
+    if result.approach_kph >= NO_LIMIT_KPH or not math.isfinite(result.curve_start):
+      if curve is not None and curve[3] is not None:
+        # still in a curve the window lost
+        return PreviewCurve(curve[3], curve[3], 0.0, curve[2], curve[0] - odometer, curve[1] - odometer, 0.0)
+      return result
+    start, end = odometer + result.curve_start, odometer + result.curve_end
+    if (curve is None or result.direction != curve[2] or start > curve[1] + self.SAME_GAP_M
+        or end < curve[0] - self.SAME_GAP_M):
+      self.number += 1
+      curve = self.curve = [start, end, result.direction, None]
+    else:
+      curve[0], curve[1] = min(curve[0], start), max(curve[1], end)
+    if result.curve_start >= self.NEAR_M and result.curve_end <= self.WINDOW_END_M:
+      curve[3] = result.curve_kph if curve[3] is None else min(curve[3], result.curve_kph)
+    if curve[3] is None:
+      return result
+    # Near, the fixed speed replaces the estimate (the window's start cuts into the curve); farther, a window that
+    # sees the curve less well may still not loosen it.
+    fixed = curve[3] if result.curve_start < self.NEAR_M else min(curve[3], result.curve_kph)
+    if fixed == result.curve_kph:
+      return result
+    return result._replace(approach_kph=min(NO_LIMIT_KPH, math.sqrt(fixed ** 2 + result.extra_kph2)), curve_kph=fixed)
 
 
 class RoutePreviewCurveSpeed:

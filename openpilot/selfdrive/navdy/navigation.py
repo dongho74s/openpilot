@@ -126,6 +126,7 @@ class FeedbackTracker:
     # higher sequences and is accepted again.
     self.preview_sequences = OrderedDict()
     self.preview = None   # (key, points, arrived (monotonic), age on arrival)
+    self.preview_observed = 0.0   # observedAtMs of the observation deciding the preview
     self.clock_synced = clock_synced
     self.clock_checked = (-math.inf, False)
 
@@ -157,11 +158,22 @@ class FeedbackTracker:
     self.revision += 1
     self.revisions[name] += 1
 
-  def _accept_preview(self, value, received_at, received_wall):
+  def _clock_ok(self, now):
+    if not 0 <= now - self.clock_checked[0] < 10.0:
+      self.clock_checked = (now, bool(self.clock_synced()))
+    return self.clock_checked[1]
+
+  def _accept_preview(self, value, present, received_at, received_wall):
+    if value is None:
+      if present:
+        self.preview = None   # the HUD has no fresh preview
+      return
     if not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1:
       return
     session, sequence = value.get('session'), value.get('sequence')
-    if not isinstance(session, str) or not 1 <= len(session) <= 64 or type(sequence) is not int or sequence < 0:
+    observed = number(value.get('observedAtMs'), 1, 2**53)
+    if (not isinstance(session, str) or not 1 <= len(session) <= 64 or type(sequence) is not int or sequence < 0
+        or observed is None):
       return
     last = self.preview_sequences.get(session)
     if last is not None and sequence <= last:
@@ -170,13 +182,16 @@ class FeedbackTracker:
     self.preview_sequences.move_to_end(session)
     while len(self.preview_sequences) > PREVIEW_PRODUCERS:
       self.preview_sequences.popitem(last=False)
-    self.preview = None   # the newest observation decides, even when it carries no usable window
-    observed = number(value.get('observedAtMs'), 1, 2**53)
-    if value.get('guidance') is not True or value.get('reason') != 'ok' or observed is None:
-      return
     clock_age = received_wall - observed / 1000
+    # An observation older than the one deciding now (another producer's late packet), too old to use, or timed by
+    # a clock that cannot be trusted changes nothing; the age is only fixed by a clock NTP-synced at that moment.
+    if observed < self.preview_observed or clock_age > PREVIEW_MAX_AGE or not self._clock_ok(received_at):
+      return
+    self.preview_observed = observed
+    self.preview = None   # the newest observation decides, even when it carries no usable window
     points = preview_points(value.get('points'))
-    if points is None or not -PREVIEW_CLOCK_SLACK <= clock_age <= PREVIEW_MAX_AGE:
+    if (value.get('guidance') is not True or value.get('reason') != 'ok' or points is None
+        or clock_age < -PREVIEW_CLOCK_SLACK):
       return
     self.preview = ((session, sequence), points, received_at, max(0.0, clock_age))
 
@@ -189,7 +204,8 @@ class FeedbackTracker:
     self.received_at = received_at
     self.extended = 'navigationFeedback' in packet
     self._component('road', packet.get('roadPreview'), received_at)
-    self._accept_preview(packet.get('roadPreview'), received_at, (time.time() if wall is None else wall) - (now - received_at))
+    self._accept_preview(packet.get('roadPreview'), 'roadPreview' in packet, received_at,
+                         (time.time() if wall is None else wall) - (now - received_at))
     old_session = self.sequences.get('guidance', ('',))[0]
     self._component('guidance', packet.get('navigationFeedback'), received_at)
     if self.sequences.get('guidance', ('',))[0] != old_session:
@@ -198,6 +214,10 @@ class FeedbackTracker:
     raw_guidance, captured, deadline = self.components.get('guidance', (None, received_at, received_at))
     self.section.accept(raw_guidance.get('guidance') if raw_guidance else None,
                         received_at - captured, deadline, received_at)
+    feedback = packet.get('navigationFeedback')
+    guidance = feedback.get('guidance') if isinstance(feedback, dict) else None
+    if ('navigationFeedback' in packet and feedback is None) or (isinstance(guidance, dict) and guidance.get('active') is False):
+      self.preview = None   # guidance stopped: resuming needs a new window
     speed = packet.get('cameraSpeedKph')
     distance = camera_distance(packet.get('cameraDistance'))
     kind_value = packet.get('cameraType')
@@ -224,11 +244,7 @@ class FeedbackTracker:
   def route_preview(self, now):
     """The fresh route preview, or None. It needs the newest observation of a producer to be a guided ('ok') window
     while the HUD reports active guidance, observed no more than PREVIEW_MAX_AGE ago by an NTP-synced comma clock."""
-    if not 0 <= now - self.received_at < LINK_TTL or self.preview is None:
-      return None
-    if now - self.clock_checked[0] >= 10.0:
-      self.clock_checked = (now, bool(self.clock_synced()))
-    if not self.clock_checked[1]:
+    if not 0 <= now - self.received_at < LINK_TTL or self.preview is None or not self._clock_ok(now):
       return None
     raw_guidance, _ = self._fresh('guidance', now)
     guidance = raw_guidance.get('guidance') if raw_guidance else None
