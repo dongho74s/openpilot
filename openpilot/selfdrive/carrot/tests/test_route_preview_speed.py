@@ -348,12 +348,31 @@ def test_a_u_turn_is_kept_on_the_road_map():
 
 
 def test_a_nearer_tighter_estimate_is_taken_and_never_loosened():
-  """Review 5 V2: R30 drawn with four 5 m chords (38 degrees) between straights. Far windows estimate it gently
-  (56-82 km/h), nearer ones tighter (35-41; this coarse drawing gives no closer estimate). The map takes the tighter
-  ones and keeps them through the curve (it had kept 47.5)."""
-  runs = drive(polygon_curve(30, 5, turn_deg=38.24), 175)
+  """Review 5 V2 (shape per review 6 W3): R30 drawn with four 5 m chords (38.24 degrees, 20 m) between straights.
+  Far windows estimate it gently; the map keeps the tight speed through the curve (it had kept 47.5)."""
+  vertices = polygon_curve(30, 5, turn_deg=40)
+  assert len(vertices) == 2 + 4 + 1   # straight, four chords on the circle, straight
+  runs = drive(vertices, 175)
   inside = [applied for odometer, applied, _, _ in runs if 150 <= odometer <= 170]
-  assert inside and max(inside) <= 1.3 * kph(30, BUDGET)
+  assert inside and max(inside) <= 1.1 * kph(30, BUDGET)
+
+
+@pytest.mark.parametrize('radius,spacing,turn,phase,v', [(150, 34, 135, 3.5, 20.0), (150, 39, 60, 3.3, 14.3)])
+def test_one_odd_tight_estimate_does_not_hold_a_gentle_curve_down(radius, spacing, turn, phase, v):
+  """Review 6 W1: a constant-radius arc; one window's estimate came out too tight and the map kept it."""
+  start = 150 + phase
+  end = start + radius * math.radians(turn)
+  runs = drive(polygon_curve(radius, spacing, turn_deg=turn, phase=phase), end, v=v)
+  inside = [applied for odometer, applied, _, _ in runs if start + 20 <= odometer <= end - 20]
+  assert inside and min(inside) >= 0.88 * kph(radius, BUDGET)
+
+
+def test_one_long_gentle_curve_keeps_one_number():
+  """Review 6 W2: a 180 degree R250 arc drawn every 5 m; the binding moves between parts the simplification draws as
+  separate curves, but it is one curve for the accelerator floor."""
+  runs = drive(polygon_curve(250, 5, turn_deg=180), 150 + 250 * math.pi, v=28.0)
+  numbers = {number for odometer, applied, result, number in runs if number}
+  assert numbers == {1}
 
 
 @pytest.mark.parametrize('delay', [0.3, 1.0, 2.4])

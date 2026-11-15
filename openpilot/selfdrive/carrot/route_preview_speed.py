@@ -14,6 +14,7 @@ either side, as for vertices on a circle, but never more than a path within MAP_
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import NamedTuple
 
 from openpilot.selfdrive.carrot.curve_speed import (
@@ -352,16 +353,34 @@ class FrozenPreviewGuard:
     return None if self.frozen else preview
 
 
+class _Cell:
+  __slots__ = ("good", "partial", "curve", "direction", "early")
+
+  def __init__(self):
+    self.good = deque(maxlen=RouteSpeedMap.GOOD_VIEWS)   # speeds from good views (inf: seen straight)
+    self.partial = math.inf                               # tightest from partial views
+    self.curve = None                                     # (start, end) odometer of its curve
+    self.direction = 1.0
+    self.early = 0.0
+
+  def speed(self):
+    if not self.good:
+      return self.partial
+    good = sorted(self.good)[(len(self.good) - 1) // 2]   # lower median: one odd view either way does not decide
+    return good if not math.isfinite(good) else min(good, self.partial)
+
+
 class RouteSpeedMap:
   """The previewed curve speeds laid on the road (odometer metres, cells of MAP_STEP_M), kept across previews.
 
   Each preview simplifies a window that has moved, so a curve's estimate changes from preview to preview, worst where
   the window's start or end cuts into it, and the last metres of a curve the car is in can drop out. A cell takes the
   speed of every corner whose stretch overlaps it (a U-turn's zero-length one too). Road a preview sees well (more
-  than NEAR_M ahead of the car and EDGE_M before the window's end) replaces what only partial views put there, and a
-  good view of straight road replaces anything; otherwise views only tighten, and a partial view only a curve a good
-  view found, never road it saw straight. The speed for now is the tightest distance-adjusted one over the road
-  ahead, until the car is past it.
+  than NEAR_M ahead of the car and EDGE_M before the window's end) is a vote: the cell's speed is the lower median of
+  its last GOOD_VIEWS good views (a curve, or straight), so one view estimating it too tight or too gentle does not
+  decide (reviews 5 V2, 6 W1). Partial views only tighten, and only where no good view has seen it or the good
+  views see a curve, never road they see straight. The speed for now is the tightest distance-adjusted one over the
+  road ahead, until the car is past it.
 
   A missing preview gives no result at once (the limiter holds, then releases); the cells are kept LOST_S for it to
   come back. A new route, a lost preview, or a gap in the updates (the odometer cannot follow) starts it again.
@@ -372,11 +391,12 @@ class RouteSpeedMap:
   LOST_S = 1.0
   MAX_GAP_S = 0.5
   SAME_GAP_M = 10.0
+  GOOD_VIEWS = 7
 
   def __init__(self):
     self.route = None
     self.key = None
-    self.cells = {}        # index -> [curve m/s, good view, (curve start, curve end) odometer, direction, early m]
+    self.cells = {}        # index -> _Cell
     self.missing_since = None
     self.last_time = None
     self.number = 0        # changes when a different curve binds (an accelerator floor resets)
@@ -386,17 +406,17 @@ class RouteSpeedMap:
     self.route = self.key = self.binding = self.missing_since = None
     self.cells = {}
 
-  def _write(self, index, value, good):
+  def _write(self, index, speed, good, curve, direction, early):
     cell = self.cells.get(index)
-    if cell is None or (good and (not cell[1] or not math.isfinite(value[0]))):
-      # A good view replaces a partial one, and its straight replaces anything (a gentle tail of a corner that an
-      # earlier window drew long); a good view's curve never loosens a curve found before (review 5 V2).
-      self.cells[index] = value
-    elif value[0] < cell[0] and (good or not cell[1] or math.isfinite(cell[0])):
-      # Tighter only. A partial view may tighten a curve a good view found (the window can see it better nearer),
-      # but not put a curve on road a good view saw straight (the last kink of a curve merged with the straight
-      # after it, near the window's start, reaches past the curve's end).
-      self.cells[index] = [value[0], cell[1] or good] + value[2:]
+    if cell is None:
+      cell = self.cells[index] = _Cell()
+    if good:
+      cell.good.append(speed)
+    else:
+      cell.partial = min(cell.partial, speed)
+    if math.isfinite(speed):
+      cell.curve, cell.direction = curve, direction
+    cell.early = early
 
   def observe(self, preview, odometer, v_ego, sensitivity=1.0, lower_limit_kph=30.0, speed_ratio=1.0,
               lag=LAG_MARGIN_S):
@@ -411,8 +431,9 @@ class RouteSpeedMap:
     floor_ms = max(5.0, lower_limit_kph) * ratio / 3.6
     budget = TARGET_LAT_ACCEL / float(min(max(sensitivity, 0.5), 3.0))
     # Odometer of the preview's origin. The clock age, less the lag margin, but never less than the clock-free time
-    # since arrival: the road is not placed behind where it is unless the comma clock is more than LAG_MARGIN_S fast,
-    # nor more than about LAG_MARGIN_S of driving later (review 5 V5). `early` is how much farther it may be.
+    # since arrival: the road is not placed behind where it is unless the phone's clock is more than LAG_MARGIN_S
+    # behind the comma's, nor more than about LAG_MARGIN_S of driving later (review 5 V5). `early` is how much
+    # farther it may be (approach side).
     placed_age = max(preview.min_age, preview.age - lag)
     origin = odometer - v_ego * placed_age
     early = v_ego * max(0.0, preview.age - placed_age)
@@ -426,21 +447,20 @@ class RouteSpeedMap:
       return s - v_ego * preview.age >= self.NEAR_M and s <= length - self.EDGE_M
 
     first, last = int(math.ceil(origin / step)), int(math.floor((origin + length) / step))
-    curved = set()
+    tightest = {}
     for corner in corners(preview.points):
       speed = max(floor_ms, math.sqrt(budget * corner.radius))
-      value = [speed, False, (origin + corner.curve_start_m, origin + corner.curve_end_m), math.copysign(1.0, corner.turn),
-               early]
+      curve = (origin + corner.curve_start_m, origin + corner.curve_end_m)
       lo = int(math.ceil((origin + corner.start_m - step / 2) / step))
       hi = int(math.floor((origin + corner.end_m + step / 2) / step))
-      for index in range(max(lo, first), min(hi, last) + 1) if lo <= hi else ():
-        is_good = good(index)
-        value[1] = is_good
-        self._write(index, list(value), is_good)
-        curved.add(index)
+      for index in range(max(lo, first), min(hi, last) + 1):
+        if index not in tightest or speed < tightest[index][0]:
+          tightest[index] = (speed, curve, math.copysign(1.0, corner.turn))
     for index in range(first, last + 1):
-      if index not in curved and good(index):
-        self._write(index, [math.inf, True, None, 0.0, early], True)
+      speed, curve, direction = tightest.get(index, (math.inf, None, 1.0))
+      is_good = good(index)
+      if is_good or math.isfinite(speed):
+        self._write(index, speed, is_good, curve, direction, early)
 
   def update(self, preview, now, odometer, v_ego, a_ego=0.0, sensitivity=1.0, lower_limit_kph=30.0, speed_ratio=1.0,
              lag=LAG_MARGIN_S):
@@ -461,20 +481,25 @@ class RouteSpeedMap:
       del self.cells[index]   # behind the car: passed
     response_distance = v_ego * (RESPONSE_TIME + (max(0.0, a_ego) + APPROACH_DECEL) / (2.0 * APPROACH_JERK))
     best, chosen = PreviewCurve(), None
-    for index, (speed, _, curve, direction, early) in self.cells.items():
-      if not math.isfinite(speed):
+    for index, cell in self.cells.items():
+      speed = cell.speed()
+      if not math.isfinite(speed) or cell.curve is None:
         continue
-      ahead = max(0.0, index * self.MAP_STEP_M - early - odometer - v_ego * lag)
+      ahead = max(0.0, index * self.MAP_STEP_M - cell.early - odometer - v_ego * lag)
       allowance = 2.0 * APPROACH_DECEL * max(0.0, ahead - response_distance)
       approach_kph = min(NO_LIMIT_KPH, math.sqrt(speed ** 2 + allowance) * 3.6 / ratio)
       if approach_kph < best.approach_kph:
-        best = PreviewCurve(approach_kph, min(NO_LIMIT_KPH, speed * 3.6 / ratio), float(ahead), direction,
-                            curve[0] - odometer, curve[1] - odometer, allowance * (3.6 / ratio) ** 2)
-        chosen = (curve[0], curve[1], direction)
+        best = PreviewCurve(approach_kph, min(NO_LIMIT_KPH, speed * 3.6 / ratio), float(ahead), cell.direction,
+                            cell.curve[0] - odometer, cell.curve[1] - odometer, allowance * (3.6 / ratio) ** 2)
+        chosen = (cell.curve[0], cell.curve[1], cell.direction)
     if chosen is not None:
       previous = self.binding
-      if (previous is None or chosen[2] != previous[2] or chosen[0] > previous[1] + self.SAME_GAP_M
-          or chosen[1] < previous[0] - self.SAME_GAP_M):
+      # A different curve: the other direction, or, once the car is past the curve it had, a stretch apart from it.
+      # Before then a binding moving between parts of a long gentle arc (drawn as several curves) stays this curve
+      # (review 6 W2); a later curve the same way takes over at the earlier one's end.
+      if (previous is None or chosen[2] != previous[2]
+          or (odometer > previous[1] and (chosen[0] > previous[1] + self.SAME_GAP_M
+                                          or chosen[1] < previous[0] - self.SAME_GAP_M))):
         self.number += 1
         self.binding = chosen
       else:
