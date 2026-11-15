@@ -41,9 +41,30 @@ LAT_PLAN_MIN_IDX = 5
 # apart (Codex review).
 NNFF_FROGPILOT_PARITY_CARS = tuple(str(platform) for platform in GM_CAR if str(platform).startswith("CHEVROLET_"))
 
+# Trailblazer only (2026-11-16, user request): hold back NNFF's high-lateral-acceleration error blend below 55 km/h.
+# Trailblazer logs (11/15 T03-T06, same commit as the Traverse) wind and unwind the wheel at about 0.9 Hz in every
+# 33-47 km/h curve, well beyond what the plan asks for. The blend reads the NN at lateral accel = error, whose slope near
+# zero is about 4x the setpoint/measurement difference; at 40 km/h and 2 m/s^2 it makes the lateral-accel feedback slope
+# (P+F) about 2.1x what a 0.3 blend gives (Codex: -0.84 vs -0.41). The Traverse runs the same controller without hunting;
+# that the Trailblazer reacts more strongly to torque at low speed is a hypothesis from closed-loop logs, not identified.
+# 0.3 and 55/65 km/h are provisional values from these logs, not a proven stability margin: check on the road.
+# Below 1 m/s^2 of desired lateral accel, from 65 km/h, and on other cars (the Traverse included) the computation is the
+# stock one; an integrator built up in a slow curve carries over (it has no time decay) until later errors move it.
+NNFF_LOW_SPEED_ERROR_BLEND_CARS = ("CHEVROLET_TRAILBLAZER",)
+LOW_SPEED_ERROR_BLEND_BP = [55. / 3.6, 65. / 3.6]  # m/s
+LOW_SPEED_ERROR_BLEND_V = [0.3, 1.0]
+
 def get_low_speed_factor(v_ego, nn_table):
   # FrogPilot's NNFF (and twilsonco's original) uses the smaller NN low-speed table.
   return np.interp(v_ego, LOW_SPEED_X, LOW_SPEED_Y_NN if nn_table else LOW_SPEED_Y)**2
+
+def get_error_blend_factor(desired_lateral_accel, v_ego, low_speed_scale):
+  """Weight of NNFF's error-input response: 0 below 1 m/s^2 of desired lateral accel, 1 above 2 (FrogPilot/
+  sunnypilot). With low_speed_scale (Trailblazer) it is cut to 0.3x up to 55 km/h and back to 1x at 65 km/h."""
+  factor = float(np.interp(abs(desired_lateral_accel), [1.0, 2.0], [0.0, 1.0]))
+  if low_speed_scale:
+    factor *= float(np.interp(v_ego, LOW_SPEED_ERROR_BLEND_BP, LOW_SPEED_ERROR_BLEND_V))
+  return factor
 
 def get_predicted_lateral_jerk(lat_accels, t_diffs):
   # compute finite difference between subsequent model_data.acceleration.y values
@@ -108,6 +129,8 @@ class LatControlTorque(LatControl):
     self.torque_params = CP.lateralTuning.torque.as_builder()
     # FrogPilot parity (2026-11-11/14): same NNFF path, integrator handling, delay inputs and pitch as FrogPilot
     self.nnff_frogpilot_parity = CI.use_nnff and CP.carFingerprint in NNFF_FROGPILOT_PARITY_CARS
+    # Trailblazer: lower error-blend weight below 55 km/h (see NNFF_LOW_SPEED_ERROR_BLEND_CARS)
+    self.low_speed_error_blend = bool(CI.use_nnff and CP.carFingerprint in NNFF_LOW_SPEED_ERROR_BLEND_CARS)
     pid_class = FrogPilotWindupPID if self.nnff_frogpilot_parity else PIDController
     self.pid = pid_class(self.torque_params.kp, self.torque_params.ki,
                          k_f=self.torque_params.kf, pos_limit=self.steer_max, neg_limit=-self.steer_max)
@@ -310,7 +333,7 @@ class LatControlTorque(LatControl):
         torque_from_measurement = self.torque_from_nn(nnff_measurement_input)
 
         pid_log.error = float(torque_from_setpoint - torque_from_measurement)
-        error_blend_factor = np.interp(abs(desired_lateral_accel), [1.0, 2.0], [0.0, 1.0])
+        error_blend_factor = get_error_blend_factor(desired_lateral_accel, CS.vEgo, self.low_speed_error_blend)
         if error_blend_factor > 0.0:  # blend in stronger error response when in high lat accel
           nnff_error_input = [CS.vEgo, setpoint - measurement, lateral_jerk_setpoint - lateral_jerk_measurement, 0.0]
           torque_from_error = self.torque_from_nn(nnff_error_input)
