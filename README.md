@@ -14,7 +14,15 @@ carrotpilot은 comma.ai가 개발·검토·승인하거나 공식적으로 지�
 
 ### 설치 및 배포 정책
 
-초기화한 장치의 설치 주소 입력 화면에서 다음 주소를 사용합니다.
+이 포크(github.com/leehyuk1108/carrotpilot)의 `WIP-FR` 브랜치는 초기화한 장치의 설치 주소 입력 화면에 다음 주소를 넣어 설치합니다.
+
+```text
+i.hyuklee.workers.dev/WIP-FR
+```
+
+다른 브랜치는 `i.hyuklee.workers.dev/브랜치이름`입니다. comma 공식 설치기(installer.comma.ai)를 쓰고 저장소 주소만 `carrotpilot`으로 바꿔 줍니다(Cloudflare Worker, 2026-11-16).
+
+원본 carrot의 `carrot-wip`은 다음 주소입니다.
 
 ```text
 i.carrotpilot.app/carrot-wip
@@ -122,7 +130,15 @@ carrotpilot is not an openpilot distribution developed, reviewed, approved, or o
 
 ### Installation and release policy
 
-After resetting the device, enter the following address in the installer URL field:
+For this fork's `WIP-FR` branch (github.com/leehyuk1108/carrotpilot), enter the following address in the installer URL field of a reset device:
+
+```text
+i.hyuklee.workers.dev/WIP-FR
+```
+
+Other branches are `i.hyuklee.workers.dev/<branch>`. It serves comma's official fork installer (installer.comma.ai) with the repository changed to `carrotpilot` (a Cloudflare Worker, 2026-11-16).
+
+Upstream carrot's `carrot-wip` is:
 
 ```text
 i.carrotpilot.app/carrot-wip
