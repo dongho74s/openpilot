@@ -15,9 +15,9 @@ CAR_CHARGING_RATE_W = 45
 
 VBATT_PAUSE_CHARGING = LOW_VOLTAGE_MV / 1000
 LOW_VOLTAGE_CONFIRMATION_S = 10.0
-# The offroad timer, as in carrot: never sooner than five minutes offroad, and only after driving in this boot or an
-# hour after booting. Without these a device with a short (or 0) MaxTimeOffroadMin powered off the moment the offroad
-# screen came up after an install, and again on every power-up (2026-11-16 report).
+# The offroad timer, as in carrot: never sooner than five minutes offroad, and only after going onroad since hardwared
+# started (started_seen) or an hour after booting. Without these a saved MaxTimeOffroadMin of 0 powered the device off
+# the moment the offroad screen came up, and on every power-up (a reported symptom, 2026-11-16).
 DELAY_SHUTDOWN_TIME_S = 300
 MIN_ON_TIME_S = 3600
 

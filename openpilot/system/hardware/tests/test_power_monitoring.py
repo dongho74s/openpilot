@@ -128,8 +128,9 @@ class TestPowerMonitoring:
     assert pm.should_shutdown(False, in_car, booted_at, started_seen) == expected
 
   def test_a_fresh_install_with_no_offroad_time_does_not_power_off_at_the_offroad_screen(self, mocker):
-    """2026-11-16: another user's device powered off the moment the offroad screen came up after installing this
-    branch, and again on every power-up (MaxTimeOffroadMin 0, no drive since boot)."""
+    """2026-11-16: another user's device was reported to power off the moment the offroad screen came up after
+    installing this branch, and on every power-up. A saved MaxTimeOffroadMin of 0 with no onroad since boot did that
+    here (the reported device's setting is not known)."""
     self.params.put_int("MaxTimeOffroadMin", 0)
     pm = PowerMonitoring()
     clock = mocker.patch("time.monotonic", return_value=25.)
