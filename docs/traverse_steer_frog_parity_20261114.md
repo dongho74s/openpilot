@@ -33,6 +33,7 @@
   - **2026-11-15 변경(사용자 요청):** 쉐보레 전 차종(`CHEVROLET_*` 지문 16개)으로 넓혔다. 조건은 그대로 'NNFF 사용 중'이다(FrogPilot도 NNFF 차에서만 LatControlNNFF).
   - 실제로 켜지는 차(NNFF 설정 켬, 펌웨어 무관 기준): 트래버스(트레일블레이저 모델 대체)·트레일블레이저·이쿼녹스·이쿼녹스 CC·실버라도·서버번·서버번 CC.
   - 꺼진 채인 차: 볼트 EUV·볼트 CC·볼트(콤마 자체 NN 앞먹임 사용, NNFF 안 씀), 말리부·말리부 CC·볼트 2019·볼트 CC·트레일블레이저 CC·트랙스(NNFF 모델 없음). 예전 목록의 트레일블레이저 CC·트랙스도 모델이 없어 실제로는 적용된 적이 없다.
+  - 같은 날 추가(사용자 요청): 볼트 EUV·볼트 2017-18도 NNFF 사용. 이 포크는 콤마 자체 NN이 있는 차는 NNFF를 안 켰는데(interfaces.py), FrogPilot은 NNFF 모델만 있으면 NNFF를 쓴다. 두 지문만 `NNFF_OVER_COMMA_NN` 예외로 NNFF 우선, 볼트 EUV 모델은 FrogPilot d73201f2 파일 그대로(sha256 6f973c10…). 볼트 No-ACC는 콤마 NN 그대로(FrogPilot에도 모델 없음).
   - 같은 지문에 묶인 타사 차: GMC 시에라 1500 2020-21(CHEVROLET_SILVERADO)도 같이 적용된다. 지문으로는 구분할 수 없다(Codex 리뷰). 캐딜락 XT4·XT5 No ACC·CT6는 각자 별도 지문(CADILLAC_*)이라 해당 없다.
 - 정확히 말하면 'FrogPilot과 같은 계산식 + 사용자 설정 유지'다.
   - Kf: carrot은 앞먹임에 Kf를 곱한다. FrogPilot은 곱하지 않는다. Kf가 1이 아니면 적분 허용 판단에도 들어간다.

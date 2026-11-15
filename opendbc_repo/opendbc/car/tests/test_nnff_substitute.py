@@ -209,5 +209,69 @@ class TestNNFFSubstitute(unittest.TestCase):
     self.assertIn("experimental substitute", entry["edescr"])
 
 
+BOLT_EUV_MODEL_SHA256 = "6f973c101189318d190575dd3e000b7e43a8332360c8eb11ee7f9241dd58a2fa"  # FrogPilot d73201f2
+
+
+class TestNNFFOverCommaNN(unittest.TestCase):
+  """User request 2026-11-15: the Bolt EUV and Volt 2017-18 use NNFF like FrogPilot, which picks its NNFF whenever it
+  has a model, while this fork kept comma's own NN feedforward first for them."""
+
+  def setUp(self):
+    self.params = MemoryParams()
+    for module in (interfaces, gm_interface):
+      self.enterContext(patch.object(module, "Params", return_value=self.params))
+    self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+
+  def interface(self, car, nnff=True):
+    self.params.values["NNFF"] = int(nnff)
+    cp = IsolatedGMInterface.get_params(car, gen_empty_fingerprint(), [], False, False, False)
+    return IsolatedGMInterface(cp)
+
+  def test_exceptions_are_only_the_bolt_euv_and_volt(self):
+    self.assertEqual(interfaces.NNFF_OVER_COMMA_NN, ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT"))
+
+  def test_bolt_euv_and_volt_use_nnff_over_comma_nn(self):
+    for car, model in ((CAR.CHEVROLET_BOLT_EUV, "CHEVROLET_BOLT_EUV.json"), (CAR.CHEVROLET_VOLT, "CHEVROLET_VOLT.json")):
+      with self.subTest(car=car):
+        on = self.interface(car)
+        self.assertTrue(on.check_comma_nn_ff_support(car))   # comma ships its own NN for it
+        self.assertTrue(on.use_nnff)
+        self.assertFalse(on.use_nnff_lite)
+        self.assertEqual(Path(interfaces.get_nn_model_path(car, "", allow_substitute=True)).name, model)
+        self.assertFalse(self.interface(car, nnff=False).use_nnff)
+
+  def test_other_comma_nn_cars_keep_comma_first(self):
+    on = self.interface(CAR.CHEVROLET_BOLT_CC)
+    self.assertTrue(on.check_comma_nn_ff_support(CAR.CHEVROLET_BOLT_CC))
+    self.assertFalse(on.use_nnff)
+    with patch.object(IsolatedGMInterface, "check_comma_nn_ff_support", return_value=True):
+      self.assertFalse(self.interface(CAR.CHEVROLET_EQUINOX).use_nnff)   # an NNFF model alone does not override
+
+  def test_bolt_euv_model_is_frogpilots_and_evaluates(self):
+    import hashlib
+    path = Path(interfaces.TORQUE_NN_MODEL_PATH) / "CHEVROLET_BOLT_EUV.json"
+    self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), BOLT_EUV_MODEL_SHA256)
+    model = interfaces.get_nn_model(CAR.CHEVROLET_BOLT_EUV, "")
+    self.assertEqual((model.input_size, model.output_size), (18, 1))
+    for speed in (5.0, 20.0, 35.0):
+      for accel in (-2.0, 0.0, 2.0):
+        inputs = [speed, accel, 0.0, 0.0] + [accel] * 7 + [0.0] * 7
+        self.assertTrue(math.isfinite(model.evaluate(inputs)))
+
+  def test_new_model_does_not_capture_other_platforms(self):
+    for car in ("CHEVROLET_BOLT_CC", "CHEVROLET_VOLT_2019", "CHEVROLET_VOLT_CC", "CHEVROLET_MALIBU", "CHEVROLET_TRAX"):
+      with self.subTest(car=car):
+        self.assertIsNone(interfaces.get_nn_model_path(car, "", allow_substitute=True))
+
+  def test_real_torque_controller_runs_frogpilot_parity_on_them(self):
+    from openpilot.selfdrive.controls.lib import latcontrol_torque
+    with patch.object(latcontrol_torque, "Params", return_value=self.params):
+      for car in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_VOLT):
+        with self.subTest(car=car):
+          ci = self.interface(car)
+          controller = latcontrol_torque.LatControlTorque(ci.CP.as_reader(), ci)
+          self.assertTrue(controller.use_nnff and controller.nnff_frogpilot_parity)
+          self.assertTrue(math.isfinite(controller.torque_from_nn([20.0, 0.0, 0.0, 0.0] + [0.0] * 14)))
+
 if __name__ == "__main__":
   unittest.main()

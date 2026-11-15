@@ -37,6 +37,9 @@ NEURAL_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/neural_ff_weights.json')
 TORQUE_NN_MODEL_PATH = os.path.join(BASEDIR, 'torque_data/lat_models')
 # Experimental, explicit donor models; never substitute vehicle or safety parameters.
 NNFF_MODEL_SUBSTITUTES = {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER"}
+# With NNFF on and a model present these use NNFF before comma's own NN feedforward, as FrogPilot does (it picks its
+# NNFF whenever it has a model; user request 2026-11-15). Every other car with comma's NN keeps comma's path.
+NNFF_OVER_COMMA_NN = ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT")
 
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'torque_data/override.toml')
@@ -320,7 +323,8 @@ class CarInterfaceBase(ABC):
     comma_nnff_supported = self.check_comma_nn_ff_support(CP.carFingerprint)
     nnff_supported = self.initialize_lat_torque_nn(CP.carFingerprint, eps_firmware)
 
-    self.use_nnff = not comma_nnff_supported and nnff_supported and Params().get_bool("NNFF")
+    comma_first = comma_nnff_supported and CP.carFingerprint not in NNFF_OVER_COMMA_NN
+    self.use_nnff = not comma_first and nnff_supported and Params().get_bool("NNFF")
     self.use_nnff_lite = not self.use_nnff and Params().get_bool("NNFFLite")
     
   def get_ff_nn(self, x):
