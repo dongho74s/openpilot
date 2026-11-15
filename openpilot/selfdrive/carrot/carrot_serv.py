@@ -1505,7 +1505,7 @@ class CarrotServ:
         self.xSpdType = xSpdType
 
   def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speed, gps_service,
-                  *, vturn_target=0.0, route_target=0.0):
+                  *, vturn_target=0.0, route_target=0.0, route_preview_speed=250.0, route_preview_target=0.0):
 
     self.debugText = ""
     self.update_params()
@@ -1671,6 +1671,14 @@ class CarrotServ:
     if self.turnSpeedControlMode in [1,2]:
       speed_n_sources.append((max(abs(vturn_speed), self.autoCurveSpeedLowerLimit), "vturn"))
 
+    # Navdy route preview (TMAP / Naver, 400 m ahead): a curve speed by the same physics as vturn, computed in
+    # carrot_man only for TurnSpeedControlMode 2-4 in Navdy mode. Not scaled by MapTurnSpeedFactor, which belongs
+    # to the turn-based route speed below.
+    preview_route_active = (self.turnSpeedControlMode in [2, 3, 4] and math.isfinite(route_preview_speed)
+                            and abs(route_preview_speed) < 250)
+    if preview_route_active:
+      speed_n_sources.append((max(abs(route_preview_speed), self.autoCurveSpeedLowerLimit), "route"))
+
     route_speed = max(route_speed * self.mapTurnSpeedFactor, self.autoCurveSpeedLowerLimit)
     if self.turnSpeedControlMode == 2:
       if -500 < self.xDistToTurn < 500:
@@ -1703,6 +1711,8 @@ class CarrotServ:
       display_targets['road'] = limit_speed
     display_targets['vturn'] = max(vturn_target, self.autoCurveSpeedLowerLimit) if vturn_target > 0 else 0.0
     display_targets['route'] = max(route_target * self.mapTurnSpeedFactor, self.autoCurveSpeedLowerLimit) if route_target > 0 else 0.0
+    if preview_route_active and route_preview_target > 0:
+      display_targets['route'] = max(route_preview_target, self.autoCurveSpeedLowerLimit)
     display_distances = {'atc': self.xDistToTurn, 'atc2': self.xDistToTurnNext,
                          sdi_source: rear_camera_remaining if rear_camera_holding else max(0.0, self.xSpdDist)}
     if section_speed < 250:

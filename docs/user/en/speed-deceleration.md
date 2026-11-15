@@ -37,6 +37,7 @@ The code collects several candidates and selects their minimum as `desired_speed
 | Road limit plus offset | `AutoRoadSpeedLimitOffset` |
 | Vision curve | `AutoCurveSpeedFactor`, `TurnSpeedControlMode` |
 | Route turn | `MapTurnSpeedFactor`, `TurnSpeedControlMode` |
+| Navdy route-preview curve (`route`) | `AutoCurveSpeedFactor`, `TurnSpeedControlMode` 2/3, [details](#route-preview-curve) |
 | Separate automatic turn control | `AutoTurnControl*` |
 
 If raising one value produces no change, another source may already be lower. Check the displayed source, event type, target limit, and remaining distance together.
@@ -317,6 +318,13 @@ This floor applies to vision-curve and route-turn candidates. For vision curves,
 | `3` | Off | Always included as a candidate |
 
 In mode 2, route-turn speed enters only when turn distance is roughly between -500 m and +500 m. Mode 3 can cause unexpected slowing when route data is inaccurate.
+
+<a id="route-preview-curve"></a>
+**Navdy route-preview curve (added 2026-11-15, modes 2 and 3).** With Navdy input (`CarrotNaviSource=1`), the phone navigation (TMAP, Naver Map) sends the next 400 m of the route every second as points 5 m apart; a separate curve speed computed from them enters as a `route` candidate, whatever the turn distance.
+- The calculation is the vision curve's: lateral budget 1.9 m/s² ÷ `AutoCurveSpeedFactor`, 1.0 m/s² approach, floor `AutoCurveSpeedLowerLimit`. `MapTurnSpeedFactor` is not applied.
+- Vision sees about 130 m (6 s) of the model's path; this sees 400 m, so it starts slowing earlier at speed. Example: at 72 km/h it starts about 140 m before a 100 m radius curve.
+- It is not used when the preview is older than 2.5 s, when the phone could not match its position to the route (off route, heading mismatch, ambiguous), or when the point spacing is not sane. When it disappears it is held 0.35 s, then released at 7.2 km/h per second.
+- Naver Map sends the same format after the phone bridge and Naver patch update. Real-road accuracy (map error, intersection turns) has not been verified in the car.
 
 > [!IMPORTANT]
 > Mode `0` does not disable every model-derived speed function. `ApplyModelSpeed` changes cruise set speed separately.

@@ -37,6 +37,7 @@
 | 도로 제한속도 + 오프셋 | `AutoRoadSpeedLimitOffset` |
 | 비전 커브 | `AutoCurveSpeedFactor`, `TurnSpeedControlMode` |
 | 경로 턴 | `MapTurnSpeedFactor`, `TurnSpeedControlMode` |
+| Navdy 경로 미리보기 커브(`route`) | `AutoCurveSpeedFactor`, `TurnSpeedControlMode` 2·3, [설명](#route-preview-curve) |
 | 별도 자동 턴 제어 | `AutoTurnControl` 계열 |
 
 따라서 한 설정을 올렸는데 속도가 변하지 않으면 다른 후보가 이미 더 낮은지 확인해야 합니다. 화면에 표시되는 감속 소스, 이벤트 종류, 목표 제한속도와 남은 거리를 함께 보세요.
@@ -397,6 +398,13 @@ Kia PV5는 순정 내비의 같은 단속 상태·제한속도가 계속 수신�
 | 3 | 사용 안 함 | 항상 후보에 포함 |
 
 모드 2의 경로 속도는 현재 턴 거리 값이 약 -500~500m 범위일 때만 후보에 들어갑니다. 모드 3은 경로 속도를 항상 후보에 넣으므로 경로 정보가 부정확한 환경에서는 예상하지 못한 감속이 생길 수 있습니다.
+
+<a id="route-preview-curve"></a>
+**Navdy 경로 미리보기 커브(2026-11-15 추가, 모드 2·3).** Navdy 입력(`CarrotNaviSource=1`)에서는 폰 내비(TMAP, 네이버지도)가 1초마다 보내는 앞 400 m 경로 점(5 m 간격)으로 커브 속도를 따로 계산해 `route` 후보로 넣습니다. 턴 거리와 상관없이 들어갑니다.
+- 계산은 비전 커브와 같습니다. 허용 횡가속 1.9 m/s² ÷ `AutoCurveSpeedFactor`, 접근 감속 1.0 m/s², 최저 `AutoCurveSpeedLowerLimit`. `MapTurnSpeedFactor`는 곱하지 않습니다.
+- 비전은 모델 경로 약 130 m(6초)만 보지만 이 후보는 400 m 앞을 봐서 빠른 속도에서 더 일찍 감속을 시작합니다. 예: 72 km/h에서 반경 100 m 커브는 약 140 m 앞부터 줄입니다.
+- 미리보기가 2.5초보다 오래됐거나, 폰이 위치를 경로에 맞추지 못했거나(경로 이탈·방향 불일치·애매한 위치), 점 간격이 비정상이면 쓰지 않습니다. 사라지면 0.35초 유지 뒤 초당 7.2 km/h씩 풀립니다.
+- 네이버지도는 폰 브릿지·네이버 패치 업데이트 후 같은 형식으로 보냅니다. 실제 도로에서의 정확도(지도 오차, 교차로 회전)는 아직 실차로 검증하지 않았습니다.
 
 > [!IMPORTANT]
 > `TurnSpeedControlMode=0`이 모든 모델 기반 속도 기능을 끄는 것은 아닙니다. `ApplyModelSpeed`는 별도 설정속도 기능입니다.

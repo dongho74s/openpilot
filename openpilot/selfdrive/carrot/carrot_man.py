@@ -34,6 +34,8 @@ from openpilot.common.constants import CV
 
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ, NAVI_SOURCE_NETWORK, NAVI_SOURCE_NAVDY
 from openpilot.selfdrive.carrot.curve_speed import VisionCurveSpeed, curve_speed
+from openpilot.selfdrive.carrot.route_preview_speed import RoutePreviewCurveSpeed, preview_curve_speed
+from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
 from openpilot.selfdrive.carrot.server.services.web_settings import read_web_settings
 from openpilot.selfdrive.carrot.web_upload import (
@@ -329,6 +331,9 @@ class CarrotMan:
     self.remote_addr = None
 
     self.vision_curve_speed = VisionCurveSpeed()
+    self.route_preview_curve_speed = RoutePreviewCurveSpeed()
+    self.route_preview_display_target = 0.0
+    self.route_preview_logged = 0.0
     self.carrot_curve_speed_params()
 
     self.is_running = True
@@ -417,12 +422,15 @@ class CarrotMan:
         remote_addr = self.remote_addr
         remote_ip = remote_addr[0] if remote_addr is not None else ""
         vturn_speed = self.carrot_curve_speed(self.sm)
+        route_preview_speed = self.carrot_route_preview_speed(self.sm)
         coords, distances, route_speed = self.carrot_navi_route()
 
         #print("coords=", coords)
         #print("curvatures=", curvatures)
         self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speed, self.gps_location_service,
-                                    vturn_target=self.vturn_display_target, route_target=self.route_display_target)
+                                    vturn_target=self.vturn_display_target, route_target=self.route_display_target,
+                                    route_preview_speed=route_preview_speed,
+                                    route_preview_target=self.route_preview_display_target)
 
         now = time.monotonic()
         if now >= next_broadcast_time:
@@ -1451,6 +1459,32 @@ class CarrotMan:
     if not all(sm.alive[name] and sm.valid[name] for name in ('carState', 'modelV2')):
       return self.vision_curve_speed.update(None, time.monotonic())
     return self.vturn_speed(sm['carState'], sm)
+
+  def carrot_route_preview_speed(self, sm):
+    """Curve speed from the Navdy route preview (TMAP / Naver), or the no-limit value. Only in Navdy mode with route
+    turn speed (TurnSpeedControlMode 2-4) and a fresh preview; see route_preview_speed.py."""
+    now = time.monotonic()
+    self.route_preview_display_target = 0.0
+    serv = self.carrot_serv
+    result = preview = None
+    if (serv.accepts_navigation(NAVI_SOURCE_NAVDY) and serv.turnSpeedControlMode in (2, 3, 4)
+        and sm.alive['carState'] and sm.valid['carState']):
+      CS = sm['carState']
+      preview = serv.navdy_navigation.route_preview(now)
+      if preview is not None:
+        result = preview_curve_speed(preview.points, preview.age, CS.vEgo, self.autoCurveSpeedFactor,
+                                     serv.autoCurveSpeedLowerLimit, a_ego=CS.aEgo, speed_ratio=CS.vCluRatio)
+    speed = self.route_preview_curve_speed.update(result, now)
+    if result is not None and abs(abs(speed) - result.approach_kph) < 1e-3:
+      self.route_preview_display_target = result.curve_kph
+    if now - self.route_preview_logged >= 1.0 and (preview is not None or abs(speed) < 250):
+      self.route_preview_logged = now
+      cloudlog.event("navdy_route_preview", points=len(preview.points) if preview else 0,
+                     age=round(preview.age, 2) if preview else None,
+                     approach=round(result.approach_kph, 1) if result else None,
+                     curve=round(result.curve_kph, 1) if result else None,
+                     distance=round(result.distance, 1) if result else None, applied=round(abs(speed), 1))
+    return speed
 
   def vturn_speed(self, CS, sm):
     result = curve_speed(sm['modelV2'], CS.vEgo, self.autoCurveSpeedFactor,

@@ -1,6 +1,7 @@
 """Bounded Navdy feedback, separate from vehicle control and USB ownership."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
@@ -37,6 +38,41 @@ def camera_distance(value):
     return None
   distance = float(match[1]) * (1000 if match[2] == 'km' else 1)
   return int(distance) if 0 < distance <= 10000 else None
+
+
+# Route preview (TMAP RoadPreviewSender, Naver through the phone bridge): the phone matches its position to the route
+# and samples the next 400 m every 5 m as east/north offsets in metres from that point, once per second.
+PREVIEW_MAX_AGE = 2.5
+PREVIEW_POINTS = (7, 81)
+PREVIEW_STEP_M = (3.0, 7.0)
+PREVIEW_MAX_OFFSET_M = 500.0
+
+
+@dataclass(frozen=True)
+class RoutePreview:
+  points: tuple   # ((east, north), ...) metres from the matched position at observation, 5 m apart
+  age: float      # seconds since the phone observed it
+  key: tuple      # (session, sequence): one observation
+
+
+def preview_points(value):
+  """The preview's points as a tuple of (east, north) floats, or None unless every point is a sane 5 m step on from
+  the origin (same bounds as the v140 shadow evaluator)."""
+  if not isinstance(value, list) or not PREVIEW_POINTS[0] <= len(value) <= PREVIEW_POINTS[1]:
+    return None
+  points = []
+  for item in value:
+    if not isinstance(item, list) or len(item) != 2:
+      return None
+    east, north = (number(v, -PREVIEW_MAX_OFFSET_M, PREVIEW_MAX_OFFSET_M) for v in item)
+    if east is None or north is None:
+      return None
+    points.append((float(east), float(north)))
+  if math.hypot(*points[0]) > 1.0:
+    return None
+  if not all(PREVIEW_STEP_M[0] <= math.dist(a, b) <= PREVIEW_STEP_M[1] for a, b in zip(points, points[1:])):
+    return None
+  return tuple(points)
 
 
 def route_traffic(guidance):
@@ -137,6 +173,18 @@ class FeedbackTracker:
       self.revision += 1
       self.revisions[name] += 1
     return None, 0
+
+  def route_preview(self, now):
+    """The fresh route preview, or None. It needs an accepted, guided ('ok') packet no older than PREVIEW_MAX_AGE."""
+    if not 0 <= now - self.received_at < LINK_TTL:
+      return None
+    road, age = self._fresh('road', now)
+    if not road or road.get('guidance') is not True or road.get('reason') != 'ok' or not 0 <= age <= PREVIEW_MAX_AGE:
+      return None
+    points = preview_points(road.get('points'))
+    if points is None:
+      return None
+    return RoutePreview(points, age, (road.get('session'), road.get('sequence')))
 
   def section_end(self, now):
     """Explicit, fresh producer evidence that a section cap must end: 'stopped', 'off_route' or ''.
@@ -293,6 +341,10 @@ class NavigationReader:
   def section_end(self, now=None):
     with self.lock:
       return self.tracker.section_end(time.monotonic() if now is None else now)
+
+  def route_preview(self, now=None):
+    with self.lock:
+      return self.tracker.route_preview(time.monotonic() if now is None else now)
 
   def _invalidate_model(self, reason):
     self.model_tracker.clear(reason)
