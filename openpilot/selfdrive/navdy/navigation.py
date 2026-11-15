@@ -63,6 +63,7 @@ class RoutePreview:
   age: float      # seconds since the phone observed it
   key: tuple      # (session, sequence): one observation
   min_age: float = 0.0   # seconds since the comma received it: a lower bound of age that needs no clock
+  route: tuple = ()      # (session, routeId): a new route starts the road map again
 
 
 def clock_synced(path=CLOCK_SYNCED_PATH):
@@ -193,7 +194,9 @@ class FeedbackTracker:
     if (value.get('guidance') is not True or value.get('reason') != 'ok' or points is None
         or clock_age < -PREVIEW_CLOCK_SLACK):
       return
-    self.preview = ((session, sequence), points, received_at, max(0.0, clock_age))
+    route_id = value.get('routeId')
+    self.preview = ((session, sequence), points, received_at, max(0.0, clock_age),
+                    (session, route_id if type(route_id) is int else None))
 
   def accept(self, packet, received_at, now, wall=None):
     if (not isinstance(packet, dict) or is_no_observation(packet) or number(received_at, 0, now) is None
@@ -250,11 +253,11 @@ class FeedbackTracker:
     guidance = raw_guidance.get('guidance') if raw_guidance else None
     if not isinstance(guidance, dict) or guidance.get('active') is not True:
       return None
-    key, points, arrived, arrival_age = self.preview
+    key, points, arrived, arrival_age, route = self.preview
     since = now - arrived
     if since < 0 or arrival_age + since > PREVIEW_MAX_AGE:
       return None
-    return RoutePreview(points, arrival_age + since, key, since)
+    return RoutePreview(points, arrival_age + since, key, since, route)
 
   def section_end(self, now):
     """Explicit, fresh producer evidence that a section cap must end: 'stopped', 'off_route' or ''.
