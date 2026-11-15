@@ -296,7 +296,7 @@ def test_a_frozen_window_with_a_corner_is_rejected_until_it_changes():
   assert all(p is not None for k, p in results if k <= 1) and all(p is None for k, p in results if k >= 2)
 
 
-def drive(vertices, until, v=14.3, start=0.0, switch=None):
+def drive(vertices, until, v=14.3, start=0.0, switch=None, delay=0.3):
   """Drive along the route at v: a new observation each second (observed 0.3 s before), the map and the limiter
   every 50 ms, as carrot_man runs them. switch=(odometer, vertices): a new route from there.
   Returns [(odometer, applied km/h, map result, curve number)]."""
@@ -305,13 +305,14 @@ def drive(vertices, until, v=14.3, start=0.0, switch=None):
   while odometer < until:
     if abs(t - round(t)) < 1e-9:
       current, route_id = (switch[1], ('r', 2)) if switch and odometer >= switch[0] else (vertices, ('r', 1))
-      points = resample(current, start=odometer - v * 0.3)
+      points = resample(current, start=odometer - v * delay)
       k += 1
       observation = (points, route_id, t, k) if len(points) >= 7 else None
     preview = None
     if observation is not None:
       since = t - observation[2]
-      preview = RoutePreview(observation[0], 0.3 + since, ('s', observation[3]), since, observation[1])
+      if delay + since <= 2.5:
+        preview = RoutePreview(observation[0], delay + since, ('s', observation[3]), since, observation[1])
     result = speed_map.update(preview, t, odometer, v, 0.0, 0.8, 5, 1.0)
     out.append((odometer, abs(limiter.update(result, t)), result, speed_map.number))
     odometer += v * 0.05
@@ -335,6 +336,34 @@ def test_driving_up_to_and_through_a_curve_keeps_its_speed(radius, spacing, turn
           and odometer > start]
   assert free and end < free[0] <= end + 60
   assert {number for *_, number in runs} == {1}
+
+
+def test_a_u_turn_is_kept_on_the_road_map():
+  """Review 5 V1: a U-turn's zero-length corner between 5 m samples, on a diagonal line."""
+  h = math.radians(45)
+  vertices = split([(0.0, 0.0), (200 * math.sin(h), 200 * math.cos(h)), (-200 * math.sin(h), -200 * math.cos(h))])
+  runs = drive(vertices, 190, v=20.0)
+  near = [applied for odometer, applied, _, _ in runs if 140 <= odometer <= 185]
+  assert near and max(near) <= 31.0
+
+
+def test_a_nearer_tighter_estimate_is_taken_and_never_loosened():
+  """Review 5 V2: R30 drawn with four 5 m chords (38 degrees) between straights. Far windows estimate it gently
+  (56-82 km/h), nearer ones tighter (35-41; this coarse drawing gives no closer estimate). The map takes the tighter
+  ones and keeps them through the curve (it had kept 47.5)."""
+  runs = drive(polygon_curve(30, 5, turn_deg=38.24), 175)
+  inside = [applied for odometer, applied, _, _ in runs if 150 <= odometer <= 170]
+  assert inside and max(inside) <= 1.3 * kph(30, BUDGET)
+
+
+@pytest.mark.parametrize('delay', [0.3, 1.0, 2.4])
+def test_a_passed_curve_is_released_soon_even_with_delayed_previews(delay):
+  """Review 5 V5: previews arriving up to 2.4 s after their observation (the age is still under 2.5 s)."""
+  start, end = 153.3, 153.3 + 86 * math.radians(33.32)
+  runs = drive(polygon_curve(86, 5, turn_deg=33.32, phase=3.3), end + 120, delay=delay)
+  free = [odometer for odometer, _, result, _ in runs if result is not None and result.approach_kph >= NO_LIMIT_KPH
+          and odometer > start]
+  assert free and free[0] <= end + 60
 
 
 def test_a_tighter_part_of_one_curve_gets_its_own_speed():
@@ -382,12 +411,28 @@ def test_a_new_straight_route_does_not_keep_the_old_turn():
   assert all(applied >= before - 1e-6 for odometer, applied, _, _ in runs if odometer >= 40)
 
 
-def test_a_lost_preview_drops_the_map():
+def test_a_missing_preview_gives_no_result_at_once_and_is_dropped_after_a_second():
+  """Review 5 V3: the limiter must see a missing preview at once (hold, then release); the cells wait a second."""
+  speed_map = RouteSpeedMap()
+  preview = RoutePreview(route(straight_m=100), 0.3, ('s', 1), 0.0, ('r', 1))
+  t = 0.0
+  assert speed_map.update(preview, t, 0.0, 20.0).approach_kph < NO_LIMIT_KPH
+  for _ in range(9):
+    t += 0.1
+    assert speed_map.update(None, t, 2.0 * t * 10, 20.0) is None and speed_map.cells   # kept for a return
+  for _ in range(3):
+    t += 0.1
+    speed_map.update(None, t, 2.0 * t * 10, 20.0)
+  assert not speed_map.cells
+
+
+def test_a_gap_in_updates_starts_the_map_again():
+  """Review 5 V4: without updates (car state lost) the odometer cannot follow; old cells must not stay."""
   speed_map = RouteSpeedMap()
   preview = RoutePreview(route(straight_m=100), 0.3, ('s', 1), 0.0, ('r', 1))
   assert speed_map.update(preview, 0.0, 0.0, 20.0).approach_kph < NO_LIMIT_KPH
-  assert speed_map.update(None, 0.5, 10.0, 20.0).approach_kph < NO_LIMIT_KPH   # a short gap keeps it
-  assert speed_map.update(None, 1.6, 32.0, 20.0) is None and not speed_map.cells
+  later = RoutePreview(route(radius=0), 0.3, ('s', 2), 0.0, ('r', 1))
+  assert speed_map.update(later, 4.0, 5.0, 20.0).approach_kph == NO_LIMIT_KPH   # the old turn is not kept
 
 
 # --- tracker ---------------------------------------------------------------------------------------------------------

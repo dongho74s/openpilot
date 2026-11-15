@@ -1482,6 +1482,10 @@ class CarrotMan:
       preview = guard.update(serv.navdy_navigation.route_preview(now), CS.vEgo, now)
       result = self.route_preview_map.update(preview, now, guard.odometer, CS.vEgo, CS.aEgo, self.autoCurveSpeedFactor,
                                              serv.autoCurveSpeedLowerLimit, CS.vCluRatio)
+    else:
+      # Without the car's speed the odometer cannot follow: start the road map and the frozen guard again.
+      self.route_preview_guard = FrozenPreviewGuard()
+      self.route_preview_map.clear()
     speed = self.route_preview_curve_speed.update(result, now)
     if result is not None and abs(abs(speed) - result.approach_kph) < 1e-3:
       self.route_preview_display_target = result.curve_kph
