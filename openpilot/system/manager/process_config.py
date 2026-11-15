@@ -4,7 +4,8 @@ import importlib.util
 
 from openpilot.cereal import car
 from openpilot.common.params import Params
-from openpilot.system.hardware import PC, TICI
+from openpilot.common.api import comma_connect_enabled
+from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 from openpilot.system.hylink import runtime as hylink
 
@@ -121,7 +122,7 @@ def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
   return cluster_hud_active(params)
 
 procs = [
-  DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
+  DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid", enabled=comma_connect_enabled()),
 
   # Hylink is opt-in and isolated from Athena, vehicle control, and Panda safety.
   PythonProcess("hylink_guard", "openpilot.system.hylink.guard", only_offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
@@ -184,7 +185,7 @@ procs = [
   PythonProcess("radard", "openpilot.selfdrive.carrot.radar.radard_dpath", only_onroad),
   PythonProcess("radarcan", "openpilot.selfdrive.carrot.radar.radarcan", only_onroad),
   PythonProcess("hardwared", "openpilot.system.hardware.hardwared", always_run),
-  PythonProcess("modem", "openpilot.system.hardware.tici.modem", always_run, enabled=TICI),
+  PythonProcess("modem", "openpilot.system.hardware.tici.modem", always_run, enabled=TICI and HARDWARE.get_device_type() != "tici"),
   PythonProcess("tombstoned", "openpilot.system.tombstoned", always_run, enabled=not PC),
   PythonProcess("updated", "openpilot.system.updated.updated", enable_updated, enabled=not PC),
   #PythonProcess("uploader", "openpilot.system.loggerd.uploader", enable_connect),
