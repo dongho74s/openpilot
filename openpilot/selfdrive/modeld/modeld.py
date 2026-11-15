@@ -656,7 +656,7 @@ def main(demo=False):
       modelv2_send.modelV2.meta.laneChangeAvailableRight = DH.lane_change_available_right
 
       # next frame's view offset; the side lane widths are line-to-line distances, unaffected by the offset itself
-      if view_center_m != 0.0 or view_edge_m != 0.0 or view_offset.applied != 0.0 or view_offset.slope != 0.0:
+      if view_offset.needs_update(view_center_m, view_edge_m):
         md = modelv2_send.modelV2
         calib_ok = calib_done and sm.valid['liveCalibration'] and sm.alive['liveCalibration']
         inputs_fresh = model_output_valid and all(sm.valid[s] and sm.alive[s] for s in ('carState', 'carControl'))
@@ -668,7 +668,9 @@ def main(demo=False):
             left_edge=float(DH.left.dist_to_edge), right_edge=float(DH.right.dist_to_edge),
             left_prob=float(md.laneLineProbs[1]), right_prob=float(md.laneLineProbs[2]), own_width=own_width,
             v_ego=v_ego, lat_active=bool(sm['carControl'].latActive),
-            lane_changing=DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none)
+            lane_changing=DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none,
+            left_outer_prob=float(md.laneLineProbs[0]), right_outer_prob=float(md.laneLineProbs[3]),
+            lat_accel=abs(float(action.desiredCurvature)) * v_ego ** 2)
         except (IndexError, ValueError):
           edge_inputs = None
         if not inputs_fresh:
@@ -686,7 +688,8 @@ def main(demo=False):
                          calibrated=bool(calib_ok), fresh=bool(inputs_fresh),
                          road=None if road is None else [round(x, 2) for x in (road.left_width, road.right_width, road.left_edge,
                                                                                  road.right_edge, road.own_width, road.left_prob,
-                                                                                 road.right_prob)])
+                                                                                 road.right_prob, road.left_outer_prob,
+                                                                                 road.right_outer_prob, road.lat_accel)])
       mt3 = time.perf_counter()
       drivingdata_send.drivingModelData.modelExecutionTime = mt3 - mt1
 

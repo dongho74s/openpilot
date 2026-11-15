@@ -129,12 +129,38 @@ def test_edge_offset_waits_after_a_lane_change_and_needs_the_hold_again():
   assert run(edge, two_lane(), 0.3) == pytest.approx(0.3)
 
 
-def test_a_short_gap_in_the_road_edge_does_not_release_but_a_long_one_does():
+def test_an_unclear_road_waits_3_s_before_releasing():
   edge = lvo.EdgeOffset(DT)
   run(edge, two_lane(), 2.0)
-  assert run(edge, two_lane(right_width=3.0), 2.5) == pytest.approx(0.3)
+  grey = two_lane(right_width=2.1, right_edge=2.1)      # neither clearly room nor clearly no room on the right
+  assert run(edge, grey, 2.5) == pytest.approx(0.3)
   assert run(edge, two_lane(), 0.1) == pytest.approx(0.3)
-  assert run(edge, two_lane(right_width=3.0), 3.1) == 0.0
+  assert run(edge, grey, 3.1) == 0.0
+
+
+@pytest.mark.parametrize("changes", [
+  {"right_width": 3.0, "right_edge": 6.0},     # a lane appeared on the side we move to
+  {"left_width": 1.4, "left_edge": 1.3},       # the lane on the other side is gone (e.g. a one-lane ramp)
+])
+def test_a_road_that_clearly_no_longer_matches_releases_in_half_a_second(changes):
+  edge = lvo.EdgeOffset(DT)
+  run(edge, two_lane(), 2.0)
+  assert run(edge, two_lane(**changes), 0.4) == pytest.approx(0.3)
+  assert run(edge, two_lane(**changes), 0.15) == 0.0
+
+
+def test_a_sharp_curve_does_not_start_it_but_does_not_hold_a_stale_decision_either():
+  assert run(lvo.EdgeOffset(DT), two_lane(lat_accel=2.0), 5.0) == 0.0
+  edge = lvo.EdgeOffset(DT)
+  run(edge, two_lane(), 2.0)
+  assert run(edge, two_lane(lat_accel=2.5), 2.0) == pytest.approx(0.3)                         # still the same road
+  assert run(edge, two_lane(lat_accel=2.5, left_width=1.4, left_edge=1.3), 0.6) == 0.0   # one-lane ramp in a curve
+
+
+def test_outer_line_requirement_when_enabled(monkeypatch):
+  monkeypatch.setattr(lvo, "OUTER_LINE_PROB", 0.3)
+  assert run(lvo.EdgeOffset(DT), two_lane(left_outer_prob=0.1), 3.0) == 0.0
+  assert run(lvo.EdgeOffset(DT), two_lane(left_outer_prob=0.6), 3.0) == pytest.approx(0.3)
 
 
 def test_edge_offset_keeps_a_margin_in_narrow_lanes_and_scales_with_speed():
@@ -176,9 +202,10 @@ def test_the_side_flips_only_through_off():
   edge = lvo.EdgeOffset(DT)
   run(edge, two_lane(), 2.0)
   flipped = two_lane(left_width=0.5, left_edge=0.5, right_width=3.2, right_edge=6.0)
-  assert run(edge, flipped, 2.9) == pytest.approx(0.3)   # still right until released after 3 s
-  assert run(edge, flipped, 0.2) == 0.0
-  assert run(edge, flipped, 1.5) == pytest.approx(-0.3)
+  assert run(edge, flipped, 0.4) == pytest.approx(0.3)   # still right until released (clear: 0.5 s)
+  assert run(edge, flipped, 0.15) == 0.0
+  assert run(edge, flipped, 1.4) == 0.0                  # then a new 1.5 s hold
+  assert run(edge, flipped, 0.2) == pytest.approx(-0.3)
 
 
 def test_centre_in_the_same_direction_uses_up_the_edge_margin():
@@ -209,12 +236,22 @@ def test_the_largest_offset_still_samples_inside_the_camera_image(cam_key, bigmo
 
 
 # --- review fixes: bad inputs, stale inputs, height changes, return time ---------------------------------------------
-@pytest.mark.parametrize("changes", [{"left_prob": 0.4}, {"left_prob": 0.5}, {"right_prob": float("nan")},
-                                     {"left_width": float("nan")}, {"own_width": float("nan")}, {"right_edge": float("inf")}])
-def test_unreliable_inputs_turn_the_edge_offset_off_at_once(changes):
+@pytest.mark.parametrize("changes", [{"right_prob": float("nan")}, {"left_width": float("nan")}, {"own_width": float("nan")},
+                                     {"right_edge": float("inf")}, {"left_outer_prob": float("nan")}, {"lat_accel": float("nan")}])
+def test_non_finite_inputs_turn_the_edge_offset_off_at_once(changes):
   edge = lvo.EdgeOffset(DT)
   assert run(edge, two_lane(), 2.0) == pytest.approx(0.3)
   assert edge.update(0.3, two_lane(**changes)) == 0.0 and edge.side == 0
+
+
+@pytest.mark.parametrize("prob", [0.4, 0.5])
+def test_faint_lines_keep_the_last_decision_and_its_cap_for_up_to_3_s(prob):
+  edge = lvo.EdgeOffset(DT)
+  run(edge, two_lane(own_width=2.74), 2.0)
+  faint = two_lane(left_prob=prob, own_width=4.0, left_width=0.5, right_width=3.0)   # untrusted values are not used
+  assert run(edge, faint, 2.9) == pytest.approx(0.22)
+  assert run(edge, faint, 0.2) == 0.0
+  assert run(lvo.EdgeOffset(DT), faint, 5.0) == 0.0                                   # and never start it
 
 
 def test_missing_inputs_turn_the_edge_offset_off_and_need_the_hold_again():
@@ -295,3 +332,30 @@ def test_the_logged_warp_offset_is_what_the_warp_applies():
   view.update(0.35, 0.0, None, True, 1.60)
   assert view.applied == pytest.approx(0.35, abs=1e-3)
   assert view.warp_offset_m == pytest.approx(-view.slope * 1.60) and view.warp_offset_m > 0.4   # not yet at 0.35
+
+
+def test_turning_both_settings_off_clears_the_road_decision_so_turning_it_on_again_needs_a_fresh_hold():
+  # centre -30 cm and edge +30 cm cancel: the view is at the stock warp while the edge decision is on
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(10 / DT)):
+    assert view.needs_update(-0.30, 0.30)
+    view.update(-0.30, 0.30, two_lane(own_width=3.5), True, 1.4)
+  assert view.edge.side == 1 and view.applied == 0.0 and view.slope == 0.0
+  for _ in range(int(20 / DT)):                       # both settings off: modeld skips the update
+    assert not view.needs_update(0.0, 0.0)
+  assert view.edge.side == 0 and view.edge.cap == 0.0 and view.edge_target == 0.0
+  faint = two_lane(left_prob=0.4, right_prob=0.4, right_width=3.0, right_edge=6.0, own_width=3.5)
+  for _ in range(int(5 / DT)):                        # edge back on with faint lines and lanes on both sides
+    assert view.needs_update(0.0, 0.30)
+    view.update(0.0, 0.30, faint, True, 1.4)
+    assert view.edge_target == 0.0 and view.applied == 0.0 and view.slope == 0.0
+  for i in range(int(2 / DT)):                        # clear road again: on only after a new 1.5 s hold
+    view.update(0.0, 0.30, two_lane(own_width=3.5), True, 1.4)
+    assert (view.edge_target > 0.0) == (i + 1 >= int(round(lvo.HOLD_ON_S / DT)))
+
+
+def test_with_a_view_left_to_return_the_update_still_runs():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(10 / DT)):
+    view.update(0.20, 0.0, None, True, 1.4)
+  assert view.needs_update(0.0, 0.0) and view.applied > 0.0   # the filtered return to stock is kept
