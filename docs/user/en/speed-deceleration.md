@@ -320,10 +320,13 @@ This floor applies to vision-curve and route-turn candidates. For vision curves,
 In mode 2, route-turn speed enters only when turn distance is roughly between -500 m and +500 m. Mode 3 can cause unexpected slowing when route data is inaccurate.
 
 <a id="route-preview-curve"></a>
-**Navdy route-preview curve (added 2026-11-15, modes 2 and 3).** With Navdy input (`CarrotNaviSource=1`), the phone navigation (TMAP, Naver Map) sends the next 400 m of the route every second as points 5 m apart; a separate curve speed computed from them enters as a `route` candidate, whatever the turn distance.
+**Navdy route-preview curve (added 2026-11-15, revised 11-16, modes 2 and 3).** With Navdy input (`CarrotNaviSource=1`), the phone navigation (TMAP, Naver Map) sends the next 400 m of the route every second as points 5 m apart; a separate curve speed computed from them enters as a `route` candidate, whatever the turn distance.
 - The calculation is the vision curve's: lateral budget 1.9 m/s² ÷ `AutoCurveSpeedFactor`, 1.0 m/s² approach, floor `AutoCurveSpeedLowerLimit`. `MapTurnSpeedFactor` is not applied.
-- Vision sees about 130 m (6 s) of the model's path; this sees 400 m, so it starts slowing earlier at speed. Example: at 72 km/h it starts about 140 m before a 100 m radius curve.
-- It is not used when the preview is older than 2.5 s, when the phone could not match its position to the route (off route, heading mismatch, ambiguous), or when the point spacing is not sane. When it disappears it is held 0.35 s, then released at 7.2 km/h per second.
+- Vision sees about 130 m (6 s) of the model's path; this sees 400 m, so it starts slowing earlier at speed. Example: at 100 % curve sensitivity and 72 km/h it starts about 160 m before a 100 m radius curve.
+- The radius comes from the map's vertices (up to 40 m apart), rebuilt from the 5 m points, using each vertex's turn and the chords on either side, so the same curve gives the same speed whatever the vertex spacing. A sharp turn at one point (a junction) and a U-turn count as the floor speed. A bend under 30° that the map draws with a single vertex can come out gentler than it is (the vision curve still applies).
+- The preview's age is the comma clock against the phone's observation time (the Navdy clock is not used). For the phone's position lag the car is assumed 1 s further along when approaching (earlier slowing) and 1 s less far for a curve it may have passed (held a little longer).
+- It is not used when the preview is older than 2.5 s, Navdy guidance is off, the phone could not match its position to the route (off route, heading mismatch, ambiguous), the point spacing is not sane, a packet comes late from a replaced app session, or the same window with a curve keeps arriving after more than 10 m of driving (a stalled phone position). When it disappears it is held 0.35 s, then released at 7.2 km/h per second. Switching the mode off clears any cap left.
+- A speed held with the accelerator lasts for that curve only; the next curve slows again.
 - Naver Map sends the same format after the phone bridge and Naver patch update. Real-road accuracy (map error, intersection turns) has not been verified in the car.
 
 > [!IMPORTANT]

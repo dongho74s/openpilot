@@ -226,6 +226,7 @@ class CarrotServ:
     self.gas_pressed_state = False
     self.speed_event_gas_pressed = False
     self.source_last = "none"
+    self.route_preview_curve = 0
     self.school_zone_gas_override_started_at = None
     self.school_zone_suppressed = False
 
@@ -1505,7 +1506,8 @@ class CarrotServ:
         self.xSpdType = xSpdType
 
   def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speed, gps_service,
-                  *, vturn_target=0.0, route_target=0.0, route_preview_speed=250.0, route_preview_target=0.0):
+                  *, vturn_target=0.0, route_target=0.0, route_preview_speed=250.0, route_preview_target=0.0,
+                  route_preview_curve=0):
 
     self.debugText = ""
     self.update_params()
@@ -1722,6 +1724,13 @@ class CarrotServ:
     display_candidates = deceleration_candidates(speed_n_sources, display_targets, display_distances)
 
     desired_speed, source = min(speed_n_sources, key=lambda x: x[0])
+
+    # The route preview stays the winning source across consecutive corners; an accelerator floor taken in one corner
+    # must not carry into the next, as it would not for the vision curve (which goes to no limit between corners).
+    if route_preview_curve != self.route_preview_curve:
+      self.route_preview_curve = route_preview_curve
+      if self.source_last == "route":
+        self.gas_override_speed = 0
 
     if CS is not None:
       desired_speed, source = self._apply_speed_source_gas_floor(

@@ -34,7 +34,7 @@ from openpilot.common.constants import CV
 
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ, NAVI_SOURCE_NETWORK, NAVI_SOURCE_NAVDY
 from openpilot.selfdrive.carrot.curve_speed import VisionCurveSpeed, curve_speed
-from openpilot.selfdrive.carrot.route_preview_speed import RoutePreviewCurveSpeed, preview_curve_speed
+from openpilot.selfdrive.carrot.route_preview_speed import FrozenPreviewGuard, RoutePreviewCurveSpeed, preview_curve_speed
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
 from openpilot.selfdrive.carrot.server.services.web_settings import read_web_settings
@@ -332,8 +332,11 @@ class CarrotMan:
 
     self.vision_curve_speed = VisionCurveSpeed()
     self.route_preview_curve_speed = RoutePreviewCurveSpeed()
+    self.route_preview_guard = FrozenPreviewGuard()
     self.route_preview_display_target = 0.0
     self.route_preview_logged = 0.0
+    self.route_preview_curve = 0          # changes when a different corner binds (resets an accelerator floor)
+    self.route_preview_corner_at = None   # odometer position of the binding corner's vertex
     self.carrot_curve_speed_params()
 
     self.is_running = True
@@ -430,7 +433,8 @@ class CarrotMan:
         self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speed, self.gps_location_service,
                                     vturn_target=self.vturn_display_target, route_target=self.route_display_target,
                                     route_preview_speed=route_preview_speed,
-                                    route_preview_target=self.route_preview_display_target)
+                                    route_preview_target=self.route_preview_display_target,
+                                    route_preview_curve=self.route_preview_curve)
 
         now = time.monotonic()
         if now >= next_broadcast_time:
@@ -1466,24 +1470,38 @@ class CarrotMan:
     now = time.monotonic()
     self.route_preview_display_target = 0.0
     serv = self.carrot_serv
+    if not (serv.accepts_navigation(NAVI_SOURCE_NAVDY) and serv.turnSpeedControlMode in (2, 3, 4)):
+      # Off: nothing carries over to the next time it is switched on.
+      self.route_preview_curve_speed = RoutePreviewCurveSpeed()
+      self.route_preview_guard = FrozenPreviewGuard()
+      self.route_preview_corner_at = None
+      return self.route_preview_curve_speed.speed
     result = preview = None
-    if (serv.accepts_navigation(NAVI_SOURCE_NAVDY) and serv.turnSpeedControlMode in (2, 3, 4)
-        and sm.alive['carState'] and sm.valid['carState']):
+    if sm.alive['carState'] and sm.valid['carState']:
       CS = sm['carState']
-      preview = serv.navdy_navigation.route_preview(now)
+      preview = self.route_preview_guard.update(serv.navdy_navigation.route_preview(now), CS.vEgo, now)
       if preview is not None:
         result = preview_curve_speed(preview.points, preview.age, CS.vEgo, self.autoCurveSpeedFactor,
                                      serv.autoCurveSpeedLowerLimit, a_ego=CS.aEgo, speed_ratio=CS.vCluRatio)
     speed = self.route_preview_curve_speed.update(result, now)
-    if result is not None and abs(abs(speed) - result.approach_kph) < 1e-3:
+    binding = result is not None and abs(abs(speed) - result.approach_kph) < 1e-3
+    if binding:
       self.route_preview_display_target = result.curve_kph
+      if math.isfinite(result.vertex_m):
+        corner_at = self.route_preview_guard.odometer + result.vertex_m
+        if self.route_preview_corner_at is None or abs(corner_at - self.route_preview_corner_at) > 30.0:
+          self.route_preview_curve += 1
+        self.route_preview_corner_at = corner_at
+    elif abs(speed) >= 250:
+      self.route_preview_corner_at = None
     if now - self.route_preview_logged >= 1.0 and (preview is not None or abs(speed) < 250):
       self.route_preview_logged = now
       cloudlog.event("navdy_route_preview", points=len(preview.points) if preview else 0,
                      age=round(preview.age, 2) if preview else None,
                      approach=round(result.approach_kph, 1) if result else None,
                      curve=round(result.curve_kph, 1) if result else None,
-                     distance=round(result.distance, 1) if result else None, applied=round(abs(speed), 1))
+                     distance=round(result.distance, 1) if result else None, applied=round(abs(speed), 1),
+                     corner=self.route_preview_curve)
     return speed
 
   def vturn_speed(self, CS, sm):
