@@ -72,13 +72,21 @@ def set_speed_kph(car_state: Any, car_control: Any = None) -> float:
           or _speed_kph(getattr(car_control, "hudControl", None), ("setSpeed",), KPH_PER_MS))
 
 
+ORIGIN_JITTER_M = 0.001
+
+
 def _model_points(x_values: Any, y_values: Any) -> list[tuple[float, float]]:
   points = []
   for raw_x, raw_y in zip(_items(x_values, MAX_MODEL_SAMPLES), _items(y_values, MAX_MODEL_SAMPLES), strict=False):
     x, y = finite_float(raw_x, math.nan), finite_float(raw_y, math.nan)
+    if not points and -ORIGIN_JITTER_M <= x < 0.0:
+      # The first sample is the car itself. Some models (the RDF internal model, 2026-11-15 drive) give it as
+      # floating-point noise around 0 (about +-1e-10 m), negative in a third to two thirds of frames; rejecting it
+      # emptied the whole line, so the HUD dropped the road, lanes and vehicles every few frames (seen as flicker).
+      x = 0.0
     # Preserve sub-millimeter negative origin jitter at standstill, not gaps
     # in an established forward trajectory or invalid/nonfinite samples.
-    if points and -0.001 <= x < 0.0 and points[-1][0] <= 0.001 and abs(y - points[-1][1]) <= 0.001:
+    if points and -ORIGIN_JITTER_M <= x < 0.0 and points[-1][0] <= ORIGIN_JITTER_M and abs(y - points[-1][1]) <= ORIGIN_JITTER_M:
       continue
     if not (math.isfinite(x) and math.isfinite(y) and 0.0 <= x <= 10000.0 and abs(y) <= 100.0):
       break
@@ -88,6 +96,25 @@ def _model_points(x_values: Any, y_values: Any) -> list[tuple[float, float]]:
       break
     points.append((x, y))
   return points if len(points) >= 2 else []
+
+
+STOPPED_PLAN_BACK_M = 1.0
+
+
+def _stopped_plan(x_values: Any, y_values: Any) -> bool:
+  """True for a plan that is the car standing still: it starts at the car (x and y within ORIGIN_JITTER_M of 0), every
+  sample is finite and in the usual bounds, and it goes at most STOPPED_PLAN_BACK_M behind the car. Stopped RDF plans
+  of 2026-11-15 start at +-5e-11 m and wander at most 0.22 m back (7313 frames, all below 0.21 m/s); a NaN sample, a
+  start off the car or a plan reaching metres behind it is a broken plan, not a stopped one (Codex review)."""
+  xs, ys = _items(x_values, MAX_MODEL_SAMPLES), _items(y_values, MAX_MODEL_SAMPLES)
+  if len(xs) < 2 or len(xs) != len(ys):
+    return False
+  xs = [finite_float(x, math.nan) for x in xs]
+  ys = [finite_float(y, math.nan) for y in ys]
+  if not all(math.isfinite(v) for v in xs + ys):
+    return False
+  return (abs(xs[0]) <= ORIGIN_JITTER_M and abs(ys[0]) <= ORIGIN_JITTER_M and min(xs) >= -STOPPED_PLAN_BACK_M
+          and max(xs) <= 10000.0 and max(abs(y) for y in ys) <= 100.0)
 
 
 def model_line_y_at_values(x_values: Any, y_values: Any, distance_m: float) -> float | None:
@@ -235,9 +262,11 @@ def navdy_model_geometry(model: Any) -> dict[str, Any]:
 
   path_left = navdy_model_line(path_x, path_y, -1.0, path_x, path_y)
   path_right = navdy_model_line(path_x, path_y, 1.0, path_x, path_y)
-  if _model_points(path_x, path_y) and not (len(path_left) >= 4 and len(path_right) >= 4):
+  if not (len(path_left) >= 4 and len(path_right) >= 4) and (_model_points(path_x, path_y) or _stopped_plan(path_x, path_y)):
     # A plan with fewer than two drawable samples (stopped, creeping): keep lanes and vehicles drawn (the HUD draws
-    # the road only with a path) with a zero-area band off the view.
+    # the road only with a path) with a zero-area band off the view. A stopped RDF plan starts at the car and then
+    # wanders millimetres to centimetres behind it, which has no forward line at all; without _stopped_plan such
+    # frames dropped the whole road at a standstill while neighbouring frames drew it (2026-11-15 drive).
     path_left, path_right = list(HIDDEN_BAND), list(HIDDEN_BAND)
   geometry = {
     "navPathLeft": path_left,

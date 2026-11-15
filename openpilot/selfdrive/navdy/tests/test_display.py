@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from openpilot.selfdrive.navdy.display import (
-  MAX_PROJECTED_POINTS, lateral_scale, model_line_y_at_values, navdy_model_geometry,
+  HIDDEN_BAND, MAX_PROJECTED_POINTS, _model_points, lateral_scale, model_line_y_at_values, navdy_model_geometry,
   navdy_model_line, navdy_project_point, payload_from_messages,
 )
 
@@ -226,6 +226,72 @@ class TestDisplay:
     kept = [(x, y) for x, y in zip(xs, ys, strict=True) if x >= 0.]
     assert navdy_model_line(xs, ys) == navdy_model_line([p[0] for p in kept], [p[1] for p in kept])
     assert model_line_y_at_values(xs, ys, 5.) is not None
+
+  @pytest.mark.parametrize("first", [-4.261169195274306e-11, -5.339151343264348e-11, -2.0650148258027912e-14, -.0009])
+  def test_first_sample_float_noise_below_zero_keeps_the_road(self, first):
+    # RDF plans (2026-11-15 drive) start at +-1e-10 m; a negative first sample emptied the path, so every such frame
+    # sent no road, lanes or vehicles and the HUD flickered.
+    m = model()
+    m.position.x = [first] + list(m.position.x[1:])
+    clean = model()
+    clean.position.x = [0.] + list(clean.position.x[1:])
+    geometry = navdy_model_geometry(m)
+    assert geometry and geometry == navdy_model_geometry(clean)
+    assert model_line_y_at_values(m.position.x, m.position.y, 5.) == model_line_y_at_values(clean.position.x, clean.position.y, 5.)
+    cars = payload(model=m, radar_state=NS(leadOne=lead(dRel=30., yRel=0.)))
+    assert cars['navPathLeft'] and len(cars['navVehicles']) == 1
+    assert cars == payload(model=clean, radar_state=NS(leadOne=lead(dRel=30., yRel=0.)))
+
+  @pytest.mark.parametrize("xs", [
+    # stopped RDF plans of 2026-11-15 (frames 12005 and 13202): the car, then millimetres to centimetres behind it
+    [-2.26e-11, -.00011, -.000526, -.00169, -.00457, -.00894, -.0102, -.017, -.0169, -.0211, -.0247, -.0257],
+    [-1.69e-11, -4.21e-05, -.000211, -.000287, -.000676, -.00161, .000761, -.00242, .000496, -.00174, -.00125, .00175],
+    [0.] * 12,
+  ])
+  def test_stopped_plan_keeps_lanes_and_vehicles_with_the_path_hidden(self, xs):
+    m = model()
+    m.position = NS(x=xs, y=[0.] * len(xs))
+    road = payload(model=m, radar_state=NS(leadOne=lead(dRel=12., yRel=0.)))
+    assert road['navPathLeft'] == list(HIDDEN_BAND) and road['navPathRight'] == list(HIDDEN_BAND)
+    assert road['navLaneLeft'] == navdy_model_geometry(model())['navLaneLeft']   # no path: lanes uncorrected, as at 0
+    assert len(road['navVehicles']) == 1
+    for bad in ([math.nan] + xs[1:], [.002] + xs[1:], [-.002] + xs[1:]):
+      m.position = NS(x=bad, y=[0.] * len(xs))
+      assert navdy_model_geometry(m) == {}             # a plan not starting at the car is still no road
+
+  @pytest.mark.parametrize("xs,ys", [                  # broken plans (Codex review 2026-11-15): still no road
+    ([0., math.nan, 10.], [0., 0., 0.]),
+    ([0., 1., 10.], [0., math.nan, 0.]),
+    ([0., -100., -200.], [0., 0., 0.]),
+    ([0., -.002, -.003], [50., 50., 50.]),
+    ([0., -1.5, 2.], [0., 0., 0.]),
+    ([0., -.01, -.02], [0., 0., 101.]),
+    ([0., -.01], [0.]),
+  ])
+  def test_broken_plan_is_not_a_stopped_plan(self, xs, ys):
+    m = model()
+    m.position = NS(x=xs, y=ys)
+    assert navdy_model_geometry(m) == {}
+    assert payload(model=m, radar_state=NS(leadOne=lead(dRel=12., yRel=0.)))['navVehicles'] == []
+
+  def test_stopped_plan_with_a_short_forward_prefix_still_draws_it(self):
+    m = model()
+    xs = [-1.64e-11, -8.11e-06, -5.13e-05, 8.16e-06, -.000155, -.000803, .0021, -.000587] + [.003] * 4   # frame 13202+
+    m.position = NS(x=xs, y=[0.] * len(xs))
+    road = payload(model=m, radar_state=NS(leadOne=lead(dRel=12., yRel=0.)))
+    assert road['navPathLeft'] != list(HIDDEN_BAND) and len(road['navPathLeft']) >= 4
+    assert road['navLaneLeft'] and len(road['navVehicles']) == 1
+
+  @pytest.mark.parametrize("xs", [[-.002, 5., 10.], [-.0005, 0., 10.], [-1e-10, -2e-10, 10.]])
+  def test_first_sample_noise_rule_stays_narrow(self, xs):
+    ys = [0., 0., .2]
+    points = _model_points(xs, ys)
+    if xs[0] < -.001:
+      assert points == []                            # a real negative start is still invalid
+    elif xs[1] == 0.:
+      assert points == []                            # the origin twice is not a forward line
+    else:
+      assert points == [(0., 0.), (10., .2)]         # standstill jitter after the origin is skipped as before
 
   @pytest.mark.parametrize("xs,ys", [
     ([0., -.002, 10.], [0., 0., 0.]),
