@@ -794,7 +794,10 @@ function getSettingControlConfig(p) {
   const override = SETTING_CONTROL_KINDS.includes(p?.control) ? { kind: p.control } : {};
   const min = Number(p?.min);
   const max = Number(p?.max);
-  const unit = Math.max(1, Number(p?.unit) || 1);
+  // The declared unit is the base step (0.1 for ComfortBrake). Clamping it to
+  // >= 1 made every fractional-unit parameter step by 1 instead.
+  const rawUnit = Number(p?.unit);
+  const unit = Number.isFinite(rawUnit) && rawUnit > 0 ? rawUnit : 1;
   const optionCount = Number.isFinite(min) && Number.isFinite(max) ? Math.floor(max - min + 1) : 0;
   let kind = override.kind || "slider";
 
@@ -860,6 +863,14 @@ function normalizeSettingNumericValue(raw, p, previous = null) {
   const max = Number(p.max);
   let next = Math.max(min, Math.min(max, Number(text)));
   if (Number.isInteger(min) && Number.isInteger(max)) next = Math.round(next);
+  // Snap to the parameter's declared unit grid (e.g. 0.1) so repeated
+  // fractional steps don't accumulate binary floating-point dust
+  // (1.5 + 0.1 + 0.1 -> 1.7000000000000002).
+  const unit = Number(p?.unit);
+  if (Number.isFinite(unit) && unit > 0 && unit < 1) {
+    const decimals = (String(unit).split(".")[1] || "").length;
+    next = Number((Math.round(next / unit) * unit).toFixed(decimals));
+  }
   const nonzeroMin = Number(p.nonzero_min);
   if (next > 0 && next < nonzeroMin) {
     next = previous !== null && next < previous ? 0 : nonzeroMin;
@@ -3032,7 +3043,9 @@ async function renderItems(group, options = {}) {
         plusButton: btnPlus,
         getValue: () => Number(val.dataset.rawValue),
         getFallback: () => Number(p.default),
-        getStep: () => getSettingUnitValue(name),
+        // The step is the parameter's base unit (0.1 for ComfortBrake) times
+        // the x1 multiplier the user cycles with the 배율 button.
+        getStep: () => getSettingUnitValue(name) * controlConfig.unit,
         getRange: () => ({ min: Number(p.min), max: Number(p.max) }),
         commit: (next) => commitSettingValue(normalizeSettingNumericValue(next, p, Number(val.dataset.rawValue))),
       });
