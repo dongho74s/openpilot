@@ -16,6 +16,11 @@ TRACK_MAX_AGE = 0.35
 # coasting at its relative speed, like Wayon's NAVDY_RADAR_STALE_SEC. Points drop out of single snapshots often, and
 # dropping them at once, then re-confirming over two 5 Hz ticks, blinked icons for 0.4 s (user report 2026-11-16).
 TRACK_HOLD = 0.35
+# A point is still taken as the same object, keeping its confirmation and smoothing, when it comes back within this
+# (radar time) of its last sighting near where it would have coasted to. At the bridge's exact 5 Hz a point missing
+# from one snapshot returns 0.4 s after its last sighting; requiring a new confirmation then blinked it again on the
+# return tick (Codex review 2026-11-16, R4). Only TRACK_HOLD decides how long a missing point is drawn.
+TRACK_MEMORY = 0.6
 # A confirmed point whose lane check fails keeps the lane it was last given for this long (radar time). The check
 # flickers for a steady point on a lane line, or while stopped when the plan is too short (11/15: ~100 one-tick
 # blinks in 47 minutes). A point that really leaves the lanes goes once this runs out.
@@ -24,6 +29,11 @@ LANE_HOLD = 0.35
 # relative speed, unless another lead or radar point now shows that vehicle. radard drops a camera-only lead for single
 # ticks (11/15: most of the blinks left after the holds above); Wayon holds the longitudinal lead 0.45 s.
 LEAD_HOLD = 0.35
+# A camera-only lead is drawn on a radar point only if radard itself reported that lead (same lead slot) on that point
+# within this, and the point has been tracked without a break since. A loose geometric match alone moved the lead
+# highlight to another vehicle, e.g. a truck 10 m behind the car being followed (Codex review 2026-11-16, R2). 11/15:
+# of 67 camera-only stretches that returned to the same radar point, 65 did so within 1.6 s.
+LEAD_TRACK_MEMORY = 1.5
 MAX_DISTANCE = 80.0
 
 
@@ -111,6 +121,7 @@ class VehicleOverlay:
     self.lanes = {}  # ident -> (lane, radar time it was last given)
     self.camera_lanes = {}  # camera object id -> (lane, time, distance, lateral), kept by annotate_camera
     self.held_leads = {}  # colorRole -> (lead entry as last drawn from a fresh report, time of that report)
+    self.lead_tracks = {}  # colorRole -> (radar trackId radard last reported that lead on, tick time, radar time)
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -121,6 +132,7 @@ class VehicleOverlay:
     self.lanes.clear()
     self.camera_lanes.clear()
     self.held_leads.clear()
+    self.lead_tracks.clear()
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -149,7 +161,7 @@ class VehicleOverlay:
     self.flipped = flipped
     self.display_data = display_data
     self.alignment = alignment
-    self.tracks = {key: value for key, value in self.tracks.items() if now - value['time'] <= TRACK_MAX_AGE}
+    self.tracks = {key: value for key, value in self.tracks.items() if now - value['time'] <= TRACK_MEMORY}
     if timestamp > self.timestamp:
       self.timestamp = timestamp
       current = {}
@@ -173,25 +185,28 @@ class VehicleOverlay:
         if radar_alignment is not None:
           lateral = radar_alignment.right(distance, lateral)
         values = {'dRel': distance, 'yRel': lateral, 'vRel': speed}
-        if (previous and timestamp - previous['time'] <= TRACK_MAX_AGE
-            and abs(previous['dRel'] - distance) <= max(8.0, distance * 0.35)
+        gap = timestamp - previous['time'] if previous else math.inf
+        coasted = previous['dRel'] + previous['vRel'] * gap if previous else math.nan
+        if (gap <= TRACK_MEMORY and abs(coasted - distance) <= max(8.0, distance * 0.35)
             and abs(previous['yRel'] - lateral) <= 2.5):
-          values = {key: previous[key] + 0.55 * (value - previous[key]) for key, value in values.items()}
-          samples = min(2, previous['samples'] + 1)
+          base = dict(previous, dRel=coasted) if gap > TRACK_MAX_AGE else previous   # back after missing snapshots
+          values = {key: base[key] + 0.55 * (value - base[key]) for key, value in values.items()}
+          samples, since = min(2, previous['samples'] + 1), previous['since']
         else:
-          samples = 1
-        current[ident] = dict(values, time=timestamp, samples=samples)
-      # A fresh snapshot removes unconfirmed targets at once; a confirmed one is held until TRACK_HOLD after its
-      # last sighting (its time is not refreshed, so the hold never extends itself).
+          samples, since = 1, timestamp
+          self.lanes.pop(ident, None)   # a new object under a reused id inherits nothing (Codex review 2026-11-16, R3)
+        current[ident] = dict(values, time=timestamp, samples=samples, since=since)
+      # A fresh snapshot removes unconfirmed targets at once; a confirmed one is remembered for TRACK_MEMORY after its
+      # last sighting and drawn for TRACK_HOLD (its time is not refreshed, so neither extends itself).
       for ident, track in self.tracks.items():
-        if ident not in current and track['samples'] >= 2 and timestamp - track['time'] <= TRACK_HOLD:
+        if ident not in current and track['samples'] >= 2 and timestamp - track['time'] <= TRACK_MEMORY:
           current[ident] = track
       self.tracks = current
 
     leads = payload['navVehicles']
     candidates = []  # (ident, distance, lateral, lane, vRel) of confirmed points in a lane
     for ident, track in self.tracks.items():
-      if track['samples'] < 2:
+      if track['samples'] < 2 or self.timestamp - track['time'] > TRACK_HOLD:
         continue
       lateral = track['yRel']
       distance = track['dRel'] + track['vRel'] * (self.timestamp - track['time'])  # held: coast to this snapshot
@@ -216,6 +231,12 @@ class VehicleOverlay:
               and abs(lead['relativeSpeedMps'] - speed) <= (3.0 if display_data else 5.0))
 
     fresh_roles = {lead.get('colorRole') for lead in leads}
+    # Radar points radard itself put a lead on: no camera-only lead may take them (Codex review 2026-11-16, R1).
+    reserved = {lead['trackId'] for lead in leads if lead['source'] == 'radar' and lead['trackId'] >= 0}
+    for lead in leads:
+      if lead['source'] == 'radar' and lead['trackId'] >= 0:
+        self.lead_tracks[lead.get('colorRole')] = (lead['trackId'], now, self.timestamp)
+    self.lead_tracks = {role: value for role, value in self.lead_tracks.items() if 0 <= now - value[1] <= LEAD_TRACK_MEMORY}
     for role, (held, seen) in list(self.held_leads.items()):
       age = now - seen
       if role in fresh_roles or not 0 <= age <= LEAD_HOLD:
@@ -232,26 +253,27 @@ class VehicleOverlay:
       leads.append(dict(held, trackId=-1, source='vision', screenX=view['screenX'], screenY=view['screenY'],
                         pxPerM=view['pxPerM'], distanceM=rounded(distance), lateralM=rounded(lateral, 2)))
 
-    # A camera-only published lead is drawn where its radar point is. radard flips a far lead between its radar point
-    # and the model's own range several times a second (11/15: 56 m vs 47 m, every 0.2-0.4 s), which made the icon
-    # blink and jump (user report 2026-11-16); the radar range is the one the stock camera agrees with.
-    adopted, moved = set(), set()
+    # A camera-only published lead is drawn where its radar point is, when radard recently reported that same lead on
+    # that point (LEAD_TRACK_MEMORY). radard flips a far lead between its radar point and the model's own range
+    # several times a second (11/15: 56 m vs 47 m, every 0.2-0.4 s), which made the icon blink and jump (user report
+    # 2026-11-16); the radar range is the one the stock camera agrees with.
+    adopted = set()
     if not display_data:
-      pairs = sorted((abs(c[1] - lead['distanceM']) / max(5.0, c[1] * 0.25) + abs(c[2] - lead['lateralM']) / 1.5,
-                      lead.get('colorRole', 0) or 3, index, c)
-                     for index, lead in enumerate(leads) if lead['source'] == 'vision'
-                     for c in candidates if same_vehicle(lead, c))
-      for _, _, index, (ident, distance, lateral, lane, speed) in pairs:   # closest pairs first, lead one on a tie
-        if index in moved or ident in adopted:
+      by_ident = {c[0]: c for c in candidates}
+      for lead in sorted((lead for lead in leads if lead['source'] == 'vision'), key=lambda lead: lead.get('colorRole') or 3):
+        paired = self.lead_tracks.get(lead.get('colorRole'))
+        candidate = by_ident.get(paired[0]) if paired else None
+        if (candidate is None or candidate[0] in reserved or candidate[0] in adopted
+            or self.tracks[candidate[0]]['since'] > paired[2] or not same_vehicle(lead, candidate)):
           continue
+        ident, distance, lateral, lane, speed = candidate
         view = navdy_vehicle_view(model, distance, lateral)
         if view is None:
           continue
-        moved.add(index)
         adopted.add(ident)
-        leads[index].update({'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'],
-                             'pxPerM': view['pxPerM'], 'distanceM': rounded(distance), 'relativeSpeedMps': rounded(speed),
-                             'lateralM': rounded(lateral, 2), 'source': 'radar'})
+        lead.update({'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'], 'pxPerM': view['pxPerM'],
+                     'distanceM': rounded(distance), 'relativeSpeedMps': rounded(speed), 'lateralM': rounded(lateral, 2),
+                     'source': 'radar'})
     # Only fresh reports restart a lead's hold, so it never extends itself.
     self.held_leads = {role: value for role, value in self.held_leads.items()
                        if role not in fresh_roles and 0 <= now - value[1] <= LEAD_HOLD}

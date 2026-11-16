@@ -73,7 +73,7 @@ def test_camera_only_lead_is_drawn_at_its_radar_point_so_radard_flips_do_not_mov
   radar = data([point(25, 56., 0., -2.)])
   vision = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=47.5), leadTwo=lead(status=False))
   backed = NS(leadOne=lead(radar=True, radarTrackId=25, dRel=56.), leadTwo=lead(status=False))
-  confirmed(overlay, radar, leads=vision)
+  confirmed(overlay, radar, leads=backed)
   frames = [render(overlay, radar, timestamp=100.2 + 0.2 * i, leads=leads)['navVehicles']
             for i, leads in enumerate((vision, backed, vision, backed), start=1)]
   assert all(len(cars) == 1 for cars in frames)
@@ -90,13 +90,44 @@ def test_camera_only_lead_without_a_matching_radar_point_keeps_its_own_range():
     assert lead_car['distanceM'] == 47.5 and lead_car['trackId'] == -1 and lead_car['source'] == 'vision'
 
 
-@pytest.mark.parametrize('distance,expected', [
-  (41., [(1, 41.), (2, 44.)]), (43.5, [(1, 40.), (2, 43.5)]), (42., [(1, 42.), (2, 44.)]),  # the closer lead; lead one on a tie
-])
-def test_one_radar_point_lends_its_position_to_one_camera_only_lead(distance, expected):
-  leads = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40.), leadTwo=lead(radar=False, radarTrackId=-1, dRel=44.))
-  cars = confirmed(radar=data([point(25, distance, 0., -2.)]), leads=leads)['navVehicles']
-  assert sorted((car['colorRole'], car['distanceM']) for car in cars) == expected
+def test_camera_only_lead_never_takes_a_point_radard_did_not_put_it_on():
+  # Codex review R2: a car followed at 40 m and a separate truck at 50 m pass the loose de-duplication gate.
+  radar = data([point(25, 50., 0., -2.)])
+  cars = confirmed(radar=radar, leads=NS(leadOne=lead(radar=False, radarTrackId=-1), leadTwo=lead(status=False)))
+  assert sorted((car['colorRole'], car['distanceM'], car['trackId']) for car in cars['navVehicles']) == [(1, 40., -1)]
+  overlay = VehicleOverlay()   # radard's pairing for lead two does not move lead one
+  confirmed(overlay, radar, leads=NS(leadOne=lead(status=False), leadTwo=lead(radarTrackId=25, dRel=50.)))
+  cars = render(overlay, radar, timestamp=100.4, leads=NS(leadOne=lead(radar=False, radarTrackId=-1), leadTwo=lead(status=False)))
+  assert (1, 40., -1) in [(car['colorRole'], car['distanceM'], car['trackId']) for car in cars['navVehicles']]
+
+
+def test_a_point_radard_put_another_lead_on_stays_with_that_lead():
+  # Codex review R1: lead two was on track 25 before; now lead one is on it and lead two is camera-only.
+  overlay = VehicleOverlay()
+  radar = data([point(25, 40., 0., -2.), point(7, 46., 0.7, -2.)])
+  confirmed(overlay, radar, leads=NS(leadOne=lead(radarTrackId=7, dRel=46., yRel=0.7), leadTwo=lead(radarTrackId=25)))
+  cars = render(overlay, radar, timestamp=100.4,
+                leads=NS(leadOne=lead(radarTrackId=25), leadTwo=lead(radar=False, radarTrackId=-1, dRel=44.)))['navVehicles']
+  assert sorted((car['colorRole'], car['trackId']) for car in cars) == [(1, 25), (2, -1)]   # 7 is lead two's own match
+
+
+def test_radards_pairing_expires_and_a_restarted_point_is_a_new_object():
+  overlay = VehicleOverlay()
+  radar = data([point(25, 56., 0., -2.)])
+  backed = NS(leadOne=lead(radarTrackId=25, dRel=56.), leadTwo=lead(status=False))
+  vision = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=47.5), leadTwo=lead(status=False))
+  confirmed(overlay, radar, leads=backed)   # last paired at 100.2
+  for i in range(2, 9):   # 100.4 .. 101.6
+    assert render(overlay, radar, timestamp=100. + 0.2 * i, leads=vision)['navVehicles'][0]['trackId'] == 25
+  lead_car = next(car for car in render(overlay, radar, timestamp=101.8, leads=vision)['navVehicles'] if car['colorRole'] == 1)
+  assert lead_car['trackId'] == -1 and lead_car['distanceM'] == 47.5   # 1.6 s since radard paired them
+  overlay = VehicleOverlay()
+  confirmed(overlay, radar, leads=backed)
+  jumped = data([point(25, 52., 3.6, -2.)])   # id 25 reused for another object: tracked anew
+  render(overlay, jumped, timestamp=100.4, leads=vision)
+  render(overlay, data([point(25, 52., 0., -2.)]), timestamp=100.6, leads=vision)
+  cars = render(overlay, data([point(25, 52., 0., -2.)]), timestamp=100.8, leads=vision)['navVehicles']
+  assert next(car for car in cars if car['colorRole'] == 1)['trackId'] == -1
 
 
 def test_a_confirmed_point_missing_from_a_snapshot_is_held_and_coasted():
@@ -114,7 +145,17 @@ def test_hold_runs_from_the_last_sighting_and_never_extends_itself():
   for timestamp in (100.3, 100.4, 100.5, 100.55):
     assert render(overlay, data([]), timestamp=timestamp)['navVehicles']
   assert render(overlay, data([]), timestamp=100.6)['navVehicles'] == []
+  assert set(overlay.tracks) == {1}   # remembered, not drawn
+  assert render(overlay, data([]), timestamp=100.81)['navVehicles'] == []
   assert not overlay.tracks
+
+
+def test_a_point_missing_from_one_snapshot_at_exactly_5hz_stays_drawn_through_its_return():
+  # Codex review R4: the return tick is 0.4 s after the last sighting.
+  overlay = VehicleOverlay()
+  confirmed(overlay)
+  assert [bool(render(overlay, radar, timestamp=t)['navVehicles'])
+          for t, radar in ((100.4, data([])), (100.6, data()), (100.8, data()))] == [True, True, True]
 
 
 def test_unconfirmed_points_are_not_held_and_holding_never_crosses_the_range_limits():
@@ -167,10 +208,10 @@ def test_stale_future_or_nonfinite_capture_clears_overlay(age):
 def test_empty_snapshot_disappearance_and_late_reappearance_require_confirmation():
   overlay = VehicleOverlay()
   assert confirmed(overlay)['navVehicles']
-  assert render(overlay, data([]), timestamp=100.6)['navVehicles'] == []   # past the hold
-  assert render(overlay, timestamp=100.7)['navVehicles'] == []
-  assert render(overlay, timestamp=100.9)['navVehicles']
-  assert render(overlay, timestamp=101.3)['navVehicles'] == []
+  assert render(overlay, data([]), timestamp=100.9)['navVehicles'] == [] and not overlay.tracks   # forgotten
+  assert render(overlay, timestamp=101.0)['navVehicles'] == []
+  assert render(overlay, timestamp=101.2)['navVehicles']
+  assert render(overlay, timestamp=101.9)['navVehicles'] == []   # back 0.7 s after its last sighting
 
 
 @pytest.mark.parametrize('kwargs', [
@@ -309,10 +350,10 @@ def test_short_path_fallback_holds_old_lane_or_radar_data_only_briefly():
   assert render(overlay, timestamp=100.55, m=m)['navVehicles']
   assert render(overlay, timestamp=100.6, m=m)['navVehicles'] == []   # 0.4 s since the lane was last given
   m.laneLineProbs[1] = .9
-  assert render(overlay, data([]), timestamp=101.0, m=m)['navVehicles'] == []
-  assert render(overlay, timestamp=101.1, m=m)['navVehicles'] == []
-  assert render(overlay, timestamp=101.2, m=m)['navVehicles']
-  assert render(overlay, timestamp=101.2, now=101.551, m=m)['navVehicles'] == []
+  assert render(overlay, data([]), timestamp=101.3, m=m)['navVehicles'] == []
+  assert render(overlay, timestamp=101.4, m=m)['navVehicles'] == []
+  assert render(overlay, timestamp=101.5, m=m)['navVehicles']
+  assert render(overlay, timestamp=101.5, now=101.851, m=m)['navVehicles'] == []
 
 
 def test_track_reuse_jump_and_clock_rollback_require_new_confirmation():
@@ -432,8 +473,8 @@ def test_lane_memory_is_per_track_and_cleared_with_the_overlay():
   overlay = VehicleOverlay()
   confirmed(overlay, data([point(1, 30., -3.6)]))
   assert set(overlay.lanes) == {1}
-  render(overlay, data([point(2, 30., -3.6)]), timestamp=100.6)
-  assert set(overlay.lanes) == set()   # point 1 gone, point 2 not confirmed yet
+  render(overlay, data([point(2, 30., -3.6)]), timestamp=100.9)
+  assert set(overlay.lanes) == set()   # point 1 forgotten, point 2 not confirmed yet
   confirmed(overlay, data([point(1, 30., -3.6)]))
   overlay.clear()
   assert overlay.lanes == {}
@@ -463,3 +504,12 @@ def test_a_held_lead_never_duplicates_the_vehicle_another_lead_or_radar_point_sh
   confirmed(overlay, radar, leads=NS(leadOne=lead(), leadTwo=lead(status=False)))   # radar-backed lead on track 42
   cars = render(overlay, radar, timestamp=100.4, leads=NS(leadOne=lead(status=False), leadTwo=lead(status=False)))
   assert [(car['trackId'], car['colorRole'], car['distanceM']) for car in cars['navVehicles']] == [(42, 1, 40.)]
+
+
+def test_a_reused_track_id_does_not_inherit_the_old_objects_lane():
+  # Codex review R3: id 25 in the right lane, then reused for a point beyond the far left line.
+  overlay = VehicleOverlay()
+  assert confirmed(overlay, data([point(25, 40., -3.6)]))['navVehicles'][0]['lane'] == 'right'
+  assert render(overlay, data([point(25, 40., 8.)]), timestamp=100.38)['navVehicles'] == []
+  assert 25 not in overlay.lanes
+  assert render(overlay, data([point(25, 40., 8.)]), timestamp=100.5)['navVehicles'] == []
