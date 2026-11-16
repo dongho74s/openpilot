@@ -177,13 +177,13 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 `WIP-FR`의 `NavigationSetSpeed`를 켜면 SET 인게이지에 유효한 내비 제한속도 +10km/h(30 제한은 +5)와 현재속도 중 큰 값을 사용하는 [내비 기반 초기 설정속도](buttons-presets.md#button-modes)가 적용됩니다. 기본값은 꺼짐이며, 변경은 약 0.1초 내 반영되어 다음 SET 진입부터 적용됩니다. 내비가 없거나 오래된 경우, 순정 ACC 및 이미 인게이지된 상태의 버튼 동작은 기존과 같습니다.
 
 <a id="vehicle-steering"></a>
-### 차량 조향 — 상위 39개 + ONNX 상세 6개 + 검색 전용 1개
+### 차량 조향 — 상위 40개 + ONNX 상세 6개 + 검색 전용 1개
 
 | 세부 구역 | 파라미터 | 용도 |
 |---|---|---|
 | ONNX 차선·BSD | `ShareData`, `OnnxBsdEnabled`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | 차선 종류 인식과 별도 카메라 BSD 실행 및 세부 조정 |
 | 중앙 보정 | `PathOffset`, `CameraYawTrimDeg`, `LanelessCenterOffset`, `LanelessEdgeOffset` | 레인모드 경로의 좌우 위치, 카메라 YAW 미세 보정, 레인리스에서도 적용되는 좌우·도로끝 보정 |
-| 조향감 | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | 조향 시점, 평활화, 일시중지 각도와 조향비 |
+| 조향감 | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate`, `LateralAccelLimit` | 조향 시점, 평활화, 일시중지 각도, 조향비와 횡가속도 상한 |
 | [차로 변경](lane-change.md)·자동 턴 | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | 차로 변경 진입 조건과 ATC 동작 |
 | 레인모드 | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | 레인모드 MPC 가중치와 차선 사용 조건 |
 | 고급 토크·토크 계수 | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | 커스텀 토크 제어 계수 |
@@ -210,6 +210,14 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 `SteerActuatorDelay`는 높을수록 더 일찍 조향하도록 보상하고, `LatSmoothSec`는 높을수록 부드러워지는 대신 반응이 늦어질 수 있습니다. 두 값을 동시에 바꾸면 원인을 구분하기 어렵습니다.
 
 `SteerRatioRate`의 기본값 `100%`는 학습된 조향비를 그대로 적용합니다. `CustomSR=0`일 때 사용되며, 저장된 비율이 허용 범위(`30~200%`)를 벗어나면 안전하게 `100%`로 대체됩니다.
+
+`LateralAccelLimit`(횡가속도 상한, ×0.1m/s², `30~45`, 기본 `30`)은 모델이 요청한 조향 곡률을 자르는 횡가속도 상한입니다. 기본값 `30`(3.0m/s²)은 오픈파일럿 기본 기준(ISO 11270)이며 지금까지와 같게 동작합니다.
+- 쉐보레(NNFF 사용, 프로그파일럿과 같은 조향 경로)는 이 값을 모든 속도에 씁니다.
+- 그 외 차종은 80km/h 아래의 4.5m/s² 완화를 그대로 두고, 80~120km/h에서 이 값까지 줄어듭니다. 그래서 그 외 차종은 주로 고속에서 차이가 납니다.
+- 노면 기울기(롤) 보정은 그대로 더해지고, 꺾는 빠르기 제한(5.0m/s³)은 바뀌지 않습니다.
+- 주행 중 바꾸면 약 1초 안에 읽고, 초당 0.5m/s²씩 서서히 바뀝니다.
+- 실제로 꺾이는 양은 차의 최대 조향 토크와 차종별 조향 제한을 넘지 않습니다. 트래버스처럼 토크가 먼저 한계에 닿는 차는 올려도 차이가 거의 없을 수 있습니다.
+- 3.0보다 높이면 오픈파일럿 안전 기준보다 더 세게 꺾을 수 있습니다. 운전자가 언제든 개입할 수 있어야 합니다. 범위를 벗어나거나 읽을 수 없는 저장값은 `30`으로 처리합니다.
 
 VW MEB(ID.4 포함)에도 수동 조향비와 학습 비율이 적용됩니다. `CustomSR=159`는 조향비 `15.9`를 사용하며 학습 비율보다 우선합니다. `CustomSR=0`, `SteerRatioRate=100%`로 설정하면 학습된 조향비를 그대로 사용하며, 변경은 제어 중 다시 읽어 반영합니다. 수동 조향비는 학습 자체를 중지하지 않고 제어에 사용할 값을 선택합니다.
 

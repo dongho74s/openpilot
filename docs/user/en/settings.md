@@ -181,13 +181,13 @@ Volkswagen's separate `SET` button sets current speed and `RES` restores the pre
 With `NavigationSetSpeed` enabled, `WIP-FR` SET engagement uses the greater of current speed and a valid navigation road limit plus 10 km/h (plus 5 for a 30 km/h limit); see [navigation-based initial set speed](buttons-presets.md#button-modes). The toggle defaults off and updates within about 0.1 seconds for the next SET engagement. Missing/stale navigation, stock ACC, and buttons while already engaged retain their existing behavior.
 
 <a id="vehicle-steering"></a>
-### Vehicle steering — 39 top-level + 6 ONNX detail + 1 search-only setting
+### Vehicle steering — 40 top-level + 6 ONNX detail + 1 search-only setting
 
 | Section | Parameters | Purpose |
 |---|---|---|
 | ONNX Lane and BSD | `ShareData`, `OnnxBsdEnabled`, `OnnxLaneThreshold`, `OnnxLaneIntervalMs`, `OnnxBsdThreshold`, `OnnxBsdSmoothingMs`, `OnnxBsdIntervalMs` | Lane-type detection plus separately controlled camera BSD and tuning |
 | Centering | `PathOffset`, `CameraYawTrimDeg`, `LanelessCenterOffset`, `LanelessEdgeOffset` | Path position, camera-yaw trim, and left/right and road-edge offsets that also work in laneless |
-| Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate` | Timing, smoothing, suspension angle, and steering ratio |
+| Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate`, `LateralAccelLimit` | Timing, smoothing, suspension angle, steering ratio, and lateral acceleration limit |
 | [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
 | Advanced torque | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
@@ -214,6 +214,14 @@ Laneless driving steers with the model's own curvature, so `PathOffset` (lane-mo
 A larger `SteerActuatorDelay` compensates by commanding earlier. A larger `LatSmoothSec` is smoother but may respond more slowly. Changing both together makes diagnosis difficult.
 
 The default `SteerRatioRate` of `100%` applies the learned steering ratio without scaling. It is used when `CustomSR=0`; a stored rate outside the allowed range (`30–200%`) safely falls back to `100%`.
+
+`LateralAccelLimit` (lateral acceleration limit, ×0.1 m/s², `30–45`, default `30`) is the lateral acceleration limit that clips the steering curvature the model requests. The default `30` (3.0 m/s²) is openpilot's stock limit (ISO 11270) and behaves as before.
+- Chevrolet with NNFF (the FrogPilot-parity steering path) uses this value at every speed.
+- Other cars keep the 4.5 m/s² allowance below 80 km/h and reduce it to this value between 80 and 120 km/h, so for them it mainly changes highway speeds.
+- Road roll compensation is still added, and the steering-rate (jerk) limit of 5.0 m/s³ is unchanged.
+- A change while driving is read within about a second and applied gradually, 0.5 m/s² per second.
+- The car still cannot steer beyond its maximum steering torque and its own steering limits. Cars that reach their torque limit first, such as the Traverse, may show little difference.
+- Above 3.0 the car may steer harder than openpilot's stock safety limit; the driver must be ready to take over at any time. A stored value that is outside the range or unreadable is treated as `30`.
 
 Manual steering ratio and learned-ratio scaling also apply to VW MEB, including ID.4. `CustomSR=159` selects a ratio of `15.9` and takes precedence over learned-ratio scaling. `CustomSR=0` with `SteerRatioRate=100%` uses the learned ratio unchanged; the control loop rereads settings while running. Selecting a manual ratio does not stop learning; it selects the value used for control.
 

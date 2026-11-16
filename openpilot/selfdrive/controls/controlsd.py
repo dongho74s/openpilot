@@ -19,7 +19,8 @@ from opendbc.car.gm.values import CAR as GM_CAR
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
+from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, \
+                                                       lateral_accel_limit, MAX_LATERAL_ACCEL_NO_ROLL
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -43,6 +44,7 @@ State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 LAT_CURVATURE_SATURATION_ACCEL = 0.1  # infiniteCable2 LatControlCurvature: 곡률 기반 steer_limited 임계 (m/s^2 환산)
+LAT_ACCEL_LIMIT_RATE = 0.5  # m/s^2 per second: a LateralAccelLimit change from 4.5 to 3.0 takes 3 s
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 
@@ -105,10 +107,23 @@ class Controls:
       self.LaC = LatControlTorque(self.CP, self.CI)
     # FrogPilot-parity cars (Traverse/Trailblazer/Trax with NNFF): FrogPilot's curvature limit, lateral delay and pitch
     self.lat_frog_parity = bool(getattr(self.LaC, 'nnff_frogpilot_parity', False))
+    self.lat_accel_limit = self.lat_accel_limit_target = self.read_lat_accel_limit()
     self.carrot_controls = CarrotControls(self.CP)
+
+  def read_lat_accel_limit(self) -> float:
+    # Params.get casts in Python (a corrupt value becomes None); get_int's native std::stoi would abort on one
+    try:
+      return lateral_accel_limit(self.params.get("LateralAccelLimit"))
+    except Exception:  # e.g. the native params registry is not rebuilt yet: keep the stock limit
+      return MAX_LATERAL_ACCEL_NO_ROLL
 
   def update(self):
     self.sm.update(15)
+    if self.sm.frame % 100 == 0:  # 1 Hz: LateralAccelLimit can change while driving
+      self.lat_accel_limit_target = self.read_lat_accel_limit()
+    # a changed setting moves the limit gradually, so lowering it in a curve does not cut the request at once
+    step = LAT_ACCEL_LIMIT_RATE * DT_CTRL
+    self.lat_accel_limit += float(np.clip(self.lat_accel_limit_target - self.lat_accel_limit, -step, step))
     if self.sm.updated["liveCalibration"]:
       self.pose_calibrator.feed_live_calib(self.sm['liveCalibration'])
     if self.sm.updated["livePose"]:
@@ -234,9 +249,10 @@ class Controls:
       # the parity cars keep it (2026-11-14).
       new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
 
-    # FrogPilot keeps the 3.0 m/s^2 lateral acceleration limit at every speed
+    # FrogPilot keeps the lateral acceleration limit (3.0 m/s^2, LateralAccelLimit) at every speed
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
-                                                               low_speed_allowance=not self.lat_frog_parity)
+                                                               low_speed_allowance=not self.lat_frog_parity,
+                                                               max_lat_accel_no_roll=self.lat_accel_limit)
 
     actuators.curvature = float(self.desired_curvature)
 
