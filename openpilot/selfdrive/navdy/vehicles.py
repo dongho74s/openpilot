@@ -12,6 +12,14 @@ from openpilot.selfdrive.navdy.display import (
 MAX_TRACKS = 64
 MAX_VEHICLES = 8
 TRACK_MAX_AGE = 0.35
+# A confirmed radar point missing from a fresh snapshot is kept this long after its last sighting (radar time),
+# coasting at its relative speed, like Wayon's NAVDY_RADAR_STALE_SEC. Points drop out of single snapshots often, and
+# dropping them at once, then re-confirming over two 5 Hz ticks, blinked icons for 0.4 s (user report 2026-11-16).
+TRACK_HOLD = 0.35
+# A confirmed point whose lane check fails keeps the lane it was last given for this long (radar time). The check
+# flickers for a steady point on a lane line, or while stopped when the plan is too short (11/15: ~100 one-tick
+# blinks in 47 minutes). A point that really leaves the lanes goes once this runs out.
+LANE_HOLD = 0.35
 MAX_DISTANCE = 80.0
 
 
@@ -96,6 +104,7 @@ def vehicle_yaw(model, lane, distance, lateral):
 class VehicleOverlay:
   def __init__(self):
     self.tracks = {}
+    self.lanes = {}  # ident -> (lane, radar time it was last given)
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -103,6 +112,7 @@ class VehicleOverlay:
 
   def clear(self):
     self.tracks.clear()
+    self.lanes.clear()
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -163,26 +173,68 @@ class VehicleOverlay:
         else:
           samples = 1
         current[ident] = dict(values, time=timestamp, samples=samples)
-      # A fresh complete radar snapshot may explicitly remove a target.
+      # A fresh snapshot removes unconfirmed targets at once; a confirmed one is held until TRACK_HOLD after its
+      # last sighting (its time is not refreshed, so the hold never extends itself).
+      for ident, track in self.tracks.items():
+        if ident not in current and track['samples'] >= 2 and timestamp - track['time'] <= TRACK_HOLD:
+          current[ident] = track
       self.tracks = current
 
     leads = payload['navVehicles']
-    surrounding = []
+    candidates = []  # (ident, distance, lateral, lane, vRel) of confirmed points in a lane
     for ident, track in self.tracks.items():
       if track['samples'] < 2:
         continue
-      distance, lateral = track['dRel'], track['yRel']
-      lane = vehicle_lane(model, distance, lateral)
-      if not lane:
+      lateral = track['yRel']
+      distance = track['dRel'] + track['vRel'] * (self.timestamp - track['time'])  # held: coast to this snapshot
+      if not 2.0 <= distance <= MAX_DISTANCE:
         continue
-      # Preserve actual lead positions/highlights; raw points only fill in
-      # additional vehicles. Display streams may assign independent IDs; use
-      # tight geometric matching there, never ID equality across namespaces.
-      if any((not display_data and lead['trackId'] == ident) or
-             ((display_data or lead['source'] == 'vision') and lead['lane'] == lane
+      lane = vehicle_lane(model, distance, lateral)
+      if lane:
+        self.lanes[ident] = (lane, self.timestamp)
+      elif ident in self.lanes and self.timestamp - self.lanes[ident][1] <= LANE_HOLD:
+        lane = self.lanes[ident][0]
+      if lane:
+        candidates.append((ident, distance, lateral, lane, track['vRel']))
+    self.lanes = {ident: value for ident, value in self.lanes.items() if ident in self.tracks}
+
+    def same_vehicle(lead, candidate):
+      # Display streams may assign independent IDs; use tight geometric matching there, never ID equality across
+      # namespaces. A camera-only lead (its range is the model's) is matched loosely.
+      _, distance, lateral, lane, speed = candidate
+      return (lead['lane'] == lane
               and abs(lead['distanceM'] - distance) <= (max(2.5, distance * 0.06) if display_data else max(5.0, distance * 0.25))
               and abs(lead['lateralM'] - lateral) <= (1.0 if display_data else 1.5)
-              and abs(lead['relativeSpeedMps'] - track['vRel']) <= (3.0 if display_data else 5.0)) for lead in leads):
+              and abs(lead['relativeSpeedMps'] - speed) <= (3.0 if display_data else 5.0))
+
+    # A camera-only published lead is drawn where its radar point is. radard flips a far lead between its radar point
+    # and the model's own range several times a second (11/15: 56 m vs 47 m, every 0.2-0.4 s), which made the icon
+    # blink and jump (user report 2026-11-16); the radar range is the one the stock camera agrees with.
+    adopted, moved = set(), set()
+    if not display_data:
+      pairs = sorted((abs(c[1] - lead['distanceM']) / max(5.0, c[1] * 0.25) + abs(c[2] - lead['lateralM']) / 1.5,
+                      lead.get('colorRole', 0) or 3, index, c)
+                     for index, lead in enumerate(leads) if lead['source'] == 'vision'
+                     for c in candidates if same_vehicle(lead, c))
+      for _, _, index, (ident, distance, lateral, lane, speed) in pairs:   # closest pairs first, lead one on a tie
+        if index in moved or ident in adopted:
+          continue
+        view = navdy_vehicle_view(model, distance, lateral)
+        if view is None:
+          continue
+        moved.add(index)
+        adopted.add(ident)
+        leads[index].update({'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'],
+                             'pxPerM': view['pxPerM'], 'distanceM': rounded(distance), 'relativeSpeedMps': rounded(speed),
+                             'lateralM': rounded(lateral, 2), 'source': 'radar'})
+
+    surrounding = []
+    for candidate in candidates:
+      ident, distance, lateral, lane, speed = candidate
+      # Preserve actual lead positions/highlights; raw points only fill in additional vehicles.
+      if ident in adopted or any((not display_data and lead['trackId'] == ident)
+                                 or ((display_data or lead['source'] == 'vision') and same_vehicle(lead, candidate))
+                                 for lead in leads):
         continue
       view = navdy_vehicle_view(model, distance, lateral)
       if view is None:
@@ -190,7 +242,7 @@ class VehicleOverlay:
       surrounding.append({
         'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'], 'pxPerM': view['pxPerM'],
         'yawDeg': vehicle_yaw(model, lane, distance, lateral), 'distanceM': rounded(distance),
-        'relativeSpeedMps': rounded(track['vRel']), 'lateralM': rounded(lateral, 2),
+        'relativeSpeedMps': rounded(speed), 'lateralM': rounded(lateral, 2),
         'lane': lane, 'source': 'radar', 'longitudinalLead': False, 'confidence': 0.65, 'colorRole': 0,
       })
     surrounding.sort(key=lambda vehicle: vehicle['distanceM'])

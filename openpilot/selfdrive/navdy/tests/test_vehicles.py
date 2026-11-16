@@ -64,7 +64,67 @@ def test_preserves_leads_and_every_non_vehicle_field():
 
 def test_camera_only_lead_is_not_duplicated_by_matching_raw_point():
   result = confirmed(radar=data([point(42, 40., 0.)]), leads=NS(leadOne=lead(radar=False, radarTrackId=-1)))
-  assert len(result['navVehicles']) == 1 and result['navVehicles'][0]['source'] == 'vision'
+  assert len(result['navVehicles']) == 1 and result['navVehicles'][0]['colorRole'] == 1
+
+
+def test_camera_only_lead_is_drawn_at_its_radar_point_so_radard_flips_do_not_move_it():
+  # 11/15 drive: radard alternated a far lead between radar track 25 (56 m) and the model's 47.5 m every few ticks.
+  overlay = VehicleOverlay()
+  radar = data([point(25, 56., 0., -2.)])
+  vision = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=47.5), leadTwo=lead(status=False))
+  backed = NS(leadOne=lead(radar=True, radarTrackId=25, dRel=56.), leadTwo=lead(status=False))
+  confirmed(overlay, radar, leads=vision)
+  frames = [render(overlay, radar, timestamp=100.2 + 0.2 * i, leads=leads)['navVehicles']
+            for i, leads in enumerate((vision, backed, vision, backed), start=1)]
+  assert all(len(cars) == 1 for cars in frames)
+  keys = ('trackId', 'screenX', 'screenY', 'pxPerM', 'distanceM', 'lateralM', 'lane', 'colorRole', 'source')
+  assert len({tuple(cars[0][key] for key in keys) for cars in frames}) == 1
+  assert frames[0][0]['distanceM'] == 56. and frames[0][0]['colorRole'] == 1 and frames[0][0]['trackId'] == 25
+
+
+def test_camera_only_lead_without_a_matching_radar_point_keeps_its_own_range():
+  leads = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=47.5), leadTwo=lead(status=False))
+  for radar in (data([]), data([point(7, 47.5, 3.6)]), data([point(8, 70., 0.)]), data([point(9, 47.5, 0., 10.)])):
+    cars = confirmed(VehicleOverlay(), radar, leads=leads)['navVehicles']
+    lead_car = next(car for car in cars if car['colorRole'] == 1)
+    assert lead_car['distanceM'] == 47.5 and lead_car['trackId'] == -1 and lead_car['source'] == 'vision'
+
+
+@pytest.mark.parametrize('distance,expected', [
+  (41., [(1, 41.), (2, 44.)]), (43.5, [(1, 40.), (2, 43.5)]), (42., [(1, 42.), (2, 44.)]),  # the closer lead; lead one on a tie
+])
+def test_one_radar_point_lends_its_position_to_one_camera_only_lead(distance, expected):
+  leads = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40.), leadTwo=lead(radar=False, radarTrackId=-1, dRel=44.))
+  cars = confirmed(radar=data([point(25, distance, 0., -2.)]), leads=leads)['navVehicles']
+  assert sorted((car['colorRole'], car['distanceM']) for car in cars) == expected
+
+
+def test_a_confirmed_point_missing_from_a_snapshot_is_held_and_coasted():
+  overlay = VehicleOverlay()
+  assert confirmed(overlay, data([point(1, 30., 3.6, -1.)]))['navVehicles']   # seen at 100.0 and 100.2
+  held = render(overlay, data([]), timestamp=100.4)['navVehicles']
+  assert len(held) == 1 and held[0]['distanceM'] == 29.8 and held[0]['lateralM'] == -3.6
+  back = render(overlay, data([point(1, 29.7, 3.6, -1.)]), timestamp=100.5)['navVehicles']
+  assert len(back) == 1   # no new confirmation needed after a short gap
+
+
+def test_hold_runs_from_the_last_sighting_and_never_extends_itself():
+  overlay = VehicleOverlay()
+  confirmed(overlay)
+  for timestamp in (100.3, 100.4, 100.5, 100.55):
+    assert render(overlay, data([]), timestamp=timestamp)['navVehicles']
+  assert render(overlay, data([]), timestamp=100.6)['navVehicles'] == []
+  assert not overlay.tracks
+
+
+def test_unconfirmed_points_are_not_held_and_holding_never_crosses_the_range_limits():
+  overlay = VehicleOverlay()
+  assert render(overlay, timestamp=100.)['navVehicles'] == []
+  assert render(overlay, data([]), timestamp=100.2)['navVehicles'] == [] and not overlay.tracks
+  assert render(overlay, timestamp=100.3)['navVehicles'] == []   # a lone sighting again: still unconfirmed
+  near = VehicleOverlay()
+  assert confirmed(near, data([point(1, 2.4, 3.6, -5.)]))['navVehicles']
+  assert render(near, data([]), timestamp=100.3)['navVehicles'] == []   # would be drawn at 1.9 m
 
 
 def test_different_radar_ids_are_not_merged_just_because_they_are_close():
@@ -107,10 +167,10 @@ def test_stale_future_or_nonfinite_capture_clears_overlay(age):
 def test_empty_snapshot_disappearance_and_late_reappearance_require_confirmation():
   overlay = VehicleOverlay()
   assert confirmed(overlay)['navVehicles']
-  assert render(overlay, data([]), timestamp=100.3)['navVehicles'] == []
-  assert render(overlay, timestamp=100.4)['navVehicles'] == []
-  assert render(overlay, timestamp=100.6)['navVehicles']
-  assert render(overlay, timestamp=101.)['navVehicles'] == []
+  assert render(overlay, data([]), timestamp=100.6)['navVehicles'] == []   # past the hold
+  assert render(overlay, timestamp=100.7)['navVehicles'] == []
+  assert render(overlay, timestamp=100.9)['navVehicles']
+  assert render(overlay, timestamp=101.3)['navVehicles'] == []
 
 
 @pytest.mark.parametrize('kwargs', [
@@ -239,18 +299,20 @@ def test_short_path_preserves_lead_dedup_and_non_vehicle_fields(display_data):
   assert {k: v for k, v in result.items() if k != 'navVehicles'} == {k: v for k, v in baseline.items() if k != 'navVehicles'}
 
 
-def test_short_path_fallback_never_holds_old_lane_or_radar_data():
+def test_short_path_fallback_holds_old_lane_or_radar_data_only_briefly():
   m = model()
   m.position.x, m.position.y = [0., 20.], [0., 0.]
   overlay = VehicleOverlay()
-  assert confirmed(overlay, m=m)['navVehicles']
+  assert confirmed(overlay, m=m)['navVehicles']   # lane given at 100.2
   m.laneLineProbs[1] = .1
-  assert render(overlay, timestamp=100.3, m=m)['navVehicles'] == []
+  assert render(overlay, timestamp=100.3, m=m)['navVehicles'][0]['lane'] == 'left'   # lane held
+  assert render(overlay, timestamp=100.55, m=m)['navVehicles']
+  assert render(overlay, timestamp=100.6, m=m)['navVehicles'] == []   # 0.4 s since the lane was last given
   m.laneLineProbs[1] = .9
-  assert render(overlay, data([]), timestamp=100.4, m=m)['navVehicles'] == []
-  assert render(overlay, timestamp=100.5, m=m)['navVehicles'] == []
-  assert render(overlay, timestamp=100.6, m=m)['navVehicles']
-  assert render(overlay, timestamp=100.6, now=100.951, m=m)['navVehicles'] == []
+  assert render(overlay, data([]), timestamp=101.0, m=m)['navVehicles'] == []
+  assert render(overlay, timestamp=101.1, m=m)['navVehicles'] == []
+  assert render(overlay, timestamp=101.2, m=m)['navVehicles']
+  assert render(overlay, timestamp=101.2, now=101.551, m=m)['navVehicles'] == []
 
 
 def test_track_reuse_jump_and_clock_rollback_require_new_confirmation():
@@ -300,10 +362,11 @@ def test_supported_display_stream_is_authoritative_including_empty():
   assert [car['trackId'] for car in cars] == [2]
   assert cars[0]['lane'] == 'right'
   radar.displayPoints = []
-  assert render(overlay, radar, timestamp=100.3)['navVehicles'] == []
+  assert [car['trackId'] for car in render(overlay, radar, timestamp=100.3)['navVehicles']] == [2]   # held, not points
+  assert render(overlay, radar, timestamp=100.6)['navVehicles'] == []
   radar.hasDisplayData = False
-  assert render(overlay, radar, timestamp=100.4)['navVehicles'] == []
-  assert render(overlay, radar, timestamp=100.6)['navVehicles'][0]['trackId'] == 1
+  assert render(overlay, radar, timestamp=100.7)['navVehicles'] == []
+  assert render(overlay, radar, timestamp=100.9)['navVehicles'][0]['trackId'] == 1
 
 
 @pytest.mark.parametrize('p,expected_count', [
@@ -349,3 +412,28 @@ def test_every_drawn_vehicle_has_a_colour_role():
   radar = data([point(ident=7, distance=25., lateral=3.6)])
   result = confirmed(radar=radar, m=m)
   assert result['navVehicles'] and all(v['colorRole'] == 0 for v in result['navVehicles'] if v['source'] == 'radar')
+
+
+def test_a_flickering_lane_check_keeps_the_last_lane_briefly():
+  m = model()
+  overlay = VehicleOverlay()
+  radar = data([point(1, 30., -3.6)])   # right lane
+  assert confirmed(overlay, radar, m=m)['navVehicles'][0]['lane'] == 'right'
+  outside = copy.deepcopy(m)
+  outside.laneLines[3].y = [-1.] * len(outside.laneLines[3].y)   # far right line moved inside: the point is "outside"
+  cars = render(overlay, radar, timestamp=100.4, m=outside)['navVehicles']
+  assert [car['lane'] for car in cars] == ['right']
+  assert render(overlay, radar, timestamp=100.6, m=m)['navVehicles'][0]['lane'] == 'right'   # given again: hold restarts
+  assert render(overlay, radar, timestamp=100.9, m=outside)['navVehicles']
+  assert render(overlay, radar, timestamp=101.0, m=outside)['navVehicles'] == []
+
+
+def test_lane_memory_is_per_track_and_cleared_with_the_overlay():
+  overlay = VehicleOverlay()
+  confirmed(overlay, data([point(1, 30., -3.6)]))
+  assert set(overlay.lanes) == {1}
+  render(overlay, data([point(2, 30., -3.6)]), timestamp=100.6)
+  assert set(overlay.lanes) == set()   # point 1 gone, point 2 not confirmed yet
+  confirmed(overlay, data([point(1, 30., -3.6)]))
+  overlay.clear()
+  assert overlay.lanes == {}
