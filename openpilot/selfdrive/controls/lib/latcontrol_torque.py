@@ -13,6 +13,7 @@ from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
 
 from openpilot.common.params import Params
+from openpilot.common.realtime import DT_CTRL
 
 # At higher speeds (25+mph) we can assume:
 # Lateral acceleration achieved by a specific car correlates to
@@ -124,6 +125,10 @@ class LatControlTorque(LatControl):
 
     # carrot
     self.frame = 0
+    # Kd was a dead knob: error_rate was never passed to the PID, so the D term
+    # was always 0. Track the previous error and filter its rate so Kd works.
+    self.prev_error = 0.0
+    self.error_rate_filter = FirstOrderFilter(0.0, 0.1, DT_CTRL)
     self.params = Params()
     self.lateralTorqueCustom = self.params.get_int("LateralTorqueCustom")
     self.latAccelFactor_default = self.torque_params.latAccelFactor
@@ -218,6 +223,9 @@ class LatControlTorque(LatControl):
       output_torque = 0.0
       pid_log.active = False
       angle_steers_des = float(CS.steeringAngleDeg)
+      # reset the derivative state so re-engagement doesn't see a stale jump
+      self.prev_error = 0.0
+      self.error_rate_filter.x = 0.0
     else:
       angle_steers_des = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des += params.angleOffsetDeg
@@ -347,7 +355,13 @@ class LatControlTorque(LatControl):
 
       # [패치 3] steer_limited_by_controls 분기 제거: 고조향 한계 시 Integrator 락으로 인한 토크 0 추락 차단
       freeze_integrator = CS.steeringPressed or CS.vEgo < 5
+      # [Kd fix] feed the error rate to the PID so the D term (Kd) actually works.
+      # Without this, error_rate defaulted to 0 and Kd did nothing.
+      error_rate = (pid_log.error - self.prev_error) / DT_CTRL
+      self.prev_error = pid_log.error
+      error_rate = self.error_rate_filter.update(error_rate)
       output_torque = self.pid.update(pid_log.error,
+                                      error_rate=error_rate,
                                       feedforward=ff,
                                       speed=CS.vEgo,
                                       freeze_integrator=freeze_integrator)
