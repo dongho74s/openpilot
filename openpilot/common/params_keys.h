@@ -301,6 +301,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CenterToFrontRatioEnabled", {PERSISTENT, BOOL}},  // Retired: migration only
     {"CenterToFrontRatio", {PERSISTENT, INT, "0"}},
     {"LatSmoothSec", {PERSISTENT, INT, "13"}},
+    {"LateralAccelLimit", {PERSISTENT, INT, "30"}},
     {"LatSuspendAngleDeg", {PERSISTENT, INT, "300"}},
     {"CruiseOnDist", {PERSISTENT, INT, "400"}},
 

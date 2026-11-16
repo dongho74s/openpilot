@@ -70,6 +70,7 @@ def control_fixture():
                desired_curvature=0.0, lateral_startup=LateralStartupGate(), lateral_started=False,
                steer_limited_by_safety=False)
   control.lat_frog_parity = bool(getattr(control.LaC, 'nnff_frogpilot_parity', False))   # as Controls.__init__
+  control.lat_accel_limit = 3.0   # LateralAccelLimit default, as Controls.__init__
   return control, lambda: ns['state_control'](control)
 
 

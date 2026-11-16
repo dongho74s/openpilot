@@ -159,7 +159,8 @@
                 "LatSmoothSec",
                 "LatSuspendAngleDeg",
                 "CustomSR",
-                "SteerRatioRate"
+                "SteerRatioRate",
+                "LateralAccelLimit"
               ]
             },
             {
@@ -1208,6 +1209,23 @@
       "default": 100,
       "unit": 1,
       "display_unit": "percent"
+    },
+    {
+      "group": "조향튜닝",
+      "name": "LateralAccelLimit",
+      "title": "횡가속도 상한x0.1(30)",
+      "descr": "모델이 요청하는 조향(곡률)을 자르는 횡가속도 상한(m/s²)입니다. 30(3.0)이 기본 오픈파일럿 기준(ISO 11270)이고 45(4.5)까지 올릴 수 있습니다. 쉐보레(NNFF)는 모든 속도에, 그 외 차종은 80km/h 아래 4.5를 그대로 두고 120km/h 쪽 값으로 적용합니다. 실제로 꺾이는 양은 차의 최대 조향 토크를 넘지 않습니다.",
+      "egroup": "LAT",
+      "etitle": "Lateral Accel Limit x0.1(30)",
+      "edescr": "Lateral acceleration limit (m/s²) that clips the steering (curvature) the model requests. 30 (3.0) is the stock openpilot limit (ISO 11270); up to 45 (4.5). Chevrolet (NNFF) uses it at every speed; other cars keep 4.5 below 80 km/h and use it as the 120 km/h value. The car still cannot steer beyond its maximum steering torque.",
+      "cgroup": "转向",
+      "ctitle": "横向加速度上限x0.1(30)",
+      "cdescr": "限制模型请求转向（曲率）的横向加速度上限（m/s²）。30（3.0）为 openpilot 默认标准（ISO 11270），最高可调至 45（4.5）。雪佛兰（NNFF）在所有速度下使用；其他车型在 80km/h 以下仍为 4.5，此值作为 120km/h 的上限。实际转向不会超过车辆最大转向力矩。",
+      "min": 30,
+      "max": 45,
+      "default": 30,
+      "unit": 1,
+      "risk": "high"
     },
     {
       "group": "가속설정",

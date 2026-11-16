@@ -23,6 +23,18 @@ MAX_VEL_ERR = 5.0  # m/s
 MAX_LATERAL_JERK = 5.0  # m/s^3
 MAX_LATERAL_ACCEL_NO_ROLL = 3.0  # m/s^2
 MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 4.5  # m/s^2
+# LateralAccelLimit (Carrot Web, whole 0.1 m/s^2 steps): the lateral acceleration limit used in place of the 3.0 above.
+# The default 30 keeps the stock limit; anything but an integer 30-45 (as Params.get returns it) falls back to it.
+LATERAL_ACCEL_LIMIT_SETTING_RANGE = (30, 45)
+
+
+def lateral_accel_limit(setting) -> float:
+  if isinstance(setting, bool) or not isinstance(setting, int):
+    return MAX_LATERAL_ACCEL_NO_ROLL
+  if not LATERAL_ACCEL_LIMIT_SETTING_RANGE[0] <= setting <= LATERAL_ACCEL_LIMIT_SETTING_RANGE[1]:
+    return MAX_LATERAL_ACCEL_NO_ROLL
+  return setting / 10.0
+
 
 def apply_deadzone(error, deadzone):
   if error > deadzone:
@@ -82,8 +94,11 @@ def smooth_value(val, prev_val, tau, dt=DT_MDL):
   alpha = 1 - np.exp(-dt/tau) if tau > 0 else 1
   return alpha * val + (1 - alpha) * prev_val
 
-def clip_curvature(v_ego, prev_curvature, new_curvature, roll, low_speed_allowance=True):
-  # This function respects ISO lateral jerk and acceleration limits + a max curvature
+def clip_curvature(v_ego, prev_curvature, new_curvature, roll, low_speed_allowance=True,
+                   max_lat_accel_no_roll=MAX_LATERAL_ACCEL_NO_ROLL):
+  # This function respects ISO lateral jerk and acceleration limits + a max curvature.
+  # max_lat_accel_no_roll is the limit without roll (LateralAccelLimit, stock 3.0); carrot's low-speed allowance below
+  # 80 km/h never drops under it.
   v_ego = max(v_ego, MIN_SPEED)
   max_curvature_rate = MAX_LATERAL_JERK / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
   new_curvature = np.clip(new_curvature,
@@ -97,8 +112,8 @@ def clip_curvature(v_ego, prev_curvature, new_curvature, roll, low_speed_allowan
   max_lateral_accel_no_roll = float(np.interp(
     v_ego,
     [80 / 3.6, 120 / 3.6],
-    [MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED, MAX_LATERAL_ACCEL_NO_ROLL],
-  )) if low_speed_allowance else MAX_LATERAL_ACCEL_NO_ROLL
+    [max(MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED, max_lat_accel_no_roll), max_lat_accel_no_roll],
+  )) if low_speed_allowance else max_lat_accel_no_roll
   max_lat_accel = max_lateral_accel_no_roll + roll_compensation
   min_lat_accel = -max_lateral_accel_no_roll + roll_compensation
   new_curvature, limited_accel = clamp(new_curvature, min_lat_accel / v_ego ** 2, max_lat_accel / v_ego ** 2)
