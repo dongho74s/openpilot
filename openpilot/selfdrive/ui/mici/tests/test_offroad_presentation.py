@@ -119,7 +119,8 @@ def main_class(ns):
   path = Path(__file__).parents[1] / 'layouts/main.py'
   tree = ast.parse(path.read_text())
   cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'MiciMainLayout')
-  ns.update(Scroller=object, Widget=object, ONROAD_DELAY=2.5)
+  for name, value in (('Scroller', object), ('Widget', object), ('ONROAD_DELAY', 2.5)):
+    ns.setdefault(name, value)
   exec(compile(ast.Module(body=[cls], type_ignores=[]), str(path), 'exec'), ns)
   return ns['MiciMainLayout']
 
@@ -141,7 +142,12 @@ def layout():
           params=NS(get_int=lambda _: 0, get_bool=lambda _: False), show_camera_with_cluster=False)
   device = NS(awake=True, _interaction_time=130, add_interactive_timeout_callback=lambda _: None)
   gui = NS(widget_in_stack=lambda _: False, pop_widgets_to=lambda obj, callback=None, **kw: callback() if callback else None)
-  cls = main_class({'time': NS(monotonic=lambda: clock.now), 'rl': NS(get_time=lambda: clock.now),
+  class Base:
+    def _render(self, rect):
+      self._draw_pages()
+
+  rl = NS(get_time=lambda: clock.now, draw_rectangle_rec=lambda *args: None, Color=lambda *args: args)
+  cls = main_class({'time': NS(monotonic=lambda: clock.now), 'rl': rl, 'Scroller': Base,
                     'gui_app': gui, 'ui_state': ui, 'device': device, 'PC': False})
   obj = object.__new__(cls)
   obj._screen_fade = ScreenFade()
@@ -155,6 +161,7 @@ def layout():
   obj._in_plot_mode = False
   obj._show_plot_mode = 0
   obj._onboarding_window = object()
+  obj._shown_surface = 'offroad'
   obj._home_layout = NS(rect=NS(x=0), set_callbacks=lambda **kw: None)
   obj._info_layout = NS(set_callbacks=lambda **kw: None)
   obj._onroad_layout = NS(set_cluster_hud_connected=lambda *args: None)
@@ -163,6 +170,163 @@ def layout():
   obj._scroller = NS(scroll_to=lambda *args, **kw: None)
   obj._sync_offroad_scroll = lambda **kw: None
   return obj, ui, clock
+
+
+class Page:
+  def __init__(self, name):
+    self.name, self._visible, self.shown = name, True, 0
+
+  def set_visible(self, visible):
+    self._visible = visible
+
+  def set_enabled(self, enabled):
+    self._enabled = enabled
+
+  @property
+  def is_visible(self):
+    return self._visible() if callable(self._visible) else self._visible
+
+  def __repr__(self):
+    return self.name
+
+
+class Panel:
+  def __init__(self):
+    self.offset = 0.0
+
+  def get_offset(self):
+    return self.offset
+
+  def set_offset(self, offset):
+    self.offset = offset
+
+
+class PagedScroller:
+  """The real _Scroller paging rules that matter here: visible items in order, offset = -page * width."""
+  def __init__(self, items):
+    self.items, self.scroll_panel, self.slides, self.shows = items, Panel(), [], 0
+
+  def set_enabled(self, enabled):
+    self.enabled = enabled
+
+  def set_scrolling_enabled(self, enabled):
+    self.scrolling_enabled = enabled
+
+  def show_event(self):
+    self.shows += 1
+
+  def scroll_to(self, pos, smooth=False, **kw):
+    self.slides.append((self.scroll_panel.get_offset() - pos, smooth))
+
+  def page(self, width=536):
+    return [item for item in self.items if item.is_visible][int(round(-self.scroll_panel.offset / width))]
+
+
+@pytest.fixture
+def paged(layout):
+  """The layout with real page widgets in the scroller and a renderable _render (drawing stubbed)."""
+  obj, ui, clock = layout
+  pages = {name: Page(name) for name in ('alerts', 'home', 'info', 'onroad', 'debug')}
+  for name in ('onroad', 'debug'):
+    pages[name].set_cluster_hud_connected = lambda *args: None
+  obj._alerts_layout, obj._home_layout, obj._info_layout = pages['alerts'], pages['home'], pages['info']
+  obj._onroad_layout, obj._debug_layout = pages['onroad'], pages['debug']
+  pages['alerts'].active_alerts = lambda: 0
+  obj._scroller = PagedScroller(list(pages.values()))
+  obj._rect = NS(width=536)
+  obj.enabled = True
+  offroad_syncs = []
+
+  def sync(smooth=False):
+    offroad_syncs.append(smooth)
+    obj._scroller.scroll_panel.set_offset(-536.0)  # the home page (no alerts)
+  obj._sync_offroad_scroll = sync
+  obj._handle_carrot_record_cmd = lambda sm: None
+  draws = []
+  obj._draw_pages = lambda: draws.append(obj._scroller.page())
+  obj._screen_alpha = 0.0
+  obj._setup_surfaces()
+  sync()
+  return obj, ui, clock, pages, offroad_syncs, draws
+
+
+def test_offroad_shows_only_offroad_pages_and_onroad_adds_the_road_view(paged):
+  obj, _, _, pages, _, _ = paged
+  visible = lambda: [p.name for p in obj._scroller.items if p.is_visible]
+  assert visible() == ['alerts', 'home', 'info']
+  obj._shown_surface = 'onroad'
+  assert visible() == ['alerts', 'home', 'info', 'onroad']
+  obj._shown_surface = 'plot'
+  assert visible() == ['alerts', 'home', 'info', 'onroad', 'debug']
+
+
+def test_onroad_takes_touches_and_swipes_except_during_a_fade(paged):
+  obj, ui, clock, _, _, _ = paged
+  ui.started = ui.ignition = True
+  obj._handle_transitions()
+  clock.now += 3
+  obj._handle_transitions()                      # the onroad delay: fade to the road view
+  assert obj._surface.start_time is not None
+  assert not obj._scroller.enabled() and not obj._scroller.scrolling_enabled()
+  clock.now += 1
+  obj._render(None)
+  assert obj._scroller.enabled() and obj._scroller.scrolling_enabled()
+  assert obj._scroller.page().name == 'onroad'
+
+
+def test_road_view_is_lined_up_at_the_fade_midpoint_both_ways(paged):
+  obj, ui, clock, _, syncs, draws = paged
+  ui.started = ui.ignition = True
+  obj._handle_transitions()
+  clock.now += 2.5
+  obj._handle_transitions()
+  for dt in (0.1, 0.1):                          # first half: the offroad page fades out
+    clock.now += dt
+    obj._render(None)
+  assert [p.name for p in draws] == ['home', 'home']
+  clock.now += 0.1
+  obj._render(None)                              # past the midpoint: the road view fades in
+  assert draws[-1].name == 'onroad'
+
+  draws.clear()
+  syncs.clear()
+  ui.started = ui.ignition = False
+  obj._handle_transitions()
+  assert syncs == []                             # the road view stays until it has faded out
+  clock.now += 0.2
+  obj._render(None)
+  assert draws[-1].name == 'onroad' and syncs == []
+  clock.now += 0.2
+  obj._render(None)
+  assert draws[-1].name == 'home' and syncs == [False]
+
+
+def test_swiped_away_onroad_timeout_slides_back_to_the_road_view_when_moving(paged):
+  obj, ui, clock, _, _, _ = paged
+  ui.started = ui.ignition = ui.engaged = True
+  obj._surface.change('onroad', clock.now, instant=True)
+  obj._render(None)
+  assert obj._scroller.page().name == 'onroad'
+  obj._scroller.scroll_panel.set_offset(-2 * 536.0)  # the driver swiped to the info page (version, settings)
+  ui.sm['carState'].standstill = True
+  obj._on_interactive_timeout()
+  assert obj._scroller.slides == []                  # stopped: stay where the driver is
+  ui.sm['carState'].standstill = False
+  obj._on_interactive_timeout()
+  assert obj._scroller.slides == [(-3 * 536.0, True)]
+
+
+def test_swiped_away_plot_timeout_slides_back_to_the_plot(paged):
+  obj, ui, clock, _, _, _ = paged
+  ui.started = ui.ignition = ui.engaged = True
+  ui.sm['carState'].standstill = False
+  obj._scroll_to(obj._debug_layout)
+  obj._render(None)
+  assert obj._scroller.page().name == 'debug'
+  obj._scroller.scroll_panel.set_offset(-536.0)
+  obj._on_interactive_timeout()
+  assert obj._scroller.slides == [(-4 * 536.0, True)]
+  assert obj._in_plot_mode
 
 
 def test_short_ignition_cycle_cancels_pending_onroad_and_plot(layout):

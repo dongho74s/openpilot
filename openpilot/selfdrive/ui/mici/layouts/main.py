@@ -32,6 +32,9 @@ class MiciMainLayout(Scroller):
     self._setup = False
     self._trip = TripSummary()
     self._surface = SurfaceFade()
+    # The surface the scroller pages are lined up for. The road view and plot are pages after the offroad ones
+    # while onroad, so the driver can swipe to the home and settings and back.
+    self._shown_surface = 'offroad'
     self._screen_fade = ScreenFade()
     self._screen_alpha = 0.0
     self._prev_active_alerts = 0
@@ -41,8 +44,8 @@ class MiciMainLayout(Scroller):
     self._info_layout = MiciHomeLayout()
     self._alerts_layout = MiciOffroadAlerts()
     self._settings_layout = SettingsLayout()
-    self._onroad_layout = self._child(AugmentedRoadView(bookmark_callback=self._on_bookmark_clicked))
-    self._debug_layout = self._child(DebugPlot())
+    self._onroad_layout = AugmentedRoadView(bookmark_callback=self._on_bookmark_clicked)
+    self._debug_layout = DebugPlot()
     self._show_plot_mode = 0
     self._in_plot_mode = False
 
@@ -56,13 +59,11 @@ class MiciMainLayout(Scroller):
       self._alerts_layout,
       self._home_layout,
       self._info_layout,
+      self._onroad_layout,
+      self._debug_layout,
     ])
     self._scroller.set_reset_scroll_at_show(False)
-
-    self._scroller.set_scrolling_enabled(lambda: self._surface.start_time is None)
-    self._scroller.set_enabled(lambda: self.enabled and self._surface.target == 'offroad' and self._surface.start_time is None)
-    self._onroad_layout.set_enabled(lambda: self.enabled and self._surface.target == 'onroad' and self._surface.start_time is None)
-    self._debug_layout.set_enabled(lambda: self.enabled and self._surface.target == 'plot' and self._surface.start_time is None)
+    self._setup_surfaces()
 
     # Set callbacks
     self._setup_callbacks()
@@ -135,7 +136,31 @@ class MiciMainLayout(Scroller):
     # Like Wayon, road-view taps never navigate to the welcome surface.
     device.add_interactive_timeout_callback(self._on_interactive_timeout)
 
+  def _setup_surfaces(self):
+    # Pages hold still and ignore touches only during a fade. Onroad the road view (and the plot when shown) are
+    # the last pages, so swiping reaches the home and settings and back like the offroad pages.
+    self._scroller.set_scrolling_enabled(lambda: self._surface.start_time is None)
+    self._scroller.set_enabled(lambda: self.enabled and self._surface.start_time is None)
+    self._onroad_layout.set_visible(lambda: self._shown_surface != 'offroad')
+    self._debug_layout.set_visible(lambda: self._shown_surface == 'plot')
+
+  def _page_offset(self, layout: Widget) -> float:
+    pages = [item for item in self._scroller.items if item.is_visible]
+    return -pages.index(layout) * self._rect.width
+
+  def _align_pages(self, surface: str):
+    """Line the pages up for a surface the moment it is shown (fade midpoint or an instant change)."""
+    if surface == 'offroad':
+      self._sync_offroad_scroll()
+      return
+    # Reset ongoing swipe/auto-scroll state before showing the road view or plot.
+    self._scroller.show_event()
+    layout = self._debug_layout if surface == 'plot' else self._onroad_layout
+    self._scroller.scroll_panel.set_offset(self._page_offset(layout))
+
   def _scroll_to(self, layout: Widget):
+    if layout is self._onroad_layout and self._in_plot_mode:
+      layout = self._debug_layout  # going back to the road while the plot is on means the plot page
     target_is_plot  = (layout is self._debug_layout)
     if not target_is_plot  and self._in_plot_mode:
       return
@@ -145,6 +170,9 @@ class MiciMainLayout(Scroller):
     self._surface.change(surface, time.monotonic(), instant=immediate)
     if surface == 'offroad':
       self._scroller.scroll_to(layout.rect.x, smooth=True)
+    elif self._surface.start_time is None and self._shown_surface == surface:
+      # Already showing this surface but the driver swiped to another page: slide back to the road view (or plot).
+      self._scroller.scroll_to(self._scroller.scroll_panel.get_offset() - self._page_offset(layout), smooth=True)
 
   def _sync_offroad_scroll(self, smooth: bool = False):
     if smooth:
@@ -176,11 +204,10 @@ class MiciMainLayout(Scroller):
       self._setup = True
 
     surface, fade_alpha = self._surface.state(time.monotonic())
-    if surface == 'offroad':
-      super()._render(self._rect)
-    else:
-      layout = self._debug_layout if surface == 'plot' else self._onroad_layout
-      layout.render(self._rect)
+    if surface != self._shown_surface:
+      self._shown_surface = surface
+      self._align_pages(surface)
+    super()._render(self._rect)
 
     alpha = max(fade_alpha, self._screen_alpha)
     if alpha > 0:
@@ -212,8 +239,10 @@ class MiciMainLayout(Scroller):
         self._onroad_time_delay = None
         self._in_plot_mode = False
         self._show_plot_mode = 0
-        self._sync_offroad_scroll()
         self._surface.change('offroad', now)
+        # While the road view is still shown, the home is lined up at the fade midpoint instead (_align_pages).
+        if self._shown_surface == 'offroad':
+          self._sync_offroad_scroll()
 
     if ui_state.started:
       self._sample_trip(now)
