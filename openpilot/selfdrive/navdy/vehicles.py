@@ -283,18 +283,30 @@ CAMERA_GATE_LATERAL = 1.8
 
 
 def _camera_sees_another_object(objects, lead, candidate):
-  """The stock camera has an object where the camera-only lead is that is not the candidate radar point's object.
+  """The stock camera shows the camera-only lead and the candidate radar point as different objects.
 
   The lead slot can move to a new vehicle while radard's last pairing for that slot still points at the old one, e.g. a
-  car cutting in 10 m ahead of the truck that was followed (Codex review 2026-11-16, N1). When radard flips between a
-  point and the model's own range for one vehicle, the camera sees that vehicle at the radar's range, not the model's.
+  car cutting in ahead of the truck that was followed (Codex review 2026-11-16, N1). When radard flips between a point
+  and the model's own range for one vehicle, the camera sees that vehicle at the radar's range and nothing at the
+  model's. So: nothing near the lead's own position -> no objection; something there but nothing at the point -> keep
+  the lead; otherwise keep it when the object closest to the lead is not the one closest to the point (two vehicles a
+  few metres apart fall inside both gates, Codex review 2026-11-16, N1 follow-up).
   """
   _, distance, lateral, _, _ = candidate
 
-  def near(obj, d, y):
-    return abs(obj['distance'] - d) < CAMERA_GATE_DISTANCE and abs(obj['lateral'] - y) < CAMERA_GATE_LATERAL
+  def score(obj, d, y):
+    dd, dy = abs(obj['distance'] - d), abs(obj['lateral'] - y)
+    return dd / CAMERA_GATE_DISTANCE + dy / CAMERA_GATE_LATERAL if dd < CAMERA_GATE_DISTANCE and dy < CAMERA_GATE_LATERAL else None
 
-  return any(near(obj, lead['distanceM'], lead['lateralM']) and not near(obj, distance, lateral) for obj in objects or ())
+  at_lead = [(score(obj, lead['distanceM'], lead['lateralM']), index) for index, obj in enumerate(objects or ())]
+  at_point = [(score(obj, distance, lateral), index) for index, obj in enumerate(objects or ())]
+  at_lead = [pair for pair in at_lead if pair[0] is not None]
+  at_point = [pair for pair in at_point if pair[0] is not None]
+  if not at_lead:
+    return False
+  return not at_point or min(at_lead)[1] != min(at_point)[1]
+
+
 CAMERA_TRACK_ID_BASE = 900000
 # The stock camera puts a truck ~10% farther than the radar does (11/14, camera lead vs radar lead, every 10th frame:
 # trucks median 1.102, 5-95% 1.04-1.13 over 116 frames; cars 1.015). Beyond ~30 m nearly every lead truck missed the

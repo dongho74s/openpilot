@@ -503,6 +503,30 @@ def test_camera_seeing_the_new_lead_apart_from_the_old_radar_point_keeps_the_lea
   assert [(v['colorRole'], v['trackId'], v['distanceM']) for v in result['navVehicles']] == [(1, 25, 56.)]
 
 
+@pytest.mark.parametrize('car_at,truck_at,point_at', [(40., 44.8, 44.8), (41.5, 46.5, 46.)])
+def test_a_close_cut_in_seen_apart_by_the_camera_keeps_the_lead_on_the_car(car_at, truck_at, point_at):
+  # Codex review N1 follow-up: both camera objects fall inside both 5 m gates.
+  overlay = VehicleOverlay()
+  radar = data([point(25, point_at, 0., 0.)])
+  confirmed(overlay, radar, leads=NS(leadOne=lead(radarTrackId=25, dRel=point_at, vRel=0.), leadTwo=lead(status=False)))
+  m = model()
+  result = payload(model=m, radar_state=NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40., vRel=0.), leadTwo=lead(status=False)))
+  overlay.update(result, m, radar, timestamp=100.4, now=100.4, camera_objects=[
+    {'id': 1, 'kind': 'car', 'distance': car_at, 'lateral': 0.}, {'id': 2, 'kind': 'truck', 'distance': truck_at, 'lateral': 0.}])
+  lead_car = next(v for v in result['navVehicles'] if v['colorRole'] == 1)
+  assert lead_car['trackId'] == -1 and lead_car['distanceM'] == 40.
+
+
+def test_one_camera_object_at_both_places_still_lets_the_lead_take_its_radar_point():
+  overlay = VehicleOverlay()
+  radar = data([point(25, 41., 0., -2.)])
+  confirmed(overlay, radar, leads=NS(leadOne=lead(radarTrackId=25, dRel=41.), leadTwo=lead(status=False)))
+  m = model()
+  result = payload(model=m, radar_state=NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40.), leadTwo=lead(status=False)))
+  overlay.update(result, m, radar, timestamp=100.4, now=100.4, camera_objects=[{'id': 1, 'kind': 'car', 'distance': 40.5, 'lateral': 0.}])
+  assert [(v['colorRole'], v['trackId'], v['distanceM']) for v in result['navVehicles']] == [(1, 25, 41.)]
+
+
 def test_a_remembered_point_is_not_drawn_past_the_hold_while_snapshots_stall():
   # Codex review N3: no new snapshot since 100.4 (which lacked the point), tick at 100.6.
   overlay = VehicleOverlay()
