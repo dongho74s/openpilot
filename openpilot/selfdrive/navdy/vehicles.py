@@ -20,6 +20,10 @@ TRACK_HOLD = 0.35
 # flickers for a steady point on a lane line, or while stopped when the plan is too short (11/15: ~100 one-tick
 # blinks in 47 minutes). A point that really leaves the lanes goes once this runs out.
 LANE_HOLD = 0.35
+# A published lead (lead one/two) that drops out is drawn on for this long after its last report, coasting at its
+# relative speed, unless another lead or radar point now shows that vehicle. radard drops a camera-only lead for single
+# ticks (11/15: most of the blinks left after the holds above); Wayon holds the longitudinal lead 0.45 s.
+LEAD_HOLD = 0.35
 MAX_DISTANCE = 80.0
 
 
@@ -106,6 +110,7 @@ class VehicleOverlay:
     self.tracks = {}
     self.lanes = {}  # ident -> (lane, radar time it was last given)
     self.camera_lanes = {}  # camera object id -> (lane, time, distance, lateral), kept by annotate_camera
+    self.held_leads = {}  # colorRole -> (lead entry as last drawn from a fresh report, time of that report)
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -115,6 +120,7 @@ class VehicleOverlay:
     self.tracks.clear()
     self.lanes.clear()
     self.camera_lanes.clear()
+    self.held_leads.clear()
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -209,6 +215,23 @@ class VehicleOverlay:
               and abs(lead['lateralM'] - lateral) <= (1.0 if display_data else 1.5)
               and abs(lead['relativeSpeedMps'] - speed) <= (3.0 if display_data else 5.0))
 
+    fresh_roles = {lead.get('colorRole') for lead in leads}
+    for role, (held, seen) in list(self.held_leads.items()):
+      age = now - seen
+      if role in fresh_roles or not 0 <= age <= LEAD_HOLD:
+        continue
+      distance, lateral = held['distanceM'] + held['relativeSpeedMps'] * age, held['lateralM']
+      if not 2.0 <= distance <= MAX_DISTANCE or any(
+          lead['lane'] == held['lane'] and abs(lead['distanceM'] - distance) <= max(5.0, distance * 0.25)
+          and abs(lead['lateralM'] - lateral) <= 1.5 for lead in leads):
+        continue   # another lead now shows this vehicle (e.g. lead two became lead one)
+      view = navdy_vehicle_view(model, distance, lateral)
+      if view is None:
+        continue
+      # Re-enters as a camera-only lead, so the step below puts it on its radar point when one still shows it.
+      leads.append(dict(held, trackId=-1, source='vision', screenX=view['screenX'], screenY=view['screenY'],
+                        pxPerM=view['pxPerM'], distanceM=rounded(distance), lateralM=rounded(lateral, 2)))
+
     # A camera-only published lead is drawn where its radar point is. radard flips a far lead between its radar point
     # and the model's own range several times a second (11/15: 56 m vs 47 m, every 0.2-0.4 s), which made the icon
     # blink and jump (user report 2026-11-16); the radar range is the one the stock camera agrees with.
@@ -229,6 +252,12 @@ class VehicleOverlay:
         leads[index].update({'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'],
                              'pxPerM': view['pxPerM'], 'distanceM': rounded(distance), 'relativeSpeedMps': rounded(speed),
                              'lateralM': rounded(lateral, 2), 'source': 'radar'})
+    # Only fresh reports restart a lead's hold, so it never extends itself.
+    self.held_leads = {role: value for role, value in self.held_leads.items()
+                       if role not in fresh_roles and 0 <= now - value[1] <= LEAD_HOLD}
+    for lead in leads:
+      if lead.get('colorRole') in fresh_roles:
+        self.held_leads[lead['colorRole']] = (dict(lead), now)
 
     surrounding = []
     for candidate in candidates:

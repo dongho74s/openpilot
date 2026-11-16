@@ -437,3 +437,29 @@ def test_lane_memory_is_per_track_and_cleared_with_the_overlay():
   confirmed(overlay, data([point(1, 30., -3.6)]))
   overlay.clear()
   assert overlay.lanes == {}
+
+
+def test_a_lead_that_drops_out_for_a_tick_is_held_coasted_then_dropped():
+  overlay = VehicleOverlay()
+  on = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40., vRel=-2.), leadTwo=lead(status=False))
+  off = NS(leadOne=lead(status=False), leadTwo=lead(status=False))
+  confirmed(overlay, data([]), leads=on)   # reported at 100.0 and 100.2
+  held = render(overlay, data([]), timestamp=100.4, leads=off)['navVehicles']
+  assert [(car['colorRole'], car['distanceM']) for car in held] == [(1, 39.6)]
+  assert render(overlay, data([]), timestamp=100.55, leads=off)['navVehicles']
+  assert render(overlay, data([]), timestamp=100.6, leads=off)['navVehicles'] == []   # 0.4 s since the report
+  assert overlay.held_leads == {}
+
+
+def test_a_held_lead_never_duplicates_the_vehicle_another_lead_or_radar_point_shows():
+  overlay = VehicleOverlay()
+  both = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=30.), leadTwo=lead(radar=False, radarTrackId=-1, dRel=50.))
+  swapped = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=50.), leadTwo=lead(status=False))
+  confirmed(overlay, data([]), leads=both)
+  cars = render(overlay, data([]), timestamp=100.4, leads=swapped)['navVehicles']   # lead two became lead one
+  assert sorted((car['colorRole'], car['distanceM']) for car in cars) == [(1, 50.)]
+  overlay = VehicleOverlay()
+  radar = data([point(42, 40., 0., -2.)])
+  confirmed(overlay, radar, leads=NS(leadOne=lead(), leadTwo=lead(status=False)))   # radar-backed lead on track 42
+  cars = render(overlay, radar, timestamp=100.4, leads=NS(leadOne=lead(status=False), leadTwo=lead(status=False)))
+  assert [(car['trackId'], car['colorRole'], car['distanceM']) for car in cars['navVehicles']] == [(42, 1, 40.)]
