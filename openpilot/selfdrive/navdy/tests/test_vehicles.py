@@ -480,30 +480,35 @@ def test_lane_memory_is_per_track_and_cleared_with_the_overlay():
   assert overlay.lanes == {}
 
 
-def test_a_lead_that_drops_out_for_a_tick_is_held_coasted_then_dropped():
+def test_camera_seeing_the_new_lead_apart_from_the_old_radar_point_keeps_the_lead_where_it_is():
+  # Codex review N1: lead one was truck 25 at 50 m; a car cuts in at 40 m and becomes a camera-only lead one.
   overlay = VehicleOverlay()
-  on = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40., vRel=-2.), leadTwo=lead(status=False))
-  off = NS(leadOne=lead(status=False), leadTwo=lead(status=False))
-  confirmed(overlay, data([]), leads=on)   # reported at 100.0 and 100.2
-  held = render(overlay, data([]), timestamp=100.4, leads=off)['navVehicles']
-  assert [(car['colorRole'], car['distanceM']) for car in held] == [(1, 39.6)]
-  assert render(overlay, data([]), timestamp=100.55, leads=off)['navVehicles']
-  assert render(overlay, data([]), timestamp=100.6, leads=off)['navVehicles'] == []   # 0.4 s since the report
-  assert overlay.held_leads == {}
+  radar = data([point(25, 50., 0., 0.)])
+  truck = NS(leadOne=lead(radarTrackId=25, dRel=50., vRel=0.), leadTwo=lead(status=False))
+  car = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=40., vRel=0.), leadTwo=lead(status=False))
+  confirmed(overlay, radar, leads=truck)
+  apart = [{'id': 1, 'kind': 'car', 'distance': 40.3, 'lateral': 0.1}, {'id': 2, 'kind': 'truck', 'distance': 55., 'lateral': 0.}]
+  m = model()
+  result = payload(model=m, radar_state=car)
+  overlay.update(result, m, radar, timestamp=100.4, now=100.4, camera_objects=apart)
+  # the lead stays on the car; point 25 is left to the loose de-duplication as before (annotate_camera adds the truck)
+  assert [(v['colorRole'], v['trackId'], v['distanceM']) for v in result['navVehicles']] == [(1, -1, 40.)]
+  # radard's own flip for one vehicle: the camera sees it at the radar's range, nothing at the model's 47.5 m
+  overlay = VehicleOverlay()
+  radar = data([point(25, 56., 0., -2.)])
+  confirmed(overlay, radar, leads=NS(leadOne=lead(radarTrackId=25, dRel=56.), leadTwo=lead(status=False)))
+  result = payload(model=m, radar_state=NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=47.5), leadTwo=lead(status=False)))
+  overlay.update(result, m, radar, timestamp=100.4, now=100.4,
+                 camera_objects=[{'id': 1, 'kind': 'car', 'distance': 55.3, 'lateral': 0.}])
+  assert [(v['colorRole'], v['trackId'], v['distanceM']) for v in result['navVehicles']] == [(1, 25, 56.)]
 
 
-def test_a_held_lead_never_duplicates_the_vehicle_another_lead_or_radar_point_shows():
+def test_a_remembered_point_is_not_drawn_past_the_hold_while_snapshots_stall():
+  # Codex review N3: no new snapshot since 100.4 (which lacked the point), tick at 100.6.
   overlay = VehicleOverlay()
-  both = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=30.), leadTwo=lead(radar=False, radarTrackId=-1, dRel=50.))
-  swapped = NS(leadOne=lead(radar=False, radarTrackId=-1, dRel=50.), leadTwo=lead(status=False))
-  confirmed(overlay, data([]), leads=both)
-  cars = render(overlay, data([]), timestamp=100.4, leads=swapped)['navVehicles']   # lead two became lead one
-  assert sorted((car['colorRole'], car['distanceM']) for car in cars) == [(1, 50.)]
-  overlay = VehicleOverlay()
-  radar = data([point(42, 40., 0., -2.)])
-  confirmed(overlay, radar, leads=NS(leadOne=lead(), leadTwo=lead(status=False)))   # radar-backed lead on track 42
-  cars = render(overlay, radar, timestamp=100.4, leads=NS(leadOne=lead(status=False), leadTwo=lead(status=False)))
-  assert [(car['trackId'], car['colorRole'], car['distanceM']) for car in cars['navVehicles']] == [(42, 1, 40.)]
+  confirmed(overlay)
+  assert render(overlay, data([]), timestamp=100.4)['navVehicles']
+  assert render(overlay, data([]), timestamp=100.4, now=100.6)['navVehicles'] == []
 
 
 def test_a_reused_track_id_does_not_inherit_the_old_objects_lane():

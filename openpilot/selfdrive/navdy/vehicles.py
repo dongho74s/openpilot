@@ -25,10 +25,6 @@ TRACK_MEMORY = 0.6
 # flickers for a steady point on a lane line, or while stopped when the plan is too short (11/15: ~100 one-tick
 # blinks in 47 minutes). A point that really leaves the lanes goes once this runs out.
 LANE_HOLD = 0.35
-# A published lead (lead one/two) that drops out is drawn on for this long after its last report, coasting at its
-# relative speed, unless another lead or radar point now shows that vehicle. radard drops a camera-only lead for single
-# ticks (11/15: most of the blinks left after the holds above); Wayon holds the longitudinal lead 0.45 s.
-LEAD_HOLD = 0.35
 # A camera-only lead is drawn on a radar point only if radard itself reported that lead (same lead slot) on that point
 # within this, and the point has been tracked without a break since. A loose geometric match alone moved the lead
 # highlight to another vehicle, e.g. a truck 10 m behind the car being followed (Codex review 2026-11-16, R2). 11/15:
@@ -120,7 +116,6 @@ class VehicleOverlay:
     self.tracks = {}
     self.lanes = {}  # ident -> (lane, radar time it was last given)
     self.camera_lanes = {}  # camera object id -> (lane, time, distance, lateral), kept by annotate_camera
-    self.held_leads = {}  # colorRole -> (lead entry as last drawn from a fresh report, time of that report)
     self.lead_tracks = {}  # colorRole -> (radar trackId radard last reported that lead on, tick time, radar time)
     self.timestamp = 0.0
     self.flipped = None
@@ -131,15 +126,15 @@ class VehicleOverlay:
     self.tracks.clear()
     self.lanes.clear()
     self.camera_lanes.clear()
-    self.held_leads.clear()
     self.lead_tracks.clear()
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
     self.alignment = None
 
-  def update(self, payload, model, data, *, timestamp, now, radar_alignment=None):
+  def update(self, payload, model, data, *, timestamp, now, radar_alignment=None, camera_objects=None):
     """radar_alignment (car.radar_display_alignment.RadarDisplayAlignment or None): radar lateral -> camera frame.
+    camera_objects: this tick's stock camera objects (CameraObjects.snapshot), the same list annotate_camera gets.
 
     Every confirmed radar point is its own entry. A truck's side can return several points; they are not merged
     here, since radar alone does not tell one long body from a dense queue (Codex review 2026-11-13). With the
@@ -206,7 +201,9 @@ class VehicleOverlay:
     leads = payload['navVehicles']
     candidates = []  # (ident, distance, lateral, lane, vRel) of confirmed points in a lane
     for ident, track in self.tracks.items():
-      if track['samples'] < 2 or self.timestamp - track['time'] > TRACK_HOLD:
+      # Drawn only within TRACK_HOLD of its last sighting, also when no new snapshot has come since (Codex review
+      # 2026-11-16, N3): the snapshot's own age alone would let a remembered point outlive the hold.
+      if track['samples'] < 2 or self.timestamp - track['time'] > TRACK_HOLD or now - track['time'] > TRACK_HOLD:
         continue
       lateral = track['yRel']
       distance = track['dRel'] + track['vRel'] * (self.timestamp - track['time'])  # held: coast to this snapshot
@@ -230,29 +227,12 @@ class VehicleOverlay:
               and abs(lead['lateralM'] - lateral) <= (1.0 if display_data else 1.5)
               and abs(lead['relativeSpeedMps'] - speed) <= (3.0 if display_data else 5.0))
 
-    fresh_roles = {lead.get('colorRole') for lead in leads}
     # Radar points radard itself put a lead on: no camera-only lead may take them (Codex review 2026-11-16, R1).
     reserved = {lead['trackId'] for lead in leads if lead['source'] == 'radar' and lead['trackId'] >= 0}
     for lead in leads:
       if lead['source'] == 'radar' and lead['trackId'] >= 0:
         self.lead_tracks[lead.get('colorRole')] = (lead['trackId'], now, self.timestamp)
     self.lead_tracks = {role: value for role, value in self.lead_tracks.items() if 0 <= now - value[1] <= LEAD_TRACK_MEMORY}
-    for role, (held, seen) in list(self.held_leads.items()):
-      age = now - seen
-      if role in fresh_roles or not 0 <= age <= LEAD_HOLD:
-        continue
-      distance, lateral = held['distanceM'] + held['relativeSpeedMps'] * age, held['lateralM']
-      if not 2.0 <= distance <= MAX_DISTANCE or any(
-          lead['lane'] == held['lane'] and abs(lead['distanceM'] - distance) <= max(5.0, distance * 0.25)
-          and abs(lead['lateralM'] - lateral) <= 1.5 for lead in leads):
-        continue   # another lead now shows this vehicle (e.g. lead two became lead one)
-      view = navdy_vehicle_view(model, distance, lateral)
-      if view is None:
-        continue
-      # Re-enters as a camera-only lead, so the step below puts it on its radar point when one still shows it.
-      leads.append(dict(held, trackId=-1, source='vision', screenX=view['screenX'], screenY=view['screenY'],
-                        pxPerM=view['pxPerM'], distanceM=rounded(distance), lateralM=rounded(lateral, 2)))
-
     # A camera-only published lead is drawn where its radar point is, when radard recently reported that same lead on
     # that point (LEAD_TRACK_MEMORY). radard flips a far lead between its radar point and the model's own range
     # several times a second (11/15: 56 m vs 47 m, every 0.2-0.4 s), which made the icon blink and jump (user report
@@ -264,7 +244,8 @@ class VehicleOverlay:
         paired = self.lead_tracks.get(lead.get('colorRole'))
         candidate = by_ident.get(paired[0]) if paired else None
         if (candidate is None or candidate[0] in reserved or candidate[0] in adopted
-            or self.tracks[candidate[0]]['since'] > paired[2] or not same_vehicle(lead, candidate)):
+            or self.tracks[candidate[0]]['since'] > paired[2] or not same_vehicle(lead, candidate)
+            or _camera_sees_another_object(camera_objects, lead, candidate)):
           continue
         ident, distance, lateral, lane, speed = candidate
         view = navdy_vehicle_view(model, distance, lateral)
@@ -274,12 +255,6 @@ class VehicleOverlay:
         lead.update({'trackId': ident, 'screenX': view['screenX'], 'screenY': view['screenY'], 'pxPerM': view['pxPerM'],
                      'distanceM': rounded(distance), 'relativeSpeedMps': rounded(speed), 'lateralM': rounded(lateral, 2),
                      'source': 'radar'})
-    # Only fresh reports restart a lead's hold, so it never extends itself.
-    self.held_leads = {role: value for role, value in self.held_leads.items()
-                       if role not in fresh_roles and 0 <= now - value[1] <= LEAD_HOLD}
-    for lead in leads:
-      if lead.get('colorRole') in fresh_roles:
-        self.held_leads[lead['colorRole']] = (dict(lead), now)
 
     surrounding = []
     for candidate in candidates:
@@ -305,6 +280,21 @@ class VehicleOverlay:
 
 CAMERA_GATE_DISTANCE = 5.0  # metres, same gates as the phone live view
 CAMERA_GATE_LATERAL = 1.8
+
+
+def _camera_sees_another_object(objects, lead, candidate):
+  """The stock camera has an object where the camera-only lead is that is not the candidate radar point's object.
+
+  The lead slot can move to a new vehicle while radard's last pairing for that slot still points at the old one, e.g. a
+  car cutting in 10 m ahead of the truck that was followed (Codex review 2026-11-16, N1). When radard flips between a
+  point and the model's own range for one vehicle, the camera sees that vehicle at the radar's range, not the model's.
+  """
+  _, distance, lateral, _, _ = candidate
+
+  def near(obj, d, y):
+    return abs(obj['distance'] - d) < CAMERA_GATE_DISTANCE and abs(obj['lateral'] - y) < CAMERA_GATE_LATERAL
+
+  return any(near(obj, lead['distanceM'], lead['lateralM']) and not near(obj, distance, lateral) for obj in objects or ())
 CAMERA_TRACK_ID_BASE = 900000
 # The stock camera puts a truck ~10% farther than the radar does (11/14, camera lead vs radar lead, every 10th frame:
 # trucks median 1.102, 5-95% 1.04-1.13 over 116 frames; cars 1.015). Beyond ~30 m nearly every lead truck missed the

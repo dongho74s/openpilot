@@ -228,14 +228,17 @@ def live_payload(sm, sequence, *, sources=None, door_open=False, ambient_overrid
     model=recent('modelV2'), radar_state=recent('radarState'), longitudinal_plan=recent('longitudinalPlan'),
     carrot_man=recent('carrotMan'), door_open=door_open, radar_alignment=radar_alignment,
   )
+  objects = lamps = None
+  if camera is not None:
+    camera_now = time.monotonic()
+    objects, lamps = camera.snapshot(camera_now)  # one consistent observation: lamps carry the id they belong to
   if vehicles is not None:
     vehicles.update(payload, recent('modelV2'), recent('liveTracks'),
-                    timestamp=sm.logMonoTime['liveTracks'] / 1e9, now=time.monotonic(), radar_alignment=radar_alignment)
+                    timestamp=sm.logMonoTime['liveTracks'] / 1e9, now=time.monotonic(), radar_alignment=radar_alignment,
+                    camera_objects=objects)
   if camera is not None:
-    now = time.monotonic()
-    objects, lamps = camera.snapshot(now)  # one consistent observation: lamps carry the id they belong to
     annotate_camera(payload, recent('modelV2'), objects, lamps,
-                    lanes=None if vehicles is None else vehicles.camera_lanes, now=now)
+                    lanes=None if vehicles is None else vehicles.camera_lanes, now=camera_now)
   if vehicles is not None:
     try:
       settle_overlaps(payload, recent('modelV2'))  # last: needs every entry's kind, yaw and sprite scale
