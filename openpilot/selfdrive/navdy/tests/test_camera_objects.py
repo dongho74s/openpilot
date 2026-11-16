@@ -363,3 +363,34 @@ def test_frames_from_events_keeps_the_radar_header():
   event = NS(valid=True, logMonoTime=2_000_000_000,
              can=[NS(address=TUNNEL_ADDRESS, dat=radar_header(True), src=1), NS(address=0x123, dat=b'x', src=1)])
   assert frames_from_events([event]) == [(2.0, [(TUNNEL_ADDRESS, radar_header(True), 1)])]
+
+
+def _camera_only(m, objects, lanes, now):
+  result = payload(model=m)
+  result['navVehicles'] = []
+  annotate_camera(result, m, objects, None, lanes=lanes, now=now)
+  return [(v['trackId'], v['lane']) for v in result['navVehicles']]
+
+
+def _outside_right(m):
+  m.laneLines[3].y = [1.0] * len(m.laneLines[3].y)   # far right line moved left of the object: lane check fails
+  return m
+
+
+def test_camera_only_object_keeps_its_lane_briefly_when_the_lane_check_flickers():
+  lanes = {}
+  car = obj(4, 'car', 25.0, 3.6)
+  assert _camera_only(model(), [car], lanes, 10.0) == [(900004, 'right')]
+  assert _camera_only(_outside_right(model()), [car], lanes, 10.2) == [(900004, 'right')]
+  assert _camera_only(_outside_right(model()), [car], lanes, 10.35) == [(900004, 'right')]
+  assert _camera_only(_outside_right(model()), [car], lanes, 10.4) == []   # 0.4 s since the lane was given
+  assert lanes == {}
+
+
+def test_camera_lane_memory_needs_the_same_place_and_is_optional():
+  lanes = {}
+  assert _camera_only(model(), [obj(4, 'car', 25.0, 3.6)], lanes, 10.0) == [(900004, 'right')]
+  assert _camera_only(_outside_right(model()), [obj(4, 'car', 40.0, 3.6)], lanes, 10.1) == []   # id reused far away
+  assert _camera_only(_outside_right(model()), [obj(4, 'car', 25.0, 5.4)], lanes, 10.1) == []   # moved sideways
+  assert _camera_only(_outside_right(model()), [obj(4, 'car', 25.0, 3.6)], None, None) == []   # no memory given
+  assert _camera_only(_outside_right(model()), [obj(4, 'car', 25.0, 3.6)], lanes, 9.9) == []   # clock went back

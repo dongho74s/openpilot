@@ -234,7 +234,8 @@ def live_payload(sm, sequence, *, sources=None, door_open=False, ambient_overrid
   if camera is not None:
     now = time.monotonic()
     objects, lamps = camera.snapshot(now)  # one consistent observation: lamps carry the id they belong to
-    annotate_camera(payload, recent('modelV2'), objects, lamps)
+    annotate_camera(payload, recent('modelV2'), objects, lamps,
+                    lanes=None if vehicles is None else vehicles.camera_lanes, now=now)
   if vehicles is not None:
     try:
       settle_overlaps(payload, recent('modelV2'))  # last: needs every entry's kind, yaw and sprite scale

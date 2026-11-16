@@ -105,6 +105,7 @@ class VehicleOverlay:
   def __init__(self):
     self.tracks = {}
     self.lanes = {}  # ident -> (lane, radar time it was last given)
+    self.camera_lanes = {}  # camera object id -> (lane, time, distance, lateral), kept by annotate_camera
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -113,6 +114,7 @@ class VehicleOverlay:
   def clear(self):
     self.tracks.clear()
     self.lanes.clear()
+    self.camera_lanes.clear()
     self.timestamp = 0.0
     self.flipped = None
     self.display_data = None
@@ -279,11 +281,20 @@ def _camera_pairs(vehicles, objects, model, scale):
   return pairs
 
 
-def _camera_vehicle(model, obj):
+def _camera_vehicle(model, obj, lanes=None, now=None):
   distance, lateral = obj['distance'], obj['lateral']
   if not 2.0 <= distance <= MAX_DISTANCE or not abs(lateral) <= 15.0:
     return None
   lane = vehicle_lane(model, distance, lateral)
+  if lanes is not None and now is not None and math.isfinite(now):
+    # Same lane memory as radar points (LANE_HOLD), keyed by the camera's object id; a reused id far from where
+    # the lane was given does not inherit it.
+    previous = lanes.get(obj['id'])
+    if lane:
+      lanes[obj['id']] = (lane, now, distance, lateral)
+    elif (previous is not None and 0 <= now - previous[1] <= LANE_HOLD
+          and abs(previous[2] - distance) <= max(5.0, distance * 0.25) and abs(previous[3] - lateral) <= 1.5):
+      lane = previous[0]
   if not lane:
     return None
   view = navdy_vehicle_view(model, distance, lateral)
@@ -297,13 +308,15 @@ def _camera_vehicle(model, obj):
   }
 
 
-def annotate_camera(payload, model, objects, lamps):
+def annotate_camera(payload, model, objects, lamps, lanes=None, now=None):
   """Give navVehicles the stock camera's kind and lead lamps, and add camera-only objects.
 
   Display only. Radar/lead entries keep their positions; a camera object within 5 m / 1.8 m lends
   its kind (an unmatched truck is tried once more on the radar's range, see CAMERA_TRUCK_RANGE_SCALE).
   Track 1's lamps go to whichever entry carries track 1. Camera objects nobody covers (pedestrians,
   motorcycles, vehicles radar missed) are added like the phone live view does.
+  lanes (dict, e.g. VehicleOverlay.camera_lanes) with now (seconds): camera-only objects keep their last lane for
+  LANE_HOLD when the lane check fails.
   """
   vehicles = payload.get('navVehicles')
   if not isinstance(vehicles, list):
@@ -338,11 +351,14 @@ def annotate_camera(payload, model, objects, lamps):
     for o_index, obj in enumerate(objects):
       if o_index in matched_objects:
         continue
-      vehicle = _camera_vehicle(model, obj)
+      vehicle = _camera_vehicle(model, obj, lanes, now)
       if vehicle is not None:
         extra.append(vehicle)
         if obj.get('track1'):
           track1 = vehicle
+  if lanes is not None and now is not None and math.isfinite(now):
+    for ident in [ident for ident, value in lanes.items() if not 0 <= now - value[1] <= LANE_HOLD]:
+      del lanes[ident]
   if lamps is not None and track1 is not None and lamps.get('id') == track1_id:
     track1['brakeLight'] = bool(lamps['brake'])
     track1['turnSignal'] = lamps['turn']
