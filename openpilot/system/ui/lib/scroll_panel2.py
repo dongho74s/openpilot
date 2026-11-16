@@ -63,6 +63,13 @@ class GuiScrollPanel2:
   def enabled(self) -> bool:
     return self._enabled() if callable(self._enabled) else self._enabled
 
+  def reset(self) -> None:
+    """Forget a press, drag or fling in progress, e.g. when the content under the finger was replaced."""
+    self._state = ScrollState.STEADY
+    self._velocity = 0.0
+    self._velocity_buffer.clear()
+    self._initial_click_event = None
+
   def update(self, bounds: rl.Rectangle, content_size: float) -> float:
     if DEBUG:
       print('Old state:', self._state)

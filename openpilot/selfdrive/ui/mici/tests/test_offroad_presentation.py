@@ -192,7 +192,10 @@ class Page:
 
 class Panel:
   def __init__(self):
-    self.offset = 0.0
+    self.offset, self.resets = 0.0, 0
+
+  def reset(self):
+    self.resets += 1
 
   def get_offset(self):
     return self.offset
@@ -299,6 +302,23 @@ def test_road_view_is_lined_up_at_the_fade_midpoint_both_ways(paged):
   clock.now += 0.2
   obj._render(None)
   assert draws[-1].name == 'home' and syncs == [False]
+
+
+def test_a_drag_from_the_previous_surface_is_forgotten_when_pages_are_lined_up(paged):
+  obj, ui, clock, _, _, _ = paged
+  panel = obj._scroller.scroll_panel
+  ui.started = ui.ignition = ui.engaged = True
+  obj._handle_transitions()
+  obj._surface.change('onroad', clock.now, instant=True)
+  obj._render(None)
+  assert panel.resets == 1
+  obj._render(None)
+  assert panel.resets == 1                       # only when the shown surface changes
+  ui.started = ui.ignition = ui.engaged = False
+  obj._handle_transitions()
+  clock.now += 0.4
+  obj._render(None)
+  assert panel.resets == 2 and obj._scroller.page().name == 'home'
 
 
 def test_swiped_away_onroad_timeout_slides_back_to_the_road_view_when_moving(paged):

@@ -150,6 +150,9 @@ class MiciMainLayout(Scroller):
 
   def _align_pages(self, surface: str):
     """Line the pages up for a surface the moment it is shown (fade midpoint or an instant change)."""
+    # A drag or fling begun on the previous surface must not carry onto the new one: the touch thread sends no events
+    # while a finger rests, so the panel would otherwise keep its old state through the fade and act on release.
+    self._scroller.scroll_panel.reset()
     if surface == 'offroad':
       self._sync_offroad_scroll()
       return

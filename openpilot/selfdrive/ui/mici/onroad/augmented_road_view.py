@@ -154,7 +154,7 @@ class AugmentedRoadView(CameraView):
     self.view_from_wide_calib = view_frame_from_device_frame.copy()
 
     self._last_calib_time: float = 0
-    self._last_rect_dims = (0.0, 0.0)
+    self._last_rect_dims = (0.0, 0.0, 0.0, 0.0)  # x, y, width, height of the last projected viewport
     self._last_stream_type = stream_type
     self._cached_matrix: np.ndarray | None = None
     self._content_rect = rl.Rectangle()
@@ -255,8 +255,10 @@ class AugmentedRoadView(CameraView):
 
     road_view_mode = self._road_view_mode()
     if (not self._suppress_camera_for_cluster and road_view_mode in (0, 2) and
-        self._last_rect_dims != (self._content_rect.width, self._content_rect.height)):
-      # Model-only mode also needs the new viewport, without waiting for a camera draw.
+        self._last_rect_dims != (self._content_rect.x, self._content_rect.y,
+                                 self._content_rect.width, self._content_rect.height)):
+      # Model-only mode also needs the new viewport, without waiting for a camera draw. The position counts too:
+      # the road view is a scroller page and is first drawn while it slides in.
       self._calc_frame_matrix(self._content_rect)
     _t = time.monotonic()
     if self._suppress_camera_for_cluster or road_view_mode in (2, 3):
@@ -428,7 +430,7 @@ class AugmentedRoadView(CameraView):
     # Get camera configuration
     # TODO: cache with vEgo?
     calib_time = ui_state.sm.recv_frame['liveCalibration']
-    current_dims = (self._content_rect.width, self._content_rect.height)
+    current_dims = (self._content_rect.x, self._content_rect.y, self._content_rect.width, self._content_rect.height)
     device_camera = self.device_camera or DEFAULT_DEVICE_CAMERA
     is_wide_camera = self.stream_type == WIDE_CAM
     intrinsic = device_camera.ecam.intrinsics if is_wide_camera else device_camera.fcam.intrinsics

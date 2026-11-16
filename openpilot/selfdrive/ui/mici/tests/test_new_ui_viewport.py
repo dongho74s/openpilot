@@ -38,7 +38,7 @@ def view():
   exec(compile(ast.fix_missing_locations(ast.Module(body=[klass], type_ignores=[])), str(source), 'exec'), namespace)
   obj = namespace['UnderTest']()
   obj.rect = rl.Rectangle(0, 0, 536, 240)
-  obj._last_rect_dims = (0, 0)
+  obj._last_rect_dims = (0, 0, 0, 0)
   obj._suppress_camera_for_cluster = False
   obj._refresh_plot_mode = lambda *_: None
   obj._plot_mode = 0
@@ -147,6 +147,20 @@ def test_toggle_reprojects_camera_and_vehicle_overlays_without_stale_center(view
   # Same camera zoom and vertical position, with 60px more horizontal viewport.
   assert matrices[0][0, 0] * 476 == pytest.approx(matrices[1][0, 0] * 536)
   np.testing.assert_allclose(matrices[0][1:], matrices[1][1:])
+
+
+@pytest.mark.parametrize('mode', [0, 2])
+def test_page_sliding_in_reprojects_once_it_settles(view, mode):
+  # The road view is a scroller page: its first draw can be mid-swipe (x != 0), then it settles at x = 0.
+  v = view
+  v.ui.new_ui, v.ui.show_model_view = True, mode
+  projected = []
+  for x in (-300.0, -12.5, 0.0):
+    v.obj.rect = v.rl.Rectangle(x, 0, 536, 240)
+    v.obj._render(None)
+    point = v.transforms[-1] @ np.array([30., 0., 0.])
+    projected.append(point[0] / point[2] - x)
+  np.testing.assert_allclose(projected, [268., 268., 268.])
 
 
 def test_new_ui_without_onroad_keeps_offroad_cover_and_no_status_rail(view):
