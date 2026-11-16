@@ -126,7 +126,8 @@
                 "PathOffset",
                 "CameraYawTrimDeg",
                 "LanelessCenterOffset",
-                "LanelessEdgeOffset"
+                "LanelessEdgeOffset",
+                "LanelessLineGap"
               ]
             },
             {
@@ -723,8 +724,8 @@
       "cgroup": "转向",
       "ctitle": "无车道线左右居中校正(0)",
       "cdescr": "横向平移模型看到的画面来校正车辆位置，无车道线模式也生效。\n(-)左侧 / (+)右侧",
-      "min": -35,
-      "max": 35,
+      "min": -50,
+      "max": 50,
       "default": 0,
       "unit": 1,
       "display_unit": "distanceCm"
@@ -741,7 +742,24 @@
       "ctitle": "无车道线路缘侧校正(0)",
       "cdescr": "仅当一侧有车道、另一侧紧邻路缘时向路缘侧移动（最右车道靠路缘，中央分隔带旁的第一车道靠分隔带；也减少双向两车道贴中线），窄车道时按车道宽度减小以保留余量。无车道线模式也生效。0: 关闭",
       "min": 0,
-      "max": 35,
+      "max": 50,
+      "default": 0,
+      "unit": 1,
+      "display_unit": "distanceCm"
+    },
+    {
+      "group": "조향일반",
+      "name": "LanelessLineGap",
+      "title": "레인리스 한쪽 차선 간격(0)",
+      "descr": "자기 차로의 한쪽 선만 보이고 반대쪽은 차선 없이 바로 도로 끝일 때(예: 연석 쪽 선이 없는 왕복 2차로), 보이는 선에서 차 옆면까지 이 간격을 두도록 도로 끝 쪽으로 옮깁니다. 선 쪽으로는 옮기지 않고, 도로 끝과는 30cm를 남깁니다. 켜져 있는 동안 좌우 센터보정 대신 적용됩니다. 레인리스에서도 적용됩니다. 0: 끔",
+      "egroup": "LAT",
+      "etitle": "Laneless One-Line Gap(0)",
+      "edescr": "When only one line of our lane is seen and the other side ends at the road edge without a line (e.g. a two-lane road with no curb-side line), moves toward the road edge so the car's side keeps this gap from the seen line. Never moves toward the line and keeps 30 cm to the road edge. Replaces the left/right centering while it applies. Also works in laneless. 0: off",
+      "cgroup": "转向",
+      "ctitle": "无车道线单侧车道线间距(0)",
+      "cdescr": "当本车道只看到一侧车道线、另一侧无车道线直接是路缘时（例：路缘侧没有车道线的双向两车道），向路缘侧移动，使车身侧面与可见车道线保持此间距。不会向车道线一侧移动，并与路缘保留 30cm。生效期间代替左右居中校正。无车道线模式也生效。0: 关闭",
+      "min": 0,
+      "max": 80,
       "default": 0,
       "unit": 1,
       "display_unit": "distanceCm"

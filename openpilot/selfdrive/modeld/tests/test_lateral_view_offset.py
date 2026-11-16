@@ -175,9 +175,9 @@ def test_edge_offset_keeps_a_margin_in_narrow_lanes_and_scales_with_speed():
 
 def test_view_offset_is_limited_filtered_and_rate_limited():
   view = lvo.ViewOffset(DT)
-  steps = [view.update(0.35, 0.35, two_lane(), True, 1.4) for _ in range(int(20 / DT))]
+  steps = [view.update(0.6, 0.5, two_lane(), True, 1.4) for _ in range(int(20 / DT))]
   assert max(abs(b - a) for a, b in zip([0.0, *steps], steps, strict=False)) <= lvo.MAX_RATE_M_S * DT + 1e-9
-  assert steps[-1] == pytest.approx(lvo.MAX_OFFSET_M, abs=1e-3)   # 0.35 + 0.35 is limited to 0.35
+  assert steps[-1] == pytest.approx(lvo.MAX_OFFSET_M, abs=1e-3)   # 0.6 + edge is limited to 0.5
   assert abs(steps[int(1 / DT) - 1]) <= lvo.MAX_RATE_M_S + 1e-9   # at most 10 cm in the first second
 
 
@@ -219,20 +219,33 @@ def test_centre_in_the_same_direction_uses_up_the_edge_margin():
   assert view.applied == pytest.approx(0.30, abs=2e-3)
 
 
-@pytest.mark.parametrize("cam_key", [("mici", "os04c10"), ("tici", "ar0231")])
-@pytest.mark.parametrize("bigmodel_frame,camera", [(False, "fcam"), (True, "ecam"), (False, "ecam")])
-def test_the_largest_offset_still_samples_inside_the_camera_image(cam_key, bigmodel_frame, camera):
-  cam = DEVICE_CAMERAS[cam_key]
-  sensor = getattr(cam, camera)
+def corner_samples(sensor, bigmodel_frame, offset, height=1.1):
   warp = get_warp_matrix(np.zeros(3), sensor.intrinsics, bigmodel_frame)
+  shifted = lvo.shift_transform(warp.astype(np.float32), offset, height, bigmodel_frame).astype(np.float64)
+  for u in (0, 512):
+    for v in (0, 256):
+      x, y = project(shifted, np.array([u, v, 1.0]))
+      _, y0 = project(warp, np.array([u, v, 1.0]))
+      yield x, y, y0
+
+
+@pytest.mark.parametrize("cam_key,inside_m", [(("mici", "os04c10"), lvo.MAX_OFFSET_M), (("tici", "ar0231"), 0.35)])
+@pytest.mark.parametrize("bigmodel_frame,camera", [(False, "fcam"), (True, "ecam"), (False, "ecam")])
+def test_the_offset_samples_inside_the_camera_image(cam_key, inside_m, bigmodel_frame, camera):
+  """comma 4 (os04c10) stays inside up to the 0.5 m limit; comma 3 (ar0231) up to 0.35 m (user chose 0.5 for all)."""
+  sensor = getattr(DEVICE_CAMERAS[cam_key], camera)
+  for offset in (-inside_m, inside_m):
+    for x, y, y0 in corner_samples(sensor, bigmodel_frame, offset):
+      # the shift only moves samples sideways: rows stay where the stock warp has them
+      assert -1 <= x <= sensor.width + 1 and y == pytest.approx(y0, abs=1e-3), (offset, x, y)
+
+
+@pytest.mark.parametrize("bigmodel_frame,camera", [(False, "fcam"), (True, "ecam"), (False, "ecam")])
+def test_comma_3_at_the_limit_only_samples_a_little_past_the_bottom_corners(bigmodel_frame, camera):
+  sensor = getattr(DEVICE_CAMERAS[("tici", "ar0231")], camera)
   for offset in (-lvo.MAX_OFFSET_M, lvo.MAX_OFFSET_M):
-    shifted = lvo.shift_transform(warp.astype(np.float32), offset, 1.1, bigmodel_frame).astype(np.float64)
-    for u in (0, 512):
-      for v in (0, 256):
-        x, y = project(shifted, np.array([u, v, 1.0]))
-        _, y0 = project(warp, np.array([u, v, 1.0]))
-        # the shift only moves samples sideways: rows stay where the stock warp has them
-        assert -1 <= x <= sensor.width + 1 and y == pytest.approx(y0, abs=1e-3), (offset, u, v, x, y)
+    for x, y, y0 in corner_samples(sensor, bigmodel_frame, offset):
+      assert -80 <= x <= sensor.width + 80 and y == pytest.approx(y0, abs=1e-3), (offset, x, y)
 
 
 # --- review fixes: bad inputs, stale inputs, height changes, return time ---------------------------------------------
@@ -359,3 +372,180 @@ def test_with_a_view_left_to_return_the_update_still_runs():
   for _ in range(int(10 / DT)):
     view.update(0.20, 0.0, None, True, 1.4)
   assert view.needs_update(0.0, 0.0) and view.applied > 0.0   # the filtered return to stock is kept
+
+
+# --- LanelessLineGap: one seen line, the road edge on the other side (user request 2026-11-16) -----------------------
+def one_sided(**changes):
+  # left line seen 1.0 m left of the plan, right line faint, road edge 2.1 m right of the plan (K8 two-lane road)
+  values = dict(left_line=-1.0, right_line=1.53, left_edge=-3.6, right_edge=2.1, plan=0.0, left_prob=0.8, right_prob=0.2,
+                left_outer_prob=0.25, right_outer_prob=0.0, v_ego=10.0, lat_active=True, lane_changing=False)
+  values.update(changes)
+  return lvo.LineGapInputs(**values)
+
+
+def run_gap(gap, inp, seconds, gap_m=0.3):
+  out = 0.0
+  for _ in range(int(round(seconds / DT))):
+    out = gap.update(gap_m, inp)
+  return out
+
+
+def test_line_gap_moves_away_from_the_seen_line_by_what_the_gap_misses_after_the_hold():
+  gap = lvo.LineGapOffset(DT)
+  assert run_gap(gap, one_sided(), 1.4) == 0.0
+  # car side is 1.0 - 1.0 (half of 2.0 m) = 0 from the line; a 30 cm gap needs 0.3 m to the right
+  assert run_gap(gap, one_sided(), 0.2) == pytest.approx(0.3)
+  assert gap.side == 1 and gap.need == pytest.approx(0.3)
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(plan=-0.1), 2.0) == pytest.approx(0.4)   # plan nearer the line
+  mirrored = one_sided(left_line=-1.53, right_line=1.0, left_edge=-2.1, right_edge=3.6, left_prob=0.2, right_prob=0.8,
+                       left_outer_prob=0.0, right_outer_prob=0.25)
+  assert run_gap(lvo.LineGapOffset(DT), mirrored, 2.0) == pytest.approx(-0.3)
+
+
+def test_line_gap_never_moves_toward_the_line_and_keeps_room_to_the_road_edge():
+  far = lvo.LineGapOffset(DT)
+  assert run_gap(far, one_sided(left_line=-1.6), 2.0) == 0.0 and far.side == 1   # already 60 cm from the line
+  near_edge = lvo.LineGapOffset(DT)
+  # room: 1.5 - 0 - 1.0 (half width) - 0.3 (kept to the edge) = 0.2 m
+  assert run_gap(near_edge, one_sided(right_edge=1.5), 2.0, gap_m=0.5) == pytest.approx(0.2)
+  assert near_edge.need == pytest.approx(0.5) and near_edge.shift == pytest.approx(0.2)
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(right_edge=1.2), 2.0) == 0.0   # no room at all
+
+
+@pytest.mark.parametrize("changes", [{"right_prob": 0.8}, {"left_prob": 0.4}, {"right_outer_prob": 0.4},
+                                     {"right_edge": 3.7}, {"plan": -1.2}, {"plan": 2.2}])
+def test_line_gap_needs_one_seen_line_and_the_road_edge_close_on_the_other_side(changes):
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(**changes), 3.0) == 0.0
+
+
+@pytest.mark.parametrize("changes", [{"lat_active": False}, {"lane_changing": True}, {"v_ego": 19.0 / 3.6},
+                                     {"plan": float("nan")}, {"right_edge": float("inf")}])
+def test_line_gap_is_off_at_once_without_steering_in_a_lane_change_slowly_or_with_bad_inputs(changes):
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  assert run_gap(gap, one_sided(**changes), DT) == 0.0 and gap.side == 0
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(), 2.0, gap_m=0.0) == 0.0
+  assert lvo.LineGapOffset(DT).update(0.3, None) == 0.0
+
+
+def test_line_gap_scales_with_speed_from_20_to_30_kph():
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(v_ego=25.0 / 3.6), 2.0) == pytest.approx(0.15)
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(v_ego=30.0 / 3.6), 2.0) == pytest.approx(0.3)
+
+
+def test_line_gap_releases_fast_when_clearly_not_and_holds_its_shift_when_unclear():
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  assert run_gap(gap, one_sided(right_prob=0.8), 0.4) == pytest.approx(0.3)   # both lines now: EdgeOffset's road
+  assert run_gap(gap, one_sided(right_prob=0.8), 0.15) == 0.0
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  assert run_gap(gap, one_sided(left_prob=0.4, plan=-0.5), 2.9) == pytest.approx(0.3)   # unclear: the last shift
+  assert run_gap(gap, one_sided(left_prob=0.4), 0.15) == 0.0
+
+
+def test_line_gap_does_not_start_in_a_sharp_curve():
+  assert run_gap(lvo.LineGapOffset(DT), one_sided(lat_accel=2.0), 3.0) == 0.0
+
+
+def test_line_gap_replaces_the_centre_offset_and_is_limited_to_the_maximum():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(30 / DT)):
+    view.update(-0.2, 0.0, None, True, 1.4, 0.3, one_sided())
+  assert view.gap.side == 1 and view.applied == pytest.approx(0.3, abs=2e-3)   # not 0.3 - 0.2
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(30 / DT)):
+    view.update(0.0, 0.0, None, True, 1.4, 0.8, one_sided(right_edge=3.0))       # need 0.8, room 1.7
+  assert view.applied == pytest.approx(lvo.MAX_OFFSET_M, abs=2e-3)
+
+
+def test_an_active_edge_offset_keeps_the_line_gap_off_and_it_needs_its_own_hold_afterwards():
+  view = lvo.ViewOffset(DT)
+  for _ in range(int(3 / DT)):
+    view.update(0.0, 0.3, two_lane(), True, 1.4, 0.3, one_sided())
+  assert view.edge.side == 1 and view.gap.side == 0 and view.gap_target == 0.0
+  for _ in range(int(1.0 / DT)):   # both lines turn faint: the edge holds (3 s), the gap stays off meanwhile
+    view.update(0.0, 0.3, two_lane(right_prob=0.2), True, 1.4, 0.3, one_sided())
+  assert view.edge.side == 1 and view.gap.side == 0
+
+
+def test_line_gap_alone_keeps_the_update_running_and_turning_it_off_clears_it():
+  view = lvo.ViewOffset(DT)
+  assert view.needs_update(0.0, 0.0, 0.3)
+  for _ in range(int(2 / DT)):
+    view.update(0.0, 0.0, None, True, 1.4, 0.3, one_sided())
+  assert view.gap.side == 1
+  for _ in range(int(20 / DT)):
+    if view.needs_update(0.0, 0.0, 0.0):
+      view.update(0.0, 0.0, None, True, 1.4, 0.0, one_sided())
+  assert view.applied == 0.0 and view.gap.side == 0
+
+
+def test_line_gap_inputs_read_lines_and_edges_by_distance_and_the_plan_by_its_own_x():
+  from types import SimpleNamespace as NS
+  xs = [0.0, 10.0, 19.2, 40.0]
+  def line(y19):
+    return NS(x=xs, y=[y19 - 0.1, y19 - 0.05, y19, y19 + 0.2])
+  md = NS(laneLines=[line(-4.0), line(-1.0), line(1.5), line(4.5)], roadEdges=[line(-3.5), line(2.0)],
+          position=NS(x=[0.0, 9.6, 28.8], y=[0.0, 0.1, 0.4]), laneLineProbs=[0.3, 0.8, 0.2, 0.0])
+  inp = lvo.line_gap_inputs(md, 10.0, True, False, 0.5)
+  assert (inp.left_line, inp.right_line, inp.left_edge, inp.right_edge) == pytest.approx((-1.0, 1.5, -3.5, 2.0))
+  assert inp.plan == pytest.approx(0.25)   # halfway between 9.6 m and 28.8 m
+  assert (inp.left_prob, inp.right_prob, inp.left_outer_prob, inp.right_outer_prob) == pytest.approx((0.8, 0.2, 0.3, 0.0))
+
+
+def test_line_gap_setting_range():
+  assert lvo.setting_m(80, lvo.LINE_GAP_LIMIT_CM, False) == pytest.approx(0.8)
+  assert lvo.setting_m(120, lvo.LINE_GAP_LIMIT_CM, False) == pytest.approx(0.8)
+  assert lvo.setting_m(-10, lvo.LINE_GAP_LIMIT_CM, False) == 0.0
+  assert lvo.setting_m(None, lvo.LINE_GAP_LIMIT_CM, False) == 0.0   # Params.get of a corrupt value
+
+
+# --- review fixes (Codex R1-R5) ----------------------------------------------------------------------------------------
+def test_a_held_shift_is_cut_to_the_room_the_road_edge_leaves_now():
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  # unclear (seen line faint) and the edge closer: room 1.35 - 0 - 1.0 - 0.3 = 0.05 m
+  assert run_gap(gap, one_sided(left_prob=0.4, right_edge=1.35), 1.0) == pytest.approx(0.05)
+  assert run_gap(gap, one_sided(left_prob=0.4, right_edge=1.1), DT) == 0.0   # no room: 0, still held
+
+
+@pytest.mark.parametrize("changes", [{"right_edge": -0.1}, {"plan": -1.1}])
+def test_a_plan_no_longer_between_the_seen_line_and_the_road_edge_releases_fast(changes):
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  run_gap(gap, one_sided(**changes), 0.5 + 2 * DT)
+  assert gap.side == 0
+
+
+def test_no_line_gap_when_another_lane_fits_past_the_faint_line():
+  # our lane 2.2 m, then 2.3 m to the curb: two lanes with a faint divider, not our lane ending at the edge
+  two_lanes = one_sided(left_line=-0.8, right_line=1.4, right_edge=3.7)
+  assert run_gap(lvo.LineGapOffset(DT), two_lanes, 3.0) == 0.0
+  mirrored = one_sided(left_line=-3.7 + 2.3, right_line=0.8, left_edge=-3.7, right_edge=4.0, left_prob=0.2, right_prob=0.8,
+                       left_outer_prob=0.0, right_outer_prob=0.25)
+  assert run_gap(lvo.LineGapOffset(DT), mirrored, 3.0) == 0.0
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  run_gap(gap, one_sided(right_line=1.4, right_edge=3.7), 0.5 + 2 * DT)   # a lane fits now: clearly not
+  assert gap.side == 0
+
+
+def test_a_plan_that_does_not_reach_the_lookahead_turns_the_line_gap_off():
+  from types import SimpleNamespace as NS
+  xs = [0.0, 10.0, 19.2, 40.0]
+  def line(y19):
+    return NS(x=xs, y=[y19] * 4)
+  md = NS(laneLines=[line(-4.0), line(-1.0), line(1.53), line(4.5)], roadEdges=[line(-3.6), line(2.1)],
+          position=NS(x=[0.0, 5.0, 10.0], y=[0.0, 0.0, 0.17]), laneLineProbs=[0.25, 0.8, 0.2, 0.0])
+  inp = lvo.line_gap_inputs(md, 25 / 3.6, True, False, 0.2)
+  assert np.isnan(inp.plan)
+  gap = lvo.LineGapOffset(DT)
+  run_gap(gap, one_sided(), 2.0)
+  assert run_gap(gap, inp, DT) == 0.0 and gap.side == 0
+  md.position = NS(x=[0.0, 30.0, 20.0], y=[0.0, 0.1, 0.2])   # not increasing
+  assert np.isnan(lvo.line_gap_inputs(md, 10.0, True, False, 0.0).plan)
+
+
+def test_a_stored_integer_too_large_for_a_float_is_off():
+  assert lvo.setting_m(int("9" * 400), lvo.LINE_GAP_LIMIT_CM, False) == 0.0

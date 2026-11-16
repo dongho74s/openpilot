@@ -167,6 +167,9 @@ struct OnroadEvent @0xc4fa6047f024e718 {
 
     soundsUnavailableDEPRECATED @47;
     phoneLeadClosing @130;
+    lanelessEdgeOffset @131;  # carrot: LanelessEdgeOffset turned on (or switched side)
+    lanelessLineGap @132;     # carrot: LanelessLineGap turned on (or switched side)
+    lanelessOffsetSound @133; # carrot: the prompt sound of the two above, a separate short alert so it replays
   }
 }
 
@@ -1101,6 +1104,11 @@ struct ModelDataV2 {
     laneChangeAvailableRight @19 :Bool;
     laneChangeBlinkerHold @20 :LaneChangeDirection;  # carrot: hold this turn signal while a lever-requested change waits or is queued
     leverTurn @21 :Bool;  # carrot: the turn desire comes from a latched lever (BlinkerLatchedTurn)
+    lanelessEdgeSide @22 :Int8;       # carrot: LanelessEdgeOffset decision, +1 toward the right edge, -1 left, 0 off
+    lanelessGapSide @23 :Int8;        # carrot: LanelessLineGap decision, +1 moves right (left line seen), -1 left, 0 off
+    lanelessViewOffset @24 :Float32;  # carrot: applied laneless view offset in metres (+ moves the car right)
+    lanelessEdgeTarget @25 :Float32;  # carrot: LanelessEdgeOffset target in metres (+ right)
+    lanelessGapTarget @26 :Float32;   # carrot: LanelessLineGap target in metres (+ right)
 
     deprecated :group {
       brakeDisengageProb @2 :Float32;

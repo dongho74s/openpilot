@@ -357,6 +357,8 @@ class AlertRenderer(Widget):
       bg_height = small_alert_height
     elif event_name == 'laneChange':
       bg_height = small_alert_height
+    elif event_name in ('lanelessEdgeOffset', 'lanelessLineGap'):
+      bg_height = small_alert_height
     elif event_name == 'laneChangeBlocked':
       bg_height = medium_alert_height
     else:

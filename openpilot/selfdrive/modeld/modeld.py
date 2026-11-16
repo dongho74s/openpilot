@@ -467,9 +467,11 @@ def main(demo=False):
   view_offset = lvo.ViewOffset(DT_MDL)
   view_center_m = lvo.setting_m(params.get_int("LanelessCenterOffset"), lvo.CENTER_LIMIT_CM, True)
   view_edge_m = lvo.setting_m(params.get_int("LanelessEdgeOffset"), lvo.EDGE_LIMIT_CM, False)
+  # Params.get casts in Python (a corrupt value is None -> 0, off); get_int's native std::stoi would abort modeld
+  view_gap_m = lvo.setting_m(params.get("LanelessLineGap"), lvo.LINE_GAP_LIMIT_CM, False)
   calib_done = False
   calib_height = lvo.DEFAULT_HEIGHT_M
-  view_side_logged = 0
+  view_side_logged = (0, 0)
   lat_delay_dynamic = lat_smooth_seconds
   diagnostics = RuntimeDiagnostics('modeld', cloudlog.event)
   while True:
@@ -483,6 +485,7 @@ def main(demo=False):
       camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
       view_center_m = lvo.setting_m(params.get_int("LanelessCenterOffset"), lvo.CENTER_LIMIT_CM, True)
       view_edge_m = lvo.setting_m(params.get_int("LanelessEdgeOffset"), lvo.EDGE_LIMIT_CM, False)
+      view_gap_m = lvo.setting_m(params.get("LanelessLineGap"), lvo.LINE_GAP_LIMIT_CM, False)
       # eGPU power follows ignition on the vehicle. Keep UI state current when
       # the shared USB hub is connected or removed after modeld starts.
       usbgpu_present_now = usbgpu_present()
@@ -656,10 +659,13 @@ def main(demo=False):
       modelv2_send.modelV2.meta.laneChangeAvailableRight = DH.lane_change_available_right
 
       # next frame's view offset; the side lane widths are line-to-line distances, unaffected by the offset itself
-      if view_offset.needs_update(view_center_m, view_edge_m):
+      if view_offset.needs_update(view_center_m, view_edge_m, view_gap_m):
         md = modelv2_send.modelV2
         calib_ok = calib_done and sm.valid['liveCalibration'] and sm.alive['liveCalibration']
         inputs_fresh = model_output_valid and all(sm.valid[s] and sm.alive[s] for s in ('carState', 'carControl'))
+        lat_active = bool(sm['carControl'].latActive)
+        lane_changing = DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none
+        lat_accel = abs(float(action.desiredCurvature)) * v_ego ** 2
         try:
           own_width = float(np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[2].y)) -
                             np.interp(1.0, ModelConstants.T_IDXS, list(md.laneLines[1].y)))
@@ -667,19 +673,24 @@ def main(demo=False):
             left_width=float(DH.left.lane_width), right_width=float(DH.right.lane_width),
             left_edge=float(DH.left.dist_to_edge), right_edge=float(DH.right.dist_to_edge),
             left_prob=float(md.laneLineProbs[1]), right_prob=float(md.laneLineProbs[2]), own_width=own_width,
-            v_ego=v_ego, lat_active=bool(sm['carControl'].latActive),
-            lane_changing=DH.lane_change_state != log.LaneChangeState.off or DH.desire != log.Desire.none,
+            v_ego=v_ego, lat_active=lat_active, lane_changing=lane_changing,
             left_outer_prob=float(md.laneLineProbs[0]), right_outer_prob=float(md.laneLineProbs[3]),
-            lat_accel=abs(float(action.desiredCurvature)) * v_ego ** 2)
+            lat_accel=lat_accel)
         except (IndexError, ValueError):
           edge_inputs = None
+        try:
+          gap_inputs = lvo.line_gap_inputs(md, v_ego, lat_active, lane_changing, lat_accel)
+        except (IndexError, ValueError):
+          gap_inputs = None
         if not inputs_fresh:
-          edge_inputs = None  # invalid or stale: the edge target is off at once, not held
-        view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_ok, calib_height)
-        if view_offset.edge.side != view_side_logged or \
+          edge_inputs = gap_inputs = None  # invalid or stale: the road targets are off at once, not held
+        view_offset.update(view_center_m, view_edge_m, edge_inputs, calib_ok, calib_height, view_gap_m, gap_inputs)
+        sides = (view_offset.edge.side, view_offset.gap.side)
+        if sides != view_side_logged or \
            (frame % 20 == 0 and (view_offset.applied != 0.0 or view_offset.slope != 0.0)):
-          view_side_logged = view_offset.edge.side
+          view_side_logged = sides
           road = edge_inputs
+          gap_road = gap_inputs
           # warp/slope: what the model input actually has now; applied: the filtered offset it follows
           cloudlog.event("laneless_view_offset", warp=round(view_offset.warp_offset_m, 4), slope=round(view_offset.slope, 5),
                          applied=round(view_offset.applied, 3), target=round(view_offset.target, 3),
@@ -689,7 +700,18 @@ def main(demo=False):
                          road=None if road is None else [round(x, 2) for x in (road.left_width, road.right_width, road.left_edge,
                                                                                  road.right_edge, road.own_width, road.left_prob,
                                                                                  road.right_prob, road.left_outer_prob,
-                                                                                 road.right_outer_prob, road.lat_accel)])
+                                                                                 road.right_outer_prob, road.lat_accel)],
+                         gap_setting=view_gap_m, gap_target=round(view_offset.gap_target, 3), gap_side=view_offset.gap.side,
+                         gap_need=round(view_offset.gap.need, 3), gap_shift=round(view_offset.gap.shift, 3),
+                         gap_road=None if gap_road is None else [round(x, 2) for x in (
+                           gap_road.left_line, gap_road.right_line, gap_road.left_edge, gap_road.right_edge, gap_road.plan,
+                           gap_road.left_prob, gap_road.right_prob, gap_road.left_outer_prob, gap_road.right_outer_prob)])
+      # every frame (0 when all laneless settings are off): selfdrived announces an offset starting to move the car
+      modelv2_send.modelV2.meta.lanelessEdgeSide = view_offset.edge.side
+      modelv2_send.modelV2.meta.lanelessGapSide = view_offset.gap.side
+      modelv2_send.modelV2.meta.lanelessViewOffset = float(view_offset.applied)
+      modelv2_send.modelV2.meta.lanelessEdgeTarget = float(view_offset.edge_target)
+      modelv2_send.modelV2.meta.lanelessGapTarget = float(view_offset.gap_target)
       mt3 = time.perf_counter()
       drivingdata_send.drivingModelData.modelExecutionTime = mt3 - mt1
 
