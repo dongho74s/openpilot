@@ -73,22 +73,31 @@ def test_custom_delta_ceilings_follow_the_command_rate():
     assert p.STEER_DELTA_UP <= p.max_custom_steer_delta_up() and p.STEER_DELTA_DOWN <= p.PANDA_MAX_RATE_DOWN
 
 
-def panda_gm_torque_violations(messages, limits=CarControllerParams):
-  """safety.h driver_limit_check (no driver torque) + rt_rate_limit_check with GM_STEERING_LIMITS, checked before the
-  250 ms reference reset as the C code does."""
-  violations, last, rt_last, rt_ts = [], 0, 0, messages[0][0] if messages else 0
+def panda_gm_torque_violations(messages, rt_ts_start=0, limits=CarControllerParams):
+  """safety.h steer_torque_cmd_checks for GM with no driver torque: driver_limit_check, rt_rate_limit_check checked
+  before the 250 ms reference reset, and a violation resetting the last torque, the reference and its time as the C
+  code does. The panda's reference time starts at rt_ts_start (set_safety_hooks starts it at 0)."""
+  violations, last, rt_last, rt_ts = [], 0, 0, rt_ts_start
   for ts_us, torque in messages:
-    rate_ok = min(last, 0) - limits.PANDA_MAX_RATE_UP <= torque <= max(last, 0) + limits.PANDA_MAX_RATE_UP
-    rt_ok = min(rt_last, 0) - limits.PANDA_MAX_RT_DELTA <= torque <= max(rt_last, 0) + limits.PANDA_MAX_RT_DELTA
-    if not (rate_ok and rt_ok and abs(torque) <= 300):
-      violations.append((ts_us, torque))
+    violation = not (min(last, 0) - limits.PANDA_MAX_RATE_UP <= torque <= max(last, 0) + limits.PANDA_MAX_RATE_UP)
+    violation |= abs(torque) > 300
     last = torque
+    violation |= not (min(rt_last, 0) - limits.PANDA_MAX_RT_DELTA <= torque <= max(rt_last, 0) + limits.PANDA_MAX_RT_DELTA)
     if ts_us - rt_ts > limits.PANDA_RT_INTERVAL_MS * 1000:
       rt_last, rt_ts = torque, ts_us
+    if violation:
+      violations.append((ts_us, torque))
+      last, rt_last, rt_ts = 0, 0, ts_us
   return violations
 
 
-def gm_command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_TRAVERSE):
+def violations_at_any_phase(messages):
+  # the panda timer origin is not ours: try every reference phase within one 250 ms interval
+  return {phase: v for phase in range(0, 260_000, 10_000) if (v := panda_gm_torque_violations(messages, -phase))}
+
+
+# default candidate is the Traverse (3 frames here; the WIP-FR version used the Bolt No-ACC, still 4 frames here)
+def command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_TRAVERSE, stall_at=None, guard=True):
   class CustomParams(MemoryParams):
     def __init__(self, *args):
       super().__init__(*args)
@@ -96,18 +105,23 @@ def gm_command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_TRA
 
   monkeypatch.setattr(runtime.controller, "Params", CustomParams)
   controller = runtime.controller.CarController(DBC[candidate], build_cp(runtime, candidate, alpha=False))
+  if not guard:
+    monkeypatch.setattr(controller.panda_rt_guard, "clip", lambda torque, now: torque)
   cc = structs.CarControl(enabled=True, latActive=True)
   state = controller_state()
-  messages = []
+  messages, now = [], 1_000_000_000
   for tick in range(800):
+    dt = 10_000_000
+    if stall_at is not None:   # the loop runs 80 ms late once, then catches up with 7.5 ms calls (Codex review 2)
+      dt = 90_000_000 if tick == stall_at else 7_500_000 if stall_at < tick <= stall_at + 32 else dt
+    now += dt
     cc.actuators.torque = 0. if tick < 50 or tick >= 700 else (1. if tick < 300 else -1.)
-    now = 1_000_000_000 + tick * 10_000_000
     _, sends = controller.update(cc.as_reader(), state, now)
     state.loopback_lka_steering_cmd_updated = False
     for addr, data, _bus in sends:
       if addr == 0x180:
         torque = ((data[0] & 0x7) << 8) | data[1]
-        messages.append((tick * 10_000, torque - 2048 if torque & 0x400 else torque))
+        messages.append(((now - 1_000_000_000) // 1000, torque - 2048 if torque & 0x400 else torque))
         state.loopback_lka_steering_cmd_ts_nanos = now   # the bus echoes our command
         state.loopback_lka_steering_cmd_updated = True
   return controller, messages
@@ -115,18 +129,51 @@ def gm_command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_TRA
 
 @pytest.mark.parametrize("up,down", [(0, 0), (10, 15), (12, 25), (15, 15), (50, 50)])
 def test_traverse_custom_deltas_stay_inside_panda_limits(runtime, monkeypatch, up, down):
-  controller, messages = gm_command_trace(runtime, monkeypatch, up, down)
+  controller, messages = command_trace(runtime, monkeypatch, up, down)
   p = controller.params
   assert p.STEER_STEP == 3
   assert p.STEER_DELTA_UP == (min(up, 12) if up else 10)
   assert p.STEER_DELTA_DOWN == (min(down, 25) if down else 15)
   assert max(t for _, t in messages) == 300 and min(t for _, t in messages) == -300
-  assert panda_gm_torque_violations(messages) == []
+  assert violations_at_any_phase(messages) == {}
 
 
-def test_panda_check_emulation_catches_the_uncapped_rise():
+@pytest.mark.parametrize("candidate", [CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_BOLT_EUV])
+@pytest.mark.parametrize("up,down", [(0, 0), (50, 50)])
+@pytest.mark.parametrize("stall_at", [40, 44, 62, 75])
+def test_late_loop_catching_up_stays_inside_panda_limits(runtime, monkeypatch, candidate, up, down, stall_at):
+  _, messages = command_trace(runtime, monkeypatch, up, down, candidate, stall_at=stall_at)
+  assert violations_at_any_phase(messages) == {}
+
+
+def test_late_loop_breaks_the_panda_limit_without_the_guard(runtime, monkeypatch):
+  # the scenario above is a real counterexample for the per-command limit alone
+  _, messages = command_trace(runtime, monkeypatch, 50, 50, CAR.CHEVROLET_TRAVERSE, stall_at=40, guard=False)
+  assert violations_at_any_phase(messages) != {}
+
+
+def test_guard_never_slows_the_nominal_ramps(runtime, monkeypatch):
+  # at the regular command rate the per-command ceilings alone keep inside the band, so the guard never clips
+  for candidate, up in ((CAR.CHEVROLET_TRAVERSE, 50), (CAR.CHEVROLET_BOLT_EUV, 50), (CAR.CHEVROLET_TRAILBLAZER, 0)):
+    _, guarded = command_trace(runtime, monkeypatch, up, up, candidate)
+    _, unguarded = command_trace(runtime, monkeypatch, up, up, candidate, guard=False)
+    assert guarded == unguarded
+
+
+def test_guard_band():
+  from opendbc.car.gm.torque_rt_guard import PandaRtGuard
+  guard = PandaRtGuard(128, 250)
+  ms = 1_000_000
+  assert guard.clip(100, 0) == 100
+  assert guard.clip(300, 10 * ms) == 228          # 100 + 128
+  assert guard.clip(-300, 20 * ms) == -128         # unwinding through zero is allowed down to -128
+  assert guard.clip(0, 400 * ms) == 0             # older commands leave the window
+  assert guard.clip(300, 410 * ms) == 128
+
+
+def test_panda_check_emulation_matches_the_c_code_on_known_cases():
   # 15 per command every 30 ms: nine rises (135) on one reference before the 250 ms reset
-  messages = [(i * 30_000, min(15 * i, 300)) for i in range(30)]
-  assert panda_gm_torque_violations(messages) != []
-  messages = [(i * 30_000, min(12 * i, 300)) for i in range(30)]
-  assert panda_gm_torque_violations(messages) == []
+  assert panda_gm_torque_violations([(i * 30_000, min(15 * i, 300)) for i in range(30)]) != []
+  assert violations_at_any_phase([(i * 30_000, min(12 * i, 300)) for i in range(30)]) == {}
+  # a violation resets the last torque to 0 as in C: (0,0),(30000,21),(60000,22) both 21 and 22 are violations
+  assert panda_gm_torque_violations([(0, 0), (30_000, 21), (60_000, 22)]) == [(30_000, 21), (60_000, 22)]
