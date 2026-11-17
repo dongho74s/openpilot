@@ -19,7 +19,7 @@ from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, \
+from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, \
                                                        lateral_accel_limit, MAX_LATERAL_ACCEL_NO_ROLL
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -111,6 +111,9 @@ class Controls:
     self.lat_frog_parity = bool(getattr(self.LaC, 'nnff_frogpilot_parity', False))
     self.lat_accel_limit = self.lat_accel_limit_target = self.read_lat_accel_limit()
     self.carrot_controls = CarrotControls(self.CP)
+    # 레인리스 조향용 최소거리 클램프 보정기. 레인리스에서는 lateral planner의
+    # 경로 클램프가 조향에 닿지 않으므로, 여기서 모델 곡률에 직접 보정한다.
+    self.clamp_steer_corrector = ClampSteerCorrector(self.params)
 
   def read_lat_accel_limit(self) -> float:
     # Params.get casts in Python (a corrupt value becomes None); get_int's native std::stoi would abort on one
@@ -245,7 +248,14 @@ class Controls:
       # FrogPilot uses the model's curvature unsmoothed, but carrot's model output reaches here in 20 Hz steps (its
       # own action head / modeld timing): replaying 11/13 drives without this filter gave 2-5x the request jumps, so
       # the parity cars keep it (2026-11-14).
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+      # 레인리스: 모델 곡률에 최소거리 클램프 보정을 더한다. lateral planner의
+      # 경로 클램프는 레인리스 조향에 닿지 않으므로 여기서 직접 보정한다.
+      # 차가 선에 가까울 때만 위반한 만큼 개입하고, 평상시에는 0이다.
+      lane_changing = (model_v2.meta.desire != log.Desire.none
+                       or getattr(self.sm['carrotMan'], 'atc_active', False))
+      clamp_kappa = self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing)
+      new_desired_curvature = smooth_value(
+        model_v2.action.desiredCurvature + clamp_kappa, self.desired_curvature, 0.1)
 
     # FrogPilot keeps the lateral acceleration limit (3.0 m/s^2, LateralAccelLimit) at every speed
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
