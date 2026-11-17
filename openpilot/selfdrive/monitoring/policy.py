@@ -172,6 +172,11 @@ class DriverMonitoring:
     self.sleep_warning_off = Params().get_bool("CarrotSleepWarningOff")
     self.eye_warning_off = Params().get_bool("CarrotEyeWarningOff")
     self.pose_warning_off = Params().get_bool("CarrotPoseWarningOff")
+    # 테스트용: 핸들 안 잡음 경고 끄기 (CarrotWheelTouchWarningOff=1이면 핸들을 잡은 것으로 간주).
+    # 핸들 토크 입력을 무시하고 항상 잡은 것으로 처리하는 실험용 방법이다. 얼굴이 안 보일 때 대신 쓰는
+    # 안전망(휠터치 정책)의 입력만 바꾸는 것이며, 잠금(lockout) 로직이나 시선 경고는 건드리지 않는다.
+    # 잡고 있는데도 경고가 뜨는 오탐 문제는 이 토글로 해결되지 않는다 (토크 감지 감도 문제, 별도 확인 필요).
+    self.wheeltouch_warning_off = Params().get_bool("CarrotWheelTouchWarningOff")
 
     self._reset_awareness()
     self._set_policy(MonitoringPolicy.vision)
@@ -317,7 +322,9 @@ class DriverMonitoring:
 
   def _update_events(self, driver_engaged, op_engaged, lowspeed, wrong_gear):
     self.alert_level = AlertLevel.none
-    self.driver_interacting = driver_engaged
+    # 테스트용: CarrotWheelTouchWarningOff=1이면 핸들을 잡은 것으로 간주 (핸들 안 잡음 경고가 안 뜸).
+    # 토크 입력(driver_engaged)만 바꾸는 것이며, awareness·잠금 로직은 그대로 둔다.
+    self.driver_interacting = driver_engaged or self.wheeltouch_warning_off
 
     if self.alert_3_cnt >= self.settings._MAX_ALERT_3 or self.no_response_cnt >= self.settings._MAX_NO_RESPONSE:
       self.too_distracted = True

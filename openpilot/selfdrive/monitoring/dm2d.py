@@ -264,6 +264,8 @@ def run_dm2(params, experimental, initial_car_params=None):
         dm.sleep_warning_off = params.get_bool("CarrotSleepWarningOff")
         dm.eye_warning_off = params.get_bool("CarrotEyeWarningOff")
         dm.pose_warning_off = params.get_bool("CarrotPoseWarningOff")
+        # 테스트용: 핸들 안 잡음 경고 끄기 (재시작 없이 약 2초 안에 반영)
+        dm.wheeltouch_warning_off = params.get_bool("CarrotWheelTouchWarningOff")
       demo_mode = params.get_bool("IsDriverViewEnabled")
       rhd_saved = params.get_bool("IsRhdDetected")
     if sm.updated['carParams']:
