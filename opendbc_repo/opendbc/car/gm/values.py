@@ -73,6 +73,20 @@ class CarControllerParams:
       self.STEER_DELTA_UP = 10
       self.STEER_DELTA_DOWN = 15
 
+  # Panda GM torque limits (safety_gm.h GM_STEERING_LIMITS); a CustomSteerDelta* setting is clipped to stay inside them.
+  PANDA_MAX_RATE_UP = 20
+  PANDA_MAX_RATE_DOWN = 25
+  PANDA_MAX_RT_DELTA = 128
+  PANDA_RT_INTERVAL_MS = 250
+
+  def max_custom_steer_delta_up(self) -> int:
+    """Largest per-command rise whose sum stays inside the panda's real-time check at this command rate.
+    The panda compares each command with a reference it resets only after 250 ms have passed, and it checks before
+    resetting, so 250 // period + 1 rises land on one reference (9 at 3 frames, 7 at 4). One more command is allowed
+    for timing jitter. 3 frames: 12 (15 broke the check after the Bolt CC moved to 3 frames); 4 frames: 16."""
+    rises = self.PANDA_RT_INTERVAL_MS // (self.STEER_STEP * 10) + 2
+    return min(self.PANDA_MAX_RATE_UP, self.PANDA_MAX_RT_DELTA // rises)
+
   # determined by letting Volt regen to a stop in L gear from 89mph,
   # and by letting off gas and allowing car to creep, for determining
   # the positive threshold values at very low speed
