@@ -448,3 +448,18 @@ def test_clock_ui_still_shows_other_alerts_while_stopped(monkeypatch, alert_type
   assert renderer.will_render()[0] is alert
   renderer._render(renderer.rect)
   assert draws == [] and renderer._alert_text1_label.text == alert.text1
+
+
+@pytest.mark.parametrize('status,shown', [('normal', False), ('userPrompt', False), ('critical', True)])
+def test_robot_face_hides_all_but_critical_alerts(monkeypatch, status, shown):
+  renderer, ns, _, _, draws = make_renderer(monkeypatch)
+  ns['ui_state'].robot_ui = True
+  alert = ns['Alert']('조향 보조 꺼짐', '최소 속도 10 km/h', size=1, status=getattr(ns['AlertStatus'], status),
+                      alert_type='belowSteerSpeed/warning')
+  renderer.get_alert = lambda _: alert
+  assert (renderer.will_render()[0] is alert) == shown
+  renderer._render(renderer.rect)
+  assert (renderer._alert_text1_label.text == alert.text1) == shown
+  ns['ui_state'].robot_ui = False                           # the other layouts still show it
+  assert renderer.will_render()[0] is alert
+

@@ -138,6 +138,11 @@ class AlertRenderer(Widget):
       # NewUi 2/3 (clock, robot face): no parking/hold timer over the face, and not the low-priority notice it
       # would have covered either. The timers keep counting; other and critical alerts still show.
       alert = timer = None
+    if alert is not None and getattr(ui_state, "robot_ui", False) and alert.status != AlertStatus.critical:
+      # NewUi 3 (robot face): the face reacts to these itself, so they do not cover it. Critical (red) alerts
+      # still show; alert sounds and decisions are unchanged.
+      alert = None
+      self._prev_alert = None
     self.timer_visible = timer is not None
     if self.timer_visible:
       self._prev_alert = None
