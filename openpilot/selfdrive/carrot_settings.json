@@ -1532,7 +1532,7 @@
       "min": 50,
       "max": 300,
       "default": 100,
-      "unit": 5,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
