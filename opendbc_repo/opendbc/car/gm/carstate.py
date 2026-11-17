@@ -34,6 +34,17 @@ def create_stock_long_cancel_button_events() -> list[structs.CarState.ButtonEven
     structs.CarState.ButtonEvent(pressed=False, type=ButtonType.cancel),
   ]
 
+# GAS_SENSOR scaling in the GM DBC (INTERCEPTOR_GAS 0.125677/-75.909, INTERCEPTOR_GAS2 0.251976/-76.601)
+INTERCEPTOR_GAS_SCALE = ((0.125677, -75.909), (0.251976, -76.601))
+BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD = 595  # safety_gm.h, Bolt ACC with pedal
+
+
+def interceptor_raw_average(gas, gas2):
+  """The panda's (track1 + track2) / 2 on the raw counts, recovered from the scaled DBC values."""
+  (scale1, offset1), (scale2, offset2) = INTERCEPTOR_GAS_SCALE
+  return (round((gas - offset1) / scale1) + round((gas2 - offset2) / scale2)) // 2
+
+
 class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
@@ -203,9 +214,12 @@ class CarState(CarStateBase):
     if self.CP.enableGasInterceptorDEPRECATED:
       ret.gas = (pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"] + pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) / 2.
       threshold = 20 if self.CP.carFingerprint in CAMERA_ACC_CAR else 4
-      if self.is_bolt_acc_pedal:
-        threshold = 23  # StarPilot's camera-ACC threshold, kept just below its panda's 595 (~23.65)
       ret.gasPressed = ret.gas > threshold
+      if self.is_bolt_acc_pedal:
+        # The panda's own decision (raw track average > 595, as StarPilot's panda) on the same frame, so both see the
+        # same press and release edges; the scaled 23 StarPilot uses here left a band where only the host saw a press.
+        ret.gasPressed = interceptor_raw_average(pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"],
+                                                 pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) > BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD
     else:
       ret.gas = pt_cp.vl["AcceleratorPedal2"]["AcceleratorPedal2"] / 254.
       ret.gasPressed = ret.gas > 1e-5
@@ -243,7 +257,8 @@ class CarState(CarStateBase):
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL
     # kans: avoid to accFault
-    # (the Bolt ACC with pedal keeps the stock standstill state like StarPilot; its LongControl ignores it)
+    # The Bolt ACC with pedal keeps the stock standstill like StarPilot: controlsd sets cruiseControl.resume from it,
+    # which releases the pedal stop hold to launch; LongControl does not let it hold off starting for this car.
     if self.CP.carFingerprint not in CAR.CHEVROLET_VOLT and not self.is_bolt_acc_pedal:
       ret.cruiseState.standstill = False
     if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.CP.flags & GMFlags.NO_CAMERA.value:

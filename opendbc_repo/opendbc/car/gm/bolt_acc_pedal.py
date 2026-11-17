@@ -358,6 +358,9 @@ class BoltAccPedalLongController:
         rate_up += np.interp(v_ego, [0.0, 4.0, 12.0, 25.0], [0.006, 0.005, 0.003, 0.002])
       rate_down = np.interp(v_ego, [0.0, 3.0, 8.0, 20.0], [0.008, 0.014, 0.026, 0.045]) + 0.015 * urgency
       pedal_gas = float(np.clip(target_pedal_gas, self.pedal_steady - rate_down, self.pedal_steady + rate_up))
+    # Never above this speed's pedal limit, even while ramping down from a higher one (not in StarPilot; Codex review
+    # 2026-11-18 found a stale 0.99 sent on a 0.3 m/s re-engage there)
+    pedal_gas = min(pedal_gas, float(pedal_gas_max))
 
     self.pedal_steady = pedal_gas
     return pedal_gas, press_regen_paddle
@@ -367,6 +370,11 @@ class BoltAccPedalLongController:
     apply_gas is in StarPilot's torque scale (5500-7168) and only reported; this car sends no 0x2CB."""
     actuators = CC.actuators
     self.aego = CS.out.aEgo
+    if not CC.longActive:
+      # Forget the pedal ramp on every inactive frame, not only the 25 Hz ones, so a re-engage (after a cancel, a gas
+      # override or a brake) starts from the new request instead of the last pedal (StarPilot never resets it here).
+      self.pedal_active_last = False
+      self.pedal_steady = 0.0
     accel = actuators.accel
     self.bolt_acc_pedal_stop_hold = update_bolt_acc_pedal_stop_hold(self.CP, CC, CS, self.bolt_acc_pedal_stop_hold)
     press_regen_paddle = False

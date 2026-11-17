@@ -434,15 +434,16 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiV = [0., 20., 20.]  # set lower end to 0 since we can't drive below that speed
 
     if bolt_acc_pedal_long:
-      # StarPilot CHEVROLET_BOLT_ACC_2022_2023_PEDAL (interface.py:588-631, BOLT_PEDAL_LONG_CARS + is_bolt_2022_2023_pedal).
-      # LongControl uses kf as the feedforward gain, with this car's own adjustments (longcontrol_bolt_acc_pedal.py).
-      # LongTuning* Params only override single-breakpoint tunings, so they leave this one alone.
-      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
-      ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
-      ret.longitudinalTuning.kf = 0.20
-      ret.longitudinalActuatorDelay = 0.6  # instead of the LongActuatorDelay Param, as StarPilot
+      # Carrot's LongControl and Carrot Web settings, as on the other GM cars (user request 2026-11-17): a
+      # single-breakpoint tuning, so LongTuningKpV/KiV/Kf replace it about 0.1 s in; these values are their defaults
+      # (Kp 1.0, Ki 0, Kf 1.0). StoppingAccel, cruise coasting, soft hold and LongActuatorDelay (set above) apply too.
+      # StarPilot's own pedal LongControl is not used; the start/stop values below and the actuators (pedal, regen
+      # paddle, friction brake) stay StarPilot's (CHEVROLET_BOLT_ACC_2022_2023_PEDAL, interface.py:588-631).
+      ret.longitudinalTuning.kpBP = [0.]
+      ret.longitudinalTuning.kpV = [1.0]
+      ret.longitudinalTuning.kiBP = [0.]
+      ret.longitudinalTuning.kiV = [0.0]
+      ret.longitudinalTuning.kf = 1.0
       ret.startingState = True
       ret.startAccel = 0.55
       ret.vEgoStarting = 0.35

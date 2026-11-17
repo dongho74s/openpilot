@@ -255,11 +255,18 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
     if (addr == 0xBD) {
       regen_braking = (GET_BYTE(to_push, 0) >> 4) != 0U;
       if (gm_bolt_acc_pedal && (GET_LEN(to_push) == 7)) {
-        gm_spoof_send_after_stock(&gm_paddle_spoof, 0xBD, 7);
+        if (regen_braking) {
+          // The driver is pulling the real paddle: give it back. Drop both feeds so a buffered release (allowed even
+          // without controls) cannot cover the driver's regen after each stock frame (not in StarPilot).
+          gm_spoof_reset(&gm_paddle_spoof);
+          gm_spoof_reset(&gm_prndl2_spoof);
+        } else {
+          gm_spoof_send_after_stock(&gm_paddle_spoof, 0xBD, 7);
+        }
       }
     }
 
-    if (gm_bolt_acc_pedal && (addr == 0x1F5) && (GET_LEN(to_push) == 8)) {
+    if (gm_bolt_acc_pedal && (addr == 0x1F5) && (GET_LEN(to_push) == 8) && !regen_braking) {
       gm_spoof_send_after_stock(&gm_prndl2_spoof, 0x1F5, 8);
     }
 

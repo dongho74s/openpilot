@@ -321,3 +321,23 @@ def test_path_isolated_over_every_param_in_debug_and_release(tmp_path, release):
     if active != expected:
       mismatches.append(param)
   assert mismatches == []
+
+
+def test_driver_paddle_is_never_covered(safety):
+  """A buffered release (allowed even without controls) must not follow the driver's own paddle press (Codex review
+  2026-11-18 sent 0xBD 00.. after each stock press for 100 ms before the fix), nor the PRNDL2 spoof while it is held."""
+  safety.set_controls_allowed(True)
+  tx(safety, 0xBD, PADDLE_RELEASE)
+  tx(safety, 0x1F5, prndl2(6))
+  for t in (1_000_001, 1_025_000, 1_050_000, 1_075_000, 1_100_000):
+    safety.set_timer(t)
+    rx(safety, 0xBD, PADDLE_PRESS)
+    rx(safety, 0x1F5, prndl2(4))
+    tx(safety, 0xBD, PADDLE_RELEASE)  # the host may still feed for a couple of frames
+  assert sent(safety) == []
+  assert not safety.get_controls_allowed()
+  # released: the stock frame is followed again by a fresh feed (here a release, the same as stock)
+  safety.set_timer(1_120_000)
+  tx(safety, 0xBD, PADDLE_RELEASE)
+  rx(safety, 0xBD, STOCK_PADDLE)
+  assert sent(safety) == [(0xBD, 0, PADDLE_RELEASE)]
