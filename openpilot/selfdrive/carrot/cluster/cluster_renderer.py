@@ -1972,10 +1972,20 @@ class ClusterUiRenderer:
                 except OSError:
                     self._nav_model_fresh = False
         if self._nav_model_fresh and self._nav_model_texture is not None:
-            size = min(DESIGN_HEIGHT - 80, NAVI_LIVE_PANEL_W - 32)
-            rl.draw_texture_pro(self._nav_model_texture, rl.Rectangle(0, 0, 256, 256),
-                                rl.Rectangle(center_x - size / 2, 20, size, size),
-                                rl.Vector2(0, 0), 0, rl.WHITE)
+            texture = self._nav_model_texture
+            tw, th = texture.width, texture.height
+            if th and abs(tw / th - NAVI_LIVE_PANEL_W / NAVI_LIVE_PANEL_H) < 0.05:
+                # Rectangular preview (792x478): fills the panel edge to edge,
+                # rendered natively at the panel aspect ratio, never stretched.
+                rl.draw_texture_pro(texture, rl.Rectangle(0, 0, tw, th),
+                                    rl.Rectangle(NAVI_LIVE_PANEL_X, 0, NAVI_LIVE_PANEL_W, NAVI_LIVE_PANEL_H),
+                                    rl.Vector2(0, 0), 0, rl.WHITE)
+            else:
+                # Square preview: the old centered drawing.
+                size = min(DESIGN_HEIGHT - 80, NAVI_LIVE_PANEL_W - 32)
+                rl.draw_texture_pro(texture, rl.Rectangle(0, 0, 256, 256),
+                                    rl.Rectangle(center_x - size / 2, 20, size, size),
+                                    rl.Vector2(0, 0), 0, rl.WHITE)
             self._draw_text("Mapbox / Protomaps | Esri | (c) OpenStreetMap" if self._nav_map_satellite()
                             else "Mapbox / Protomaps | (c) OpenStreetMap", center_x,
                             DESIGN_HEIGHT - 40, 14, (180, 180, 180), "center")

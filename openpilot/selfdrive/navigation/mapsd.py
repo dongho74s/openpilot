@@ -9,7 +9,7 @@ from openpilot.selfdrive.navigation.helpers import ParkedPosition
 from openpilot.selfdrive.navigation.jetlink_demand import jetlink_map_demand
 from openpilot.selfdrive.navigation.pmtiles import PMTiles
 from openpilot.selfdrive.navigation.preview import write_preview, preview_fresh, WEB_DEMAND_PATH
-from openpilot.selfdrive.navigation.renderer import SIZE, MapRenderer, Position
+from openpilot.selfdrive.navigation.renderer import SIZE, PANEL_W, PANEL_H, MapRenderer, Position
 from openpilot.selfdrive.navigation.route import RouteTracker, route_coordinates
 
 
@@ -54,6 +54,11 @@ def main():
   was_ready = False
   route_id = 0
   image = np.zeros((SIZE, SIZE), np.uint8)
+  # Rectangular preview for the HUD nav panel (display only). The VisionIPC
+  # stream above stays the 256x256 grayscale square the model consumes,
+  # byte-identical to before; only the preview PNG becomes rectangular and
+  # color (RGB), rendered by render_color().
+  preview_image = np.zeros((PANEL_H, PANEL_W, 3), np.uint8)
   try:
     while True:
       sm.update(0)
@@ -87,7 +92,9 @@ def main():
       if now >= next_render or (was_ready and not ready):
         started, cpu_started = time.monotonic(), time.process_time()
         image.fill(0)
+        preview_image.fill(0)
         valid = False
+        pose = None
         reason = 'idle' if not demand else 'route' if tracker is None else 'position' if gps is None else 'instruction' if not fresh_tbt else 'tiles'
         try:
           if ready and now >= retry_at:
@@ -115,8 +122,21 @@ def main():
             satellite.close()
           archive = renderer = satellite = None
           retry_at = time.monotonic() + 30.
+        # Rectangular color preview, same scale and pose as the square render above.
+        # Display-only: a failure here never affects the stream or its validity.
+        # Its time is excluded from the 500 ms budget below, which guards the
+        # square render the model consumes.
+        finished_sq = time.monotonic()
+        try:
+          if pose is not None and renderer is not None:
+            preview_result = renderer.render_color(Position(lat, lon, bearing), route, satellite=(map_style == 2),
+                                                   width=PANEL_W, height=PANEL_H)
+            if preview_result.valid:
+              preview_image = preview_result.image
+        except (OSError, ValueError, RuntimeError):
+          pass
         finished = time.monotonic()
-        if finished - started >= .5:
+        if finished_sq - started >= .5:
           image.fill(0)
           valid = False
           reason = 'slow'
@@ -126,7 +146,7 @@ def main():
         server.send(VisionStreamType.VISION_STREAM_MAP, image.tobytes(), rk.frame,
                     route_id, int(started * 1e9))
         if finished >= next_preview:
-          write_preview(image, reason=reason)
+          write_preview(preview_image, reason=reason)
           next_preview = finished + .5
         diagnostics.record(render_ms=(finished - started) * 1000, cpu_ms=cpu * 1000,
                            context={'map_valid': valid, 'route_points': len(route), 'interval': render_interval(cpu),

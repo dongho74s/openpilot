@@ -1,9 +1,10 @@
 """Esri World Imagery raster tiles for the satellite map background; no API key.
 
-The cluster map renderer is grayscale, so tiles are decoded to a single
-luminance channel. Tiles are cached in memory and on disk (tmpfs) so a
-satellite view is fetched once and reused; a slow or failed fetch returns
-None and the caller falls back to the vector-only render.
+Tiles are decoded to a single luminance channel for the grayscale model
+map, or kept as RGB for the color display preview. Tiles are cached in
+memory and on disk (tmpfs) so a satellite view is fetched once and reused;
+a slow or failed fetch returns None and the caller falls back to the
+vector-only render.
 """
 import io
 import os
@@ -34,7 +35,12 @@ def _default_cache_dir():
 
 
 class EsriTiles:
-  """Esri World Imagery tiles as grayscale arrays, cached in memory and on disk."""
+  """Esri World Imagery tiles as grayscale or RGB arrays, cached in memory and on disk.
+
+  The on-disk cache stores the raw JPEG bytes (already color), so a tile is
+  fetched once and decoded either way. The in-memory cache is keyed by the
+  color flag so a grayscale and an RGB decode of the same tile coexist.
+  """
   min_zoom, max_zoom = 0, 19
 
   def __init__(self, cache_dir=None, session=None):
@@ -47,7 +53,7 @@ class EsriTiles:
     else:
       self.cache_dir = _default_cache_dir()
     self.session = session if session is not None else requests.Session()
-    self._memory: dict[tuple[int, int, int], np.ndarray] = {}
+    self._memory: dict[tuple[int, int, int, bool], np.ndarray] = {}
 
   def _path(self, zoom, x, y):
     if self.cache_dir is None:
@@ -55,24 +61,26 @@ class EsriTiles:
     return self.cache_dir / f"{zoom}_{x}_{y}.jpg"
 
   @staticmethod
-  def _decode(data):
+  def _decode(data, color=False):
     from PIL import Image
     try:
       with Image.open(io.BytesIO(data)) as image:
         if image.size != (TILE_SIZE, TILE_SIZE):
           return None
+        if color:
+          return np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
         return np.asarray(image.convert("L"), dtype=np.uint8).copy()
     except (OSError, ValueError):
       return None
 
-  def _read_disk(self, zoom, x, y):
+  def _read_disk(self, zoom, x, y, color=False):
     path = self._path(zoom, x, y)
     if path is None:
       return None
     try:
       if not path.exists() or time.time() - path.stat().st_mtime > CACHE_TTL_S:
         return None
-      return self._decode(path.read_bytes())
+      return self._decode(path.read_bytes(), color=color)
     except OSError:
       return None
 
@@ -116,18 +124,19 @@ class EsriTiles:
     except requests.RequestException:
       return None
 
-  def get(self, zoom, x, y):
-    """Grayscale (256, 256) uint8 tile, or None if unavailable."""
-    key = (zoom, x, y)
+  def get(self, zoom, x, y, color=False):
+    """A (256, 256) uint8 grayscale tile, or a (256, 256, 3) uint8 RGB tile
+    when color=True; None if unavailable."""
+    key = (zoom, x, y, color)
     tile = self._memory.get(key)
     if tile is not None:
       return tile
-    tile = self._read_disk(zoom, x, y)
+    tile = self._read_disk(zoom, x, y, color=color)
     if tile is None:
       data = self._fetch(zoom, x, y)
       if data is None:
         return None
-      tile = self._decode(data)
+      tile = self._decode(data, color=color)
       if tile is None:
         return None
       self._store_disk(zoom, x, y, data)

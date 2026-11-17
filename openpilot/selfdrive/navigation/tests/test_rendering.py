@@ -5,7 +5,8 @@ from contextlib import closing, contextmanager
 from unittest.mock import MagicMock, patch  # noqa: TID251
 import numpy as np
 from openpilot.selfdrive.navigation.pmtiles import PMTiles, decode_directory, tile_id
-from openpilot.selfdrive.navigation.renderer import SIZE, MapRenderer, Position, draw_line, mercator, project
+from openpilot.selfdrive.navigation.renderer import (
+  COLOR_ROADS, COLOR_ROUTE, PANEL_H, PANEL_W, SIZE, MapRenderer, Position, draw_line, mercator, project)
 from openpilot.selfdrive.navigation.route import RouteTracker
 from openpilot.selfdrive.navigation.vector_tile import decode_lines, decode_roads
 METER = 1 / 111319.49079327358
@@ -181,16 +182,21 @@ class TestRouteTracking(unittest.TestCase):
 class FakeSatellite:
   """A satellite source returning one synthetic tile for every request, or None to simulate a fetch failure."""
   def __init__(self, value=100, fail=False, gradient=False):
-    self.value = value
+    self.value = value  # int (grey) or (r, g, b) tuple (color)
     self.fail = fail
     self.gradient = gradient
 
-  def get(self, zoom, x, y):
+  def get(self, zoom, x, y, color=False):
     if self.fail:
       return None
     if self.gradient:
-      return np.tile(np.arange(256, dtype=np.uint8), (256, 1))  # value is the tile's x pixel
-    return np.full((256, 256), self.value, dtype=np.uint8)
+      grey = np.tile(np.arange(256, dtype=np.uint8), (256, 1))  # value is the tile's x pixel
+      return np.stack([grey] * 3, axis=2) if color else grey
+    if color:
+      rgb = self.value if isinstance(self.value, tuple) else (self.value, self.value, self.value)
+      return np.full((256, 256, 3), rgb, dtype=np.uint8)
+    value = self.value if isinstance(self.value, int) else self.value[0]
+    return np.full((256, 256), value, dtype=np.uint8)
 
   def close(self):
     pass
@@ -240,3 +246,68 @@ class TestSatellite(unittest.TestCase):
       tiles = renderer.satellite_tiles(126.9780, 37.5665)
       self.assertTrue(1 <= len(tiles) <= 16)
       self.assertTrue(all(0 <= y < (1 << 17) for _, y in tiles))
+
+class TestRectangular(unittest.TestCase):
+  def test_rectangular_render_matches_square_scale(self):
+    # The panel preview (792x478) is rendered natively at the panel aspect
+    # ratio with the same meters-per-pixel — never stretched. Its center
+    # 256x256 crop must equal the square render pixel for pixel.
+    from openpilot.selfdrive.navigation.renderer import PANEL_H, PANEL_W
+    route = np.array([[0, -0.01], [0, 0.01]])
+    with local_archive(make_archive()) as archive:
+      renderer = MapRenderer(archive)
+      square = renderer.render(Position(0, 0, 0), route)
+      rect = renderer.render(Position(0, 0, 0), route, width=PANEL_W, height=PANEL_H)
+      self.assertEqual(square.image.shape, (SIZE, SIZE))
+      self.assertEqual(rect.image.shape, (PANEL_H, PANEL_W))
+      self.assertTrue(square.valid)
+      self.assertTrue(rect.valid)
+      x0, y0 = PANEL_W // 2 - SIZE // 2, PANEL_H // 2 - SIZE // 2
+      np.testing.assert_array_equal(rect.image[y0:y0 + SIZE, x0:x0 + SIZE], square.image)
+      # The ego arrow sits at the same ground position in both: panel center,
+      # FORWARD_OFFSET below the image center.
+      self.assertEqual(rect.image[PANEL_H // 2 + 64, PANEL_W // 2], 255)  # ego arrow
+
+class TestColor(unittest.TestCase):
+  def test_color_preview_is_rgb_and_stream_stays_grayscale(self):
+    # The display preview is RGB; the model map stays a 2D grayscale image
+    # with the same geometry (same road_distance, same scale).
+    route = np.array([[0, -0.01], [0, 0.01]])
+    with local_archive(make_archive()) as archive:
+      renderer = MapRenderer(archive)
+      grey = renderer.render(Position(0, 0, 0), route)
+      color = renderer.render_color(Position(0, 0, 0), route)
+      self.assertEqual(grey.image.shape, (SIZE, SIZE))
+      self.assertEqual(grey.image.ndim, 2)
+      self.assertEqual(color.image.shape, (SIZE, SIZE, 3))
+      self.assertEqual(color.image.dtype, np.uint8)
+      self.assertTrue(color.valid)
+      self.assertAlmostEqual(color.road_distance, grey.road_distance)
+      # The route is cyan and the ego arrow white.
+      self.assertEqual(tuple(int(v) for v in color.image[128, 128]), tuple(COLOR_ROUTE))
+      self.assertEqual(tuple(int(v) for v in color.image[192, 128]), (255, 255, 255))
+      # The road pixel is one of the road colors — checked without a route,
+      # since the test route runs along the road and covers it at the center.
+      road_only = renderer.render_color(Position(0, 0, 0))
+      self.assertIn(tuple(int(v) for v in road_only.image[100, 128]), {tuple(c) for c in COLOR_ROADS})
+
+  def test_color_satellite_has_no_road_overlay(self):
+    # Satellite mode: pure imagery with only the route and the ego arrow.
+    # The road network is NOT drawn — the photo already shows the roads.
+    route = np.array([[0, -0.01], [0, 0.01]])
+    with local_archive(make_archive()) as archive:
+      renderer = MapRenderer(archive, satellite=FakeSatellite(value=(80, 120, 60)))
+      # No route: only the ego arrow is drawn. A pixel on the road (x=128,
+      # y=100) but away from the arrow must stay pure imagery.
+      no_route = renderer.render_color(Position(0, 0, 0), satellite=True)
+      self.assertEqual(tuple(int(v) for v in no_route.image[100, 128]), (80, 120, 60))
+      self.assertEqual(tuple(int(v) for v in no_route.image[0, 0]), (80, 120, 60))
+      # With a route, the route (cyan) is drawn on top — it runs along the
+      # road here, so the road pixel at (100, 128) is cyan, not imagery —
+      # while the road itself is still not drawn: the no-route check above
+      # already showed that pixel is pure imagery without the route.
+      with_route = renderer.render_color(Position(0, 0, 0), route, satellite=True)
+      self.assertTrue(with_route.valid)
+      self.assertEqual(tuple(int(v) for v in with_route.image[128, 128]), tuple(COLOR_ROUTE))
+      self.assertEqual(tuple(int(v) for v in with_route.image[100, 128]), tuple(COLOR_ROUTE))
+      self.assertEqual(tuple(int(v) for v in with_route.image[192, 128]), (255, 255, 255))

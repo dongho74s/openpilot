@@ -20,6 +20,8 @@ from openpilot.selfdrive.navigation.route import MAX_LATITUDE
 from openpilot.selfdrive.navigation.vector_tile import Road, decode_roads
 
 SIZE = 256
+PANEL_W = 792  # HUD nav panel width (NAVI_LIVE_PANEL_W); the rectangular preview fills it
+PANEL_H = 478  # HUD nav panel height (NAVI_LIVE_PANEL_H)
 ZOOM = 15  # tile zoom; the style zoom is derived from METERS_PER_PIXEL
 SAT_ZOOM = 17  # Esri imagery zoom; ~1 m per pixel near Seoul
 SAT_TILE = 256  # Esri tiles are 256x256, matching the render size
@@ -31,6 +33,21 @@ ROAD_INTENSITY = 255
 ROUTE_INTENSITY = 128
 ROUTE_WIDTH = 5.0  # pixels
 CUT_WIDTH = 3.0  # black separator under a bridge, added to the road width
+# Color preview (display only; the model map stays grayscale). Dark HUD look:
+# a near-black blue-grey background, warm amber major roads, light grey
+# minor roads, a cyan route and a white ego arrow.
+COLOR_BACKGROUND = (10, 14, 20)
+COLOR_OUTLINE = (0, 0, 0)  # dark outline under roads/route on bright imagery
+COLOR_ROUTE = (0, 190, 255)  # cyan, distinct from every road color
+COLOR_ARROW = (255, 255, 255)
+# One color per road style, in STYLES order (MAJOR, MEDIUM, STREET, MINOR, TRACK).
+COLOR_ROADS = (
+  (255, 170, 0),    # MAJOR: warm amber (motorway, trunk, primary)
+  (255, 196, 66),   # MEDIUM: lighter amber (secondary, tertiary)
+  (230, 230, 230),  # STREET: near-white (residential, unclassified)
+  (170, 170, 170),  # MINOR: light grey (service, driveway)
+  (160, 150, 140),  # TRACK: grey-brown
+)
 MAX_ROAD_DISTANCE = 100.0  # meters from the ego to the nearest road centerline for a valid map
 ARROW = np.array([(0, -9), (7, 7), (0, 3), (-7, 7)], dtype=np.float64)  # ego marker, pixels around the ego
 ARROW_OUTLINE = 2.0  # pixels
@@ -119,7 +136,7 @@ def mercator(coordinates: np.ndarray) -> np.ndarray:
   return np.column_stack(((longitude + 180.0) / 360.0, y))
 
 
-def project(points: np.ndarray, position: Position) -> np.ndarray:
+def project(points: np.ndarray, position: Position, width: int = SIZE, height: int = SIZE) -> np.ndarray:
   origin = mercator(np.array([[position.longitude, position.latitude]]))[0]
   delta = points - origin
   delta[:, 0] = (delta[:, 0] + 0.5) % 1.0 - 0.5  # wrap across the antimeridian
@@ -128,8 +145,8 @@ def project(points: np.ndarray, position: Position) -> np.ndarray:
   angle = math.radians(position.bearing)
   right = east * math.cos(angle) - north * math.sin(angle)
   forward = east * math.sin(angle) + north * math.cos(angle)
-  return np.column_stack((SIZE / 2 + right / METERS_PER_PIXEL,
-                          SIZE / 2 - (forward - FORWARD_OFFSET) / METERS_PER_PIXEL))
+  return np.column_stack((width / 2 + right / METERS_PER_PIXEL,
+                          height / 2 - (forward - FORWARD_OFFSET) / METERS_PER_PIXEL))
 
 
 def draw_segments(image: np.ndarray, starts: np.ndarray, ends: np.ndarray, radii: np.ndarray | float, intensity: int,
@@ -180,6 +197,26 @@ def draw_line(image: np.ndarray, points: np.ndarray, intensity: int, width: floa
   draw_segments(image, points[:-1], points[1:], np.full(len(points) - 1, width / 2.0), intensity, overlay=overlay)
 
 
+def draw_segments_color(image: np.ndarray, starts: np.ndarray, ends: np.ndarray, radii: np.ndarray | float,
+                        color: tuple[int, int, int], *, overlay: bool = False, caps: np.ndarray | None = None):
+  """Draw segments in RGB color on a (H, W, 3) uint8 image.
+
+  The 2D rasterizer (native when compiled, reference otherwise) only draws a
+  single intensity, so each channel is drawn separately on a contiguous copy
+  of that channel. Max/overlay blending is preserved per channel, so the
+  result matches drawing the color directly.
+  """
+  for c in range(3):
+    channel = np.ascontiguousarray(image[:, :, c])
+    draw_segments(channel, starts, ends, radii, int(color[c]), overlay=overlay, caps=caps)
+    image[:, :, c] = channel
+
+
+def draw_line_color(image: np.ndarray, points: np.ndarray, color: tuple[int, int, int], width: float, *,
+                    overlay: bool = False):
+  draw_segments_color(image, points[:-1], points[1:], np.full(len(points) - 1, width / 2.0), color, overlay=overlay)
+
+
 def draw_vehicle(image: np.ndarray, center: np.ndarray):
   """The training ego marker: a white arrow with a black outline, drawn over everything else."""
   arrow = ARROW + center
@@ -194,6 +231,22 @@ def draw_vehicle(image: np.ndarray, center: np.ndarray):
     inside |= ((sides[0] >= 0) & (sides[1] >= 0) & (sides[2] >= 0)) | ((sides[0] <= 0) & (sides[1] <= 0) & (sides[2] <= 0))
   image[y0:y1, x0:x1][inside] = 255
   draw_segments(image, arrow, np.roll(arrow, -1, axis=0), ARROW_OUTLINE / 2, 0, overlay=True)
+
+
+def draw_vehicle_color(image: np.ndarray, center: np.ndarray):
+  """The ego marker in RGB: a white arrow with a black outline, over everything else."""
+  arrow = ARROW + center
+  x0, y0 = np.maximum(np.floor(arrow.min(axis=0)) - 2, 0).astype(int)
+  x1, y1 = np.minimum(np.ceil(arrow.max(axis=0)) + 2, [image.shape[1], image.shape[0]]).astype(int)
+  if x1 <= x0 or y1 <= y0:
+    return
+  px, py = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+  inside = np.zeros(px.shape, dtype=bool)
+  for a, b, c in ((arrow[0], arrow[1], arrow[2]), (arrow[0], arrow[2], arrow[3])):  # the concave arrow as two triangles
+    sides = [(q[0] - p[0]) * (py - p[1]) - (q[1] - p[1]) * (px - p[0]) for p, q in ((a, b), (b, c), (c, a))]
+    inside |= ((sides[0] >= 0) & (sides[1] >= 0) & (sides[2] >= 0)) | ((sides[0] <= 0) & (sides[1] <= 0) & (sides[2] <= 0))
+  image[y0:y1, x0:x1][inside] = COLOR_ARROW
+  draw_segments_color(image, arrow, np.roll(arrow, -1, axis=0), ARROW_OUTLINE / 2, COLOR_OUTLINE, overlay=True)
 
 
 class MapRenderer:
@@ -226,11 +279,12 @@ class MapRenderer:
       return np.empty((0, 2)), np.empty((0, 2)), np.empty(0, dtype=int), np.empty(0, dtype=int), np.empty((0, 2), dtype=bool)
     return np.concatenate(starts), np.concatenate(ends), np.concatenate(styles), np.concatenate(levels), np.concatenate(caps)
 
-  def view_tiles(self, longitude: float, latitude: float) -> tuple[list[tuple[int, int]], bool]:
+  def view_tiles(self, longitude: float, latitude: float, width: int = SIZE, height: int = SIZE) -> tuple[list[tuple[int, int]], bool]:
     """Tiles covering the view at a point for every heading, and whether the view stays within the map."""
     origin = mercator(np.array([[longitude, latitude]]))[0]
     # A bounding circle includes all headings, forward offset and road stroke widths.
-    radius = (SIZE * METERS_PER_PIXEL / math.sqrt(2) + FORWARD_OFFSET + 16) / (EARTH_CIRCUMFERENCE * math.cos(math.radians(latitude)))
+    # The half-diagonal covers a square view (SIZE/sqrt(2)) and a rectangular one alike.
+    radius = (math.hypot(width, height) * METERS_PER_PIXEL / 2 + FORWARD_OFFSET + 16) / (EARTH_CIRCUMFERENCE * math.cos(math.radians(latitude)))
     count = 1 << self.zoom
     low = np.floor((origin - radius) * count).astype(int)
     high = np.floor((origin + radius) * count).astype(int)
@@ -239,10 +293,10 @@ class MapRenderer:
     tiles = [(x % count, y) for y in range(low[1], high[1] + 1) for x in range(low[0], high[0] + 1) if 0 <= y < count]
     return tiles, len(tiles) == (high[0] - low[0] + 1) * (high[1] - low[1] + 1)
 
-  def satellite_tiles(self, longitude: float, latitude: float) -> list[tuple[int, int]]:
+  def satellite_tiles(self, longitude: float, latitude: float, width: int = SIZE, height: int = SIZE) -> list[tuple[int, int]]:
     """Esri tiles covering the view at the satellite zoom, for every heading."""
     origin = mercator(np.array([[longitude, latitude]]))[0]
-    radius = (SIZE * METERS_PER_PIXEL / math.sqrt(2) + FORWARD_OFFSET + 16) / (EARTH_CIRCUMFERENCE * math.cos(math.radians(latitude)))
+    radius = (math.hypot(width, height) * METERS_PER_PIXEL / 2 + FORWARD_OFFSET + 16) / (EARTH_CIRCUMFERENCE * math.cos(math.radians(latitude)))
     count = 1 << SAT_ZOOM
     low = np.floor((origin - radius) * count).astype(int)
     high = np.floor((origin + radius) * count).astype(int)
@@ -250,7 +304,7 @@ class MapRenderer:
       raise ValueError("Satellite view requires more than 256 tiles; use a lower zoom")
     return [(x % count, y) for y in range(low[1], high[1] + 1) for x in range(low[0], high[0] + 1) if 0 <= y < count]
 
-  def _satellite_background(self, position: Position) -> np.ndarray | None:
+  def _satellite_background(self, position: Position, width: int = SIZE, height: int = SIZE) -> np.ndarray | None:
     """Grayscale imagery under the view, or None if any tile covering it is unavailable.
 
     The caller falls back to the vector-only render, so a missing tile never
@@ -259,16 +313,16 @@ class MapRenderer:
     """
     if self.satellite is None:
       return None
-    wanted = self.satellite_tiles(position.longitude, position.latitude)
+    wanted = self.satellite_tiles(position.longitude, position.latitude, width, height)
     tiles = {}
     for x, y in wanted:
       tile = self.satellite.get(SAT_ZOOM, x, y)
       if tile is None:
         return None
       tiles[(x, y)] = tile
-    ys, xs = np.mgrid[0:SIZE, 0:SIZE]
-    right = (xs + 0.5 - SIZE / 2) * METERS_PER_PIXEL
-    forward = (SIZE / 2 - (ys + 0.5)) * METERS_PER_PIXEL + FORWARD_OFFSET
+    ys, xs = np.mgrid[0:height, 0:width]
+    right = (xs + 0.5 - width / 2) * METERS_PER_PIXEL
+    forward = (height / 2 - (ys + 0.5)) * METERS_PER_PIXEL + FORWARD_OFFSET
     angle = math.radians(position.bearing)
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     east = right * cos_a + forward * sin_a
@@ -282,42 +336,88 @@ class MapRenderer:
     tile_y = np.floor(fy).astype(np.int64)
     px = np.clip(((fx - np.floor(fx)) * SAT_TILE).astype(np.int64), 0, SAT_TILE - 1)
     py = np.clip(((fy - np.floor(fy)) * SAT_TILE).astype(np.int64), 0, SAT_TILE - 1)
-    background = np.zeros((SIZE, SIZE), dtype=np.uint8)
+    background = np.zeros((height, width), dtype=np.uint8)
     for (x, y), tile in tiles.items():
       mask = (tile_x == x) & (tile_y == y)
       if mask.any():
         background[mask] = tile[py[mask], px[mask]]
     return background
 
-  def route_tiles(self, route: np.ndarray) -> set[tuple[int, int]]:
+  def _satellite_background_color(self, position: Position, width: int = SIZE, height: int = SIZE) -> np.ndarray | None:
+    """RGB imagery under the view, or None if any tile covering it is unavailable.
+
+    Same inverse-projection sampling as _satellite_background, but the Esri
+    tiles stay in color. The caller falls back to the vector-only render, so
+    a missing tile never blanks the map.
+    """
+    if self.satellite is None:
+      return None
+    wanted = self.satellite_tiles(position.longitude, position.latitude, width, height)
+    tiles = {}
+    for x, y in wanted:
+      tile = self.satellite.get(SAT_ZOOM, x, y, color=True)
+      if tile is None:
+        return None
+      tiles[(x, y)] = tile
+    ys, xs = np.mgrid[0:height, 0:width]
+    right = (xs + 0.5 - width / 2) * METERS_PER_PIXEL
+    forward = (height / 2 - (ys + 0.5)) * METERS_PER_PIXEL + FORWARD_OFFSET
+    angle = math.radians(position.bearing)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    east = right * cos_a + forward * sin_a
+    north = -right * sin_a + forward * cos_a
+    scale = EARTH_CIRCUMFERENCE * math.cos(math.radians(position.latitude))
+    origin = mercator(np.array([[position.longitude, position.latitude]]))[0]
+    count = 1 << SAT_ZOOM
+    fx = (origin[0] + east / scale) * count
+    fy = (origin[1] - north / scale) * count
+    tile_x = np.floor(fx).astype(np.int64) % count
+    tile_y = np.floor(fy).astype(np.int64)
+    px = np.clip(((fx - np.floor(fx)) * SAT_TILE).astype(np.int64), 0, SAT_TILE - 1)
+    py = np.clip(((fy - np.floor(fy)) * SAT_TILE).astype(np.int64), 0, SAT_TILE - 1)
+    background = np.zeros((height, width, 3), dtype=np.uint8)
+    for (x, y), tile in tiles.items():
+      mask = (tile_x == x) & (tile_y == y)
+      if mask.any():
+        background[mask] = tile[py[mask], px[mask]]
+    return background
+
+  def route_tiles(self, route: np.ndarray, width: int = SIZE, height: int = SIZE) -> set[tuple[int, int]]:
     """Every tile the view can show while the pose is snapped onto the route."""
     tiles: set[tuple[int, int]] = set()
     for a, b in zip(route[:-1], route[1:], strict=True):
       meters = np.hypot(*((b - a) * [111320.0 * math.cos(math.radians(a[1])), 110540.0]))
       for t in np.linspace(0, 1, int(meters / 100) + 2):
-        tiles.update(self.view_tiles(*(a + (b - a) * t))[0])
+        tiles.update(self.view_tiles(*(a + (b - a) * t), width=width, height=height)[0])
     return tiles
 
-  def prefetch(self, route: np.ndarray):
-    self.archive.prefetch((self.zoom, x, y) for x, y in self.route_tiles(route))
+  def prefetch(self, route: np.ndarray, width: int = SIZE, height: int = SIZE):
+    self.archive.prefetch((self.zoom, x, y) for x, y in self.route_tiles(route, width, height))
 
-  def render(self, position: Position, route: np.ndarray | None = None, satellite: bool = False) -> RenderResult:
-    image = np.full((SIZE, SIZE), BACKGROUND, dtype=np.uint8)
-    satellite_bg = self._satellite_background(position) if satellite else None
+  def render(self, position: Position, route: np.ndarray | None = None, satellite: bool = False,
+             width: int = SIZE, height: int = SIZE) -> RenderResult:
+    """Render the view at (width, height) pixels with the same meters-per-pixel.
+
+    The default is the 256x256 square the model consumes. A wider rectangle
+    (PANEL_W x PANEL_H) shows the same scale with a wider field of view
+    left/right — the image is rendered natively, never stretched.
+    """
+    image = np.full((height, width), BACKGROUND, dtype=np.uint8)
+    satellite_bg = self._satellite_background(position, width, height) if satellite else None
     if satellite_bg is not None:
       image = satellite_bg
-    wanted, complete = self.view_tiles(position.longitude, position.latitude)
+    wanted, complete = self.view_tiles(position.longitude, position.latitude, width, height)
     loaded = [self.roads(x, y) for x, y in wanted]
     tiles = [tile for tile in loaded if tile is not None]
     complete = complete and len(tiles) == len(loaded)
     # The training renderer's latitude-dependent style zoom: the web mercator zoom with METERS_PER_PIXEL
     # at this latitude, under the 512-pixel tile convention. Tile zoom and style zoom are independent.
     style_zoom = math.log2(math.cos(math.radians(position.latitude)) * EARTH_CIRCUMFERENCE / (256 * METERS_PER_PIXEL)) - 1
-    ego = np.array([SIZE / 2, SIZE / 2 + FORWARD_OFFSET / METERS_PER_PIXEL])
+    ego = np.array([width / 2, height / 2 + FORWARD_OFFSET / METERS_PER_PIXEL])
     road_distance = math.inf
     if tiles:
       starts, ends, styles, levels, caps = (np.concatenate(column) for column in zip(*tiles, strict=True))
-      starts, ends = project(starts, position), project(ends, position)
+      starts, ends = project(starts, position, width, height), project(ends, position, width, height)
       # Tunnels are drawn at their interior width; everywhere else the white casing widens the stroke.
       table = np.array([[interpolate_width(style_zoom, *style.interior), interpolate_width(style_zoom, *style.casing)]
                         for style in STYLES])
@@ -335,12 +435,69 @@ class MapRenderer:
         draw_segments(image, starts[chosen], ends[chosen], widths[chosen] / 2, ROAD_INTENSITY)
     route_present = route is not None and len(route) >= 2
     if route_present:
-      projected = project(mercator(route), position)
+      projected = project(mercator(route), position, width, height)
       if satellite_bg is not None:
         # A dark outline keeps the grey route readable on bright imagery.
         draw_line(image, projected, BACKGROUND, ROUTE_WIDTH + 2.0, overlay=True)
       draw_line(image, projected, ROUTE_INTENSITY, ROUTE_WIDTH, overlay=True)
     draw_vehicle(image, ego)
+    return RenderResult(image, complete, route_present, road_distance)
+
+  def render_color(self, position: Position, route: np.ndarray | None = None, satellite: bool = False,
+                   width: int = SIZE, height: int = SIZE) -> RenderResult:
+    """Color render for the display preview only; the model map stays grayscale.
+
+    Same geometry and scale as render() (same meters-per-pixel, same pose).
+    Normal mode: dark background, colored roads, cyan route, white arrow.
+    Satellite mode: pure color imagery as the background — the vector road
+    network is NOT drawn (the photo already shows the real roads, so the
+    overlay is redundant clutter); only the route line and the ego arrow
+    are drawn on top. road_distance is still measured from the vector tiles
+    in both modes, so validity means the same as in render().
+    """
+    image = np.full((height, width, 3), COLOR_BACKGROUND, dtype=np.uint8)
+    satellite_bg = self._satellite_background_color(position, width, height) if satellite else None
+    if satellite_bg is not None:
+      image = satellite_bg
+    wanted, complete = self.view_tiles(position.longitude, position.latitude, width, height)
+    loaded = [self.roads(x, y) for x, y in wanted]
+    tiles = [tile for tile in loaded if tile is not None]
+    complete = complete and len(tiles) == len(loaded)
+    style_zoom = math.log2(math.cos(math.radians(position.latitude)) * EARTH_CIRCUMFERENCE / (256 * METERS_PER_PIXEL)) - 1
+    ego = np.array([width / 2, height / 2 + FORWARD_OFFSET / METERS_PER_PIXEL])
+    road_distance = math.inf
+    if tiles:
+      starts, ends, styles, levels, caps = (np.concatenate(column) for column in zip(*tiles, strict=True))
+      starts, ends = project(starts, position, width, height), project(ends, position, width, height)
+      road_distance = nearest_distance(ego, starts, ends) * METERS_PER_PIXEL
+      if satellite_bg is None:
+        # Normal mode only: the road network, one color per road style.
+        # Tunnels are drawn at their interior width; everywhere else the
+        # background-colored casing widens the stroke. Roads are drawn with
+        # overlay blending (exact colors, antialiased edges), least important
+        # first so major roads sit on top at crossings.
+        table = np.array([[interpolate_width(style_zoom, *style.interior), interpolate_width(style_zoom, *style.casing)]
+                          for style in STYLES])
+        widths = table[styles, 0] + np.where(levels < 0, 0, 2 * table[styles, 1])
+        for level in np.unique(levels):
+          chosen = levels == level
+          if level > levels.min():
+            # Cut the roads beneath, open at way endpoints so a bridge does not end in a dark oval.
+            draw_segments_color(image, starts[chosen], ends[chosen], (widths[chosen] + CUT_WIDTH) / 2,
+                                COLOR_BACKGROUND, overlay=True, caps=~caps[chosen])
+          for style_idx in reversed(range(len(COLOR_ROADS))):
+            mask = chosen & (styles == style_idx)
+            if mask.any():
+              draw_segments_color(image, starts[mask], ends[mask], widths[mask] / 2, COLOR_ROADS[style_idx],
+                                  overlay=True)
+    route_present = route is not None and len(route) >= 2
+    if route_present:
+      projected = project(mercator(route), position, width, height)
+      if satellite_bg is not None:
+        # A dark outline keeps the cyan route readable on bright imagery.
+        draw_line_color(image, projected, COLOR_OUTLINE, ROUTE_WIDTH + 2.0, overlay=True)
+      draw_line_color(image, projected, COLOR_ROUTE, ROUTE_WIDTH, overlay=True)
+    draw_vehicle_color(image, ego)
     return RenderResult(image, complete, route_present, road_distance)
 
 
