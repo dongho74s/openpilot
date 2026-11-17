@@ -1444,7 +1444,7 @@
       "min": 0,
       "max": 200,
       "default": 100,
-      "unit": 5
+      "unit": 1
     },
     {
       "group": "주행튜닝",
@@ -1464,7 +1464,7 @@
       "min": 0,
       "max": 200,
       "default": 100,
-      "unit": 5
+      "unit": 1
     },
     {
       "group": "주행튜닝",
@@ -1500,7 +1500,7 @@
       "min": 0,
       "max": 200,
       "default": 20,
-      "unit": 5
+      "unit": 1
     },
     {
       "group": "주행튜닝",
@@ -2604,7 +2604,7 @@
       "min": 0,
       "max": 200,
       "default": 0,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -2621,7 +2621,7 @@
       "min": -1,
       "max": 100,
       "default": 0,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -3054,7 +3054,7 @@
       "min": 0,
       "max": 100,
       "default": 0,
-      "unit": 10
+      "unit": 1
     },
     {
       "group": "조향일반",
@@ -3516,7 +3516,7 @@
       "min": 5,
       "max": 200,
       "default": 0,
-      "unit": 5,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -3533,7 +3533,7 @@
       "min": 5,
       "max": 200,
       "default": 0,
-      "unit": 5,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -3962,7 +3962,7 @@
       "min": 20,
       "max": 100,
       "default": 100,
-      "unit": 5,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -3979,7 +3979,7 @@
       "min": 0,
       "max": 100,
       "default": 0,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -4047,7 +4047,7 @@
       "min": 10,
       "max": 200,
       "default": 30,
-      "unit": 10,
+      "unit": 5,
       "display_unit": "speedKph"
     },
     {
@@ -4064,7 +4064,7 @@
       "min": -100,
       "max": -50,
       "default": -50,
-      "unit": 10
+      "unit": 1
     },
     {
       "group": "가속설정",
@@ -4573,7 +4573,7 @@
       "min": 50,
       "max": 300,
       "default": 100,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
@@ -4607,7 +4607,7 @@
       "min": 0,
       "max": 100,
       "default": 100,
-      "unit": 5,
+      "unit": 1,
       "display_unit": "percent"
     },
     {
