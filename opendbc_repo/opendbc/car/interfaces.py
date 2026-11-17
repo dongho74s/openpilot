@@ -36,10 +36,15 @@ FRICTION_THRESHOLD = 0.3
 NEURAL_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/neural_ff_weights.json')
 TORQUE_NN_MODEL_PATH = os.path.join(BASEDIR, 'torque_data/lat_models')
 # Experimental, explicit donor models; never substitute vehicle or safety parameters.
-NNFF_MODEL_SUBSTITUTES = {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER"}
+# The Bolt No-ACC (CHEVROLET_BOLT_CC) shares the Bolt EUV's specs and torque substitute (substitute.toml) but has no NNFF
+# model of its own. In two Bolt EUV No-ACC rlogs (2026-11-17) the torque steady curves actually needed was 1.50-1.64x
+# comma's NN feedforward and 1.05-1.12x the Bolt EUV NNFF model's, so with NNFF on it borrows that model (user request).
+# Its fingerprint also covers the Bolt EV 2017-21 No-ACC, for which the donor is untested.
+NNFF_MODEL_SUBSTITUTES = {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER", "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_EUV"}
 # With NNFF on and a model present these use NNFF before comma's own NN feedforward, as FrogPilot does (it picks its
 # NNFF whenever it has a model; user request 2026-11-15). Every other car with comma's NN keeps comma's path.
-NNFF_OVER_COMMA_NN = ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT")
+# The Bolt CC joins them with its substitute model (user request 2026-11-17).
+NNFF_OVER_COMMA_NN = ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT", "CHEVROLET_BOLT_CC")
 
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'torque_data/override.toml')
