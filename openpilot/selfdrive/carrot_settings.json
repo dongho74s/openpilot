@@ -584,6 +584,7 @@
           "zh": "亮度与视图",
           "params": [
             "ShowCustomBrightness",
+            "OnroadMinimalMode",
             "ShowModelView",
             "ShowCameraWithCluster"
           ]
@@ -4501,18 +4502,33 @@
       "group": "화면",
       "name": "ShowCustomBrightness",
       "title": "주행중 화면밝기(100%)",
-      "descr": "주행 시작 약 10초 후 화면밝기 비율\n0: 주변밝기 자동조절\n100: 항상 최대 밝기",
+      "descr": "주행 시작 약 10초 후 화면밝기 비율\n0: 화면 끄기 (다시 켜려면 웹 설정에서 밝기를 바꾸세요)\n1: 주변밝기 자동조절\n2~100: 수동 밝기 (100: 항상 최대 밝기)",
       "egroup": "DISPLAY",
       "etitle": "Onroad Screen Brightness(100%)",
-      "edescr": "Screen brightness ratio ~10s after driving starts\n0: Auto adjust by ambient light\n100: Always max brightness",
+      "edescr": "Screen brightness ratio ~10s after driving starts\n0: Screen off (change the brightness in web settings to turn it back on)\n1: Auto adjust by ambient light\n2-100: Manual brightness (100: Always max brightness)",
       "cgroup": "显示",
       "ctitle": "行车中屏幕亮度(100%)",
-      "cdescr": "行车开始约10秒后的屏幕亮度比例\n0: 根据环境亮度自动调节\n100: 始终最大亮度",
+      "cdescr": "行车开始约10秒后的屏幕亮度比例\n0: 关闭屏幕（需在网页设置中改回亮度才能重新点亮）\n1: 根据环境亮度自动调节\n2-100: 手动亮度（100: 始终最大亮度）",
       "min": 0,
       "max": 100,
       "default": 100,
       "unit": 5,
       "display_unit": "percent"
+    },
+    {
+      "group": "화면",
+      "name": "OnroadMinimalMode",
+      "title": "주행 화면 최소 모드",
+      "descr": "콤마 기기 주행 화면에만 적용합니다 (외부 HUD 모니터는 그대로 다 보입니다). 켜면 현재 속도·차선·주행 경로(타이어 궤적 포함)만 보이고, 설정속도·날짜/시간·TPMS·기기 상태·앞차·제한속도 등 나머지 정보는 숨깁니다.\n0: 끄기\n1: 켜기",
+      "egroup": "DISPLAY",
+      "etitle": "Minimal Onroad Screen",
+      "edescr": "Device onroad screen only (the external HUD monitor is unchanged). When on, only the current speed, lane lines and driving path (with tire tracks) are shown; set speed, date/time, TPMS, device state, lead vehicle, speed limit and all other info are hidden.\n0: Off\n1: On",
+      "cgroup": "显示",
+      "ctitle": "行车极简模式",
+      "cdescr": "仅适用于本机行车画面（外部HUD监视器不变）。开启后仅显示当前车速、车道线和行驶路径（含轮胎轨迹），隐藏设定车速、日期/时间、胎压、设备状态、前车、限速等其余信息。\n0: 关闭\n1: 开启",
+      "min": 0,
+      "max": 1,
+      "default": 0
     },
     {
       "group": "화면",

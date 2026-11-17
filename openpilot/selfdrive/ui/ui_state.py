@@ -109,6 +109,7 @@ class UIState:
 
     # Brightness and UI options
     self.show_brightness_ratio: float = 1.0
+    self.onroad_minimal: bool = False
     self.show_model_view: int = 0
     self.share_data: bool = False
     self.show_camera_with_cluster: bool = False
@@ -224,7 +225,17 @@ class UIState:
     self.show_debug_ui = self.params.get_int("ShowDebugUI")
     self.show_date_time = self.params.get_int("ShowDateTime")
     self.show_radar_info = self.params.get_int("ShowRadarInfo")
-    self.show_brightness_ratio: float = self.params.get_int("ShowCustomBrightness") / 100.0
+    # ShowCustomBrightness: 0=화면 끄기, 1=자동 밝기, 2~100=수동 밝기 비율.
+    # show_brightness_ratio 센티넬: -1.0=화면 끄기(백라이트 0), 0.0=자동, 그 외=수동 비율.
+    _brightness_value = self.params.get_int("ShowCustomBrightness")
+    if _brightness_value <= 0:
+      self.show_brightness_ratio = -1.0
+    elif _brightness_value == 1:
+      self.show_brightness_ratio = 0.0
+    else:
+      self.show_brightness_ratio = _brightness_value / 100.0
+    # 주행 화면 최소 모드 (기기 화면만, 외부 HUD는 건드리지 않음).
+    self.onroad_minimal = self.params.get_int("OnroadMinimalMode") == 1
     self.show_model_view = self.params.get_int("ShowModelView")
     self.share_data = self.params.get_bool("ShareData")
     self.show_camera_with_cluster = self.params.get_int("ShowCameraWithCluster") == 1
@@ -310,7 +321,11 @@ class Device:
 
       clipped_brightness = float(np.clip(100.0 * clipped_brightness, 10.0, 100.0))
       ratio = ui_state.show_brightness_ratio
-      if ratio <= 0.0:
+      if ratio < 0.0:
+        # ShowCustomBrightness=0: 화면 끄기 — 백라이트 0 (기기 화면만, 외부 HUD는 별도 디스플레이).
+        clipped_brightness = 0.0
+      elif ratio <= 0.0:
+        # ShowCustomBrightness=1: 자동 밝기 (기존 0=자동 동작).
         try:
           exp_val = ui_state.sm['wideRoadCameraState'].exposureValPercent
           auto_ratio = float(np.interp(exp_val, [0.0, 15.0], [0.8, 0.3]))

@@ -304,6 +304,9 @@ class HudRenderer(Widget):
     key = (state.key if state else None, self._traffic_light_info, self._can_draw_top_icons, self._show_wheel_critical)
     self._overlay.draw(rect, self._paint, key, enabled=state is not None and state.enabled,
                        urgent=state is not None and state.urgent)
+    # 최소 모드(기기 화면만): 현재 속도만 표시 — 크루즈 애니메이션·깜빡이 배지 숨김.
+    if getattr(ui_state, 'onroad_minimal', False):
+      return
     self._draw_cruise_speed_animation(rect)
     from openpilot.common.indicator_display import draw as draw_indicator
     badge_width = min(500, rect.width * .62)
@@ -314,8 +317,13 @@ class HudRenderer(Widget):
 
     # self._torque_bar.render(rect) # 아이콘에 토크 적용: 토크바 미사용
 
-    # bottom-left panel (speed_bg)
+    # 최소 모드(기기 화면만): _draw_set_speed 안의 최소 분기가 현재 속도만 그리고
+    # 반환한다. 조향 휠(날짜/시간·TPMS·신호등·기기 상태 포함)과 eGPU 배지는 숨김.
+    # bottom-left panel (speed_bg) — 최소 모드에서는 패널 없이 속도 숫자만.
     self._draw_set_speed(rect)
+
+    if getattr(ui_state, 'onroad_minimal', False):
+      return
 
     self._draw_steering_wheel(rect)
 
@@ -758,7 +766,19 @@ class HudRenderer(Widget):
     Bottom-left speed panel (like your 3rd image)
     - Background: images/speed_bg.png
     - Overlays: current speed, set speed, traffic light, cruise gap (1~4), gear (D/P/R/N)
+    Minimal mode (OnroadMinimalMode, device screen only): current speed only,
+    no panel background and no set speed / gear / gap / navi status.
     """
+    if getattr(ui_state, 'onroad_minimal', False):
+      cur_speed_int = 123 if self._debug_speed_panel else int(round(self.speed))
+      cur_text = str(cur_speed_int)
+      cur_font = 80
+      cur_size = measure_text_cached(self._font_display, cur_text, cur_font)
+      cur_x = int(rect.x + 28)
+      cur_y = int(rect.y + rect.height - cur_size.y - 14)
+      draw_text_ui_style(cur_text, cur_x, cur_y, cur_font, rl.WHITE, font=self._font_display, border_width=2.0, shadow_offset=3.0, align="left_top", y_offset=0.0)
+      return
+
     ov = self._set_speed_override.compute(ui_state.sm, float(self.set_speed))
 
     # ----- panel placement (bottom-left) -----
