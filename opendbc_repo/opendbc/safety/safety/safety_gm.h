@@ -39,6 +39,61 @@ static bool gm_skip_relay_check = false;
 static bool gm_force_ascm = false;
 static bool gm_sdgm = false;
 static bool gm_manual_hold = false;
+
+// Bolt with the factory camera ACC and a comma pedal (CHEVROLET_BOLT_ACC_PEDAL), ported from StarPilot's
+// BOLT_2022_PEDAL + PANDA_PADDLE_SCHED path (firestar5683/StarPilot 2589caad gm.h).
+static bool gm_bolt_acc_pedal = false;
+
+// The EBCM sends the regen paddle (0xBD) and the ECM the PRNDL2 (0x1F5) on the powertrain bus themselves, so a host
+// frame sent on its own timing alternates with the stock one and the regen request stutters on/off. For this car the
+// host frames are buffered instead, and the panda sends the latest one right after each stock frame, through the tx
+// hook again so a stale apply frame cannot leave once controls are off. A feed older than 100 ms is not sent.
+#define GM_SPOOF_FEED_STALE_US 100000U
+typedef struct {
+  bool valid;
+  uint8_t data[8];
+  uint32_t last_feed_us;
+} GmStockSyncedSpoof;
+static GmStockSyncedSpoof gm_paddle_spoof;
+static GmStockSyncedSpoof gm_prndl2_spoof;
+static bool gm_spoof_internal_tx = false;
+
+// Defined by the CAN driver, which the firmware includes after the safety code.
+void can_send(CANPacket_t *to_push, uint8_t bus_number, bool skip_tx_hook);
+void can_set_checksum(CANPacket_t *packet);
+
+static void gm_spoof_reset(GmStockSyncedSpoof *spoof) {
+  spoof->valid = false;
+  spoof->last_feed_us = 0U;
+  for (int i = 0; i < 8; i++) {
+    spoof->data[i] = 0U;
+  }
+}
+
+static void gm_spoof_feed(GmStockSyncedSpoof *spoof, const CANPacket_t *msg, int len) {
+  for (int i = 0; i < 8; i++) {
+    spoof->data[i] = (i < len) ? GET_BYTE(msg, i) : 0U;
+  }
+  spoof->valid = true;
+  spoof->last_feed_us = microsecond_timer_get();
+}
+
+static void gm_spoof_send_after_stock(const GmStockSyncedSpoof *spoof, int addr, int len) {
+  if (spoof->valid && (get_ts_elapsed(microsecond_timer_get(), spoof->last_feed_us) <= GM_SPOOF_FEED_STALE_US)) {
+    CANPacket_t to_send = {0};
+    to_send.addr = (uint32_t)addr;
+    to_send.bus = 0U;
+    to_send.data_len_code = (uint8_t)len;
+    for (int i = 0; i < len; i++) {
+      to_send.data[i] = spoof->data[i];
+    }
+    can_set_checksum(&to_send);
+    gm_spoof_internal_tx = true;
+    can_send(&to_send, 0U, false);
+    gm_spoof_internal_tx = false;
+  }
+}
+
 static struct {
   bool armed;
   bool active;
@@ -199,12 +254,21 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
 
     if (addr == 0xBD) {
       regen_braking = (GET_BYTE(to_push, 0) >> 4) != 0U;
+      if (gm_bolt_acc_pedal && (GET_LEN(to_push) == 7)) {
+        gm_spoof_send_after_stock(&gm_paddle_spoof, 0xBD, 7);
+      }
+    }
+
+    if (gm_bolt_acc_pedal && (addr == 0x1F5) && (GET_LEN(to_push) == 8)) {
+      gm_spoof_send_after_stock(&gm_prndl2_spoof, 0x1F5, 8);
     }
 
     // Pedal Interceptor
     if ((addr == 0x201) && enable_gas_interceptor) {
       int gas_interceptor = GM_GET_INTERCEPTOR(to_push);
-      gas_pressed = gas_interceptor > GM_GAS_INTERCEPTOR_THRESHOLD;
+      // The Bolt ACC with pedal takes StarPilot's 595 (~23.6 in carstate units); its carstate threshold 23 sits just below
+      const int threshold = gm_bolt_acc_pedal ? 595 : GM_GAS_INTERCEPTOR_THRESHOLD;
+      gas_pressed = gas_interceptor > threshold;
       gas_interceptor_prev = gas_interceptor;
       // gm_pcm_cruise = false;
     }
@@ -213,6 +277,10 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
 
     // Check ASCMGasRegenCmd only if we're blocking it
     if (!gm_pcm_cruise && (addr == 0x2CB)) {
+      stock_ecu_detected = true;
+    }
+    // The Bolt ACC with pedal sends its own friction brake on the powertrain bus and blocks the camera's
+    if (gm_bolt_acc_pedal && (addr == 0x315)) {
       stock_ecu_detected = true;
     }
     generic_rx_checks(stock_ecu_detected);
@@ -275,8 +343,9 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
   // GAS/REGEN: safety check
   if (addr == 0x2CB) {
     bool apply = GET_BIT(to_send, 0U);
-    // SDGM transmit requests must never restore permission after disengagement.
-    if (apply && !controls_allowed && !gm_sdgm) {
+    // SDGM transmit requests must never restore permission after disengagement, nor may the Bolt ACC with pedal's
+    // (which never sends 0x2CB and does not allow it).
+    if (apply && !controls_allowed && !gm_sdgm && !gm_bolt_acc_pedal) {
       controls_allowed = true;        
     }
     // convert float CAN signal to an int for gas checks: 22534 / 0.125 = 180272
@@ -303,8 +372,34 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     if (gm_cc_long) {
       allowed_btn |= cruise_engaged_prev && (button == GM_BTN_SET || button == GM_BTN_RESUME || button == GM_BTN_UNPRESS);
     }
+    // The Bolt ACC with pedal cancels the camera's own ACC at any time (toward the camera) and sends no other button.
+    if (gm_bolt_acc_pedal) {
+      allowed_btn = (button == GM_BTN_CANCEL);
+    }
 
     if (!allowed_btn) {
+      tx = false;
+    }
+  }
+
+  // REGEN PADDLE / PRNDL2 (Bolt ACC with pedal): an apply needs controls; host frames are only buffered (see above)
+  if (gm_bolt_acc_pedal && ((addr == 0xBD) || (addr == 0x1F5))) {
+    const int len = (addr == 0xBD) ? 7 : 8;
+    bool apply;
+    if (addr == 0xBD) {
+      apply = (GET_BYTE(to_send, 0) & 0xF0U) != 0U;
+    } else {
+      const uint8_t prndl2 = GET_BYTE(to_send, 3) & 0xFU;
+      apply = (prndl2 == 7U) || (prndl2 == 5U);
+    }
+    if (!controls_allowed && apply) {
+      tx = false;
+    }
+    if (!gm_spoof_internal_tx) {
+      // The tx hook also sees frames outside the allowlist, so check the bus and length before buffering.
+      if (tx && (GET_BUS(to_send) == 0U) && (GET_LEN(to_send) == len)) {
+        gm_spoof_feed((addr == 0xBD) ? &gm_paddle_spoof : &gm_prndl2_spoof, to_send, len);
+      }
       tx = false;
     }
   }
@@ -322,7 +417,9 @@ static int gm_fwd_hook(CANPacket_t* to_send) {
     if (bus_num == 0) {
       // block PSCMStatus; forwarded through openpilot to hide an alert from the camera
       bool is_pscm_msg = (addr == 0x184);
-      if (!is_pscm_msg) {
+      // Bolt ACC with pedal: the camera gets no ECM cruise status (StarPilot's non-ACC rule)
+      bool is_ecm_cruise_status_msg = gm_bolt_acc_pedal && (addr == 0x3D1);
+      if (!is_pscm_msg && !is_ecm_cruise_status_msg) {
         bus_fwd = 2;
       }
     }
@@ -332,6 +429,8 @@ static int gm_fwd_hook(CANPacket_t* to_send) {
       bool is_lkas_msg = (addr == 0x180);
       bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB) || (addr == 0x370);
       bool block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long);
+      // Bolt ACC with pedal: openpilot sends its own ACC status and friction brake; the camera's gas/regen still passes
+      block_msg |= gm_bolt_acc_pedal && ((addr == 0x370) || (addr == 0x315));
       if (!block_msg) {
         bus_fwd = 0;
       }
@@ -414,6 +513,11 @@ static safety_config gm_init(uint16_t param) {
   static const CanMsg GM_CAM_TX_MSGS[] = {{0x180, 0, 4}, {0x200, 0, 6}, {0x1E1, 0, 7},  // pt bus
                                           {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
 
+  // StarPilot's GM_CAM_BOLT_2022_PEDAL_FRICTION_TX_MSGS without 0x3D1, which openpilot never sends for this car
+  static const CanMsg GM_CAM_BOLT_ACC_PEDAL_TX_MSGS[] = {{0x180, 0, 4}, {0x200, 0, 6}, {0x1E1, 0, 7}, {0x370, 0, 6},
+                                                         {0x315, 0, 5}, {0xBD, 0, 7}, {0x1F5, 0, 8},  // pt bus
+                                                         {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
+
 
   static const CanMsg GM_CC_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x1E1, 0, 7},  // pt bus
                                               {0x184, 2, 8}, {0x1E1, 2, 7}};  // camera bus
@@ -451,6 +555,15 @@ static safety_config gm_init(uint16_t param) {
   for (int i = 0; i < 4; i++) {
     gm_hold.ts[i] = 0U;
   }
+  const uint16_t GM_PARAM_BOLT_ACC_PEDAL = 2048;
+  // The raw camera-long bit is checked too: release builds (no ALLOW_DEBUG) never set gm_cam_long from it.
+  const uint16_t GM_PARAM_HW_CAM_LONG_BIT = 2;
+  gm_bolt_acc_pedal = GET_FLAG(param, GM_PARAM_BOLT_ACC_PEDAL) && (gm_hw == GM_CAM) && gm_pedal_long && enable_gas_interceptor &&
+                      !gm_has_acc && !gm_cc_long && !gm_cam_long && !GET_FLAG(param, GM_PARAM_HW_CAM_LONG_BIT) && !gm_sdgm &&
+                      !gm_force_ascm;
+  gm_spoof_reset(&gm_paddle_spoof);
+  gm_spoof_reset(&gm_prndl2_spoof);
+  gm_spoof_internal_tx = false;
   if (enable_gas_interceptor) {
       print("GM Pedal Interceptor Enabled\n");
   }
@@ -468,6 +581,9 @@ static safety_config gm_init(uint16_t param) {
         ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_TX_MSGS);
       }
       print("GM CAM Long\n");
+    } else if (gm_bolt_acc_pedal) {
+      ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_BOLT_ACC_PEDAL_TX_MSGS);
+      print("GM CAM Bolt ACC pedal\n");
     } else {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_TX_MSGS);
       print("GM CAM\n");

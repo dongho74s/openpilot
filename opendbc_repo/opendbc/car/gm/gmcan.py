@@ -167,7 +167,8 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   mode = 0x1
 
   # TODO: Understand this better. Volts and ICE Camera ACC cars are 0x1 when enabled with no brake
-  if enabled and CP.carFingerprint in (CAR.CHEVROLET_BOLT_EUV,):
+  # The Bolt ACC with pedal uses 0x9 like StarPilot's CHEVROLET_BOLT_ACC_2022_2023(_PEDAL) (gmcan.py get_friction_brake_mode).
+  if enabled and CP.carFingerprint in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_ACC_PEDAL):
     mode = 0x9
 
   if apply_brake > 0:
@@ -285,6 +286,53 @@ def create_regen_paddle_command(packer, bus):
     "RegenPaddle": 0x20, #이 값은 패들의 강도일 가능성이 있음.
   }
   return packer.make_can_msg("EBCMRegenPaddle", bus, values)
+
+
+# ---- Bolt ACC with pedal (CAR.CHEVROLET_BOLT_ACC_PEDAL), StarPilot 2589caad gmcan.py, same bytes on the wire ----
+ACC_CRUISE_STATE_ADAPTIVE = 2
+
+
+def create_prndl2_command(packer, bus, press_regen_paddle, CP):
+  """0x1F5 as StarPilot sends it while spoofing the regen paddle (gmcan.py create_prndl2_command): gen2 Bolt reports
+  PRNDL2 5 with ManualMode 1 while pressed and 6 ("L") otherwise. StarPilot's DBC names Byte0/1 (0x0C) and Byte2/4/7
+  (0); this DBC does not, so those bytes are written directly. The panda resends it right after the stock frame."""
+  # Only the gen2 ACC Bolt calls this; StarPilot's gen1 value (7 while pressed) has no carrot platform.
+  values = {
+    "PRNDL2": 5 if press_regen_paddle else 6,
+    "ManualMode": 1 if press_regen_paddle else 0,
+    "TransmissionState": 1,
+  }
+  addr, dat, bus = packer.make_can_msg("ECMPRDNL2", bus, values)
+  dat = bytearray(dat)
+  dat[0] = 0x0C  # Byte0
+  dat[1] = 0x0C  # Byte1
+  return CanData(addr, bytes(dat), bus)
+
+
+def create_regen_paddle_press_command(packer, bus, press_regen_paddle):
+  """0xBD with StarPilot's press value (gmcan.py create_regen_paddle_command): RegenPaddle 2 pressed, 0 released, other
+  bytes 0. The Bolt No-ACC keeps create_regen_paddle_command above."""
+  return packer.make_can_msg("EBCMRegenPaddle", bus, {"RegenPaddle": 2 if press_regen_paddle else 0})
+
+
+def create_starpilot_acc_dashboard_command(packer, bus, enabled, target_speed_kph, hud_control, fcw_alert, acc_always_one=1):
+  """0x370 exactly as StarPilot builds it (gmcan.py create_acc_dashboard_command): ACCCruiseState 2 ("Adaptive") and
+  StarPilot's FCWAlert level 0-3."""
+  target_speed = min(target_speed_kph, 255)
+
+  values = {
+    "ACCAlwaysOne": acc_always_one,
+    "ACCCruiseState": ACC_CRUISE_STATE_ADAPTIVE,
+    "ACCResumeButton": 0,
+    "ACCSpeedSetpoint": target_speed,
+    "ACCGapLevel": hud_control.leadDistanceBars * enabled,  # 3 "far", 0 "inactive"
+    "ACCCmdActive": enabled,
+    "ACCAlwaysOne2": acc_always_one,
+    "ACCLeadCar": hud_control.leadVisible,
+    "FCWAlert": int(fcw_alert) & 0x3,
+  }
+
+  return packer.make_can_msg("ASCMActiveCruiseControlStatus", bus, values)
 
 def create_gm_cc_spam_command(packer, controller, CS, actuators):
   if controller.params_.get_bool("IsMetric"):

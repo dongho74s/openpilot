@@ -6,6 +6,7 @@ import numpy as np
 from opendbc.can.packer import CANPacker
 from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, structs, create_gas_interceptor_command
 from opendbc.car.gm import gmcan
+from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.torque_rt_guard import PandaRtGuard
 from opendbc.car.gm.auto_resume import GMAutoResume
 from opendbc.car.gm.auto_stop_off import AutoStopOff, BUTTON_MAX_AGE_NS, LATCH_MAX_AGE_NS, feature_now_ns, fresh
@@ -80,6 +81,10 @@ class CarController(CarControllerBase):
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint][Bus.pt])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
     self.packer_ch = CANPacker(DBC[self.CP.carFingerprint][Bus.chassis])
+    # Bolt ACC with pedal: StarPilot's whole longitudinal flow replaces the carrot one below (none of carrot's SET/RES
+    # button features, 0x2CB, 0x2CD or 0x3D1), and stock ACC is cancelled toward the camera.
+    self.bolt_acc_pedal = BoltAccPedalLongController(CP, self.packer_pt, self.packer_ch) \
+      if supports_bolt_acc_pedal_friction_experiment(CP) else None
 
     self.long_pitch = False
     self.use_ev_tables = False
@@ -187,7 +192,10 @@ class CarController(CarControllerBase):
       idx = self.lka_steering_cmd_counter % 4
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_torque, idx, CC.latActive))
 
-    if self.CP.openpilotLongitudinalControl:
+    if self.bolt_acc_pedal is not None:
+      # Pitch compensation is always on for this car: StarPilot's LongPitch defaults to on, carrot's to off.
+      self.apply_gas, self.apply_brake = self.bolt_acc_pedal.update(CC, CS, self.frame, True, can_sends)
+    elif self.CP.openpilotLongitudinalControl:
       hold = getattr(CS, "manual_auto_hold", None)
       manual_brake = hold.command(CS.out, CC.enabled or CC.longActive) if hold is not None and manual_hold_supported(self.CP) else 0
 

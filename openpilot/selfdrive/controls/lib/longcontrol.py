@@ -9,6 +9,7 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.cruise_coasting import (
   CruiseCoastingControl, MAX_PLAN_AGE, coasting_relief, no_coasting_lead,
 )
+from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import BoltAccPedalLongControl, is_bolt_acc_pedal_long
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
@@ -88,6 +89,11 @@ class LongControl:
     if CP.brand == "toyota":
       self.use_accel_pid = True
 
+    # Bolt ACC with a comma pedal runs StarPilot's LongControl for that car instead of the code below.
+    self.bolt_acc_pedal = BoltAccPedalLongControl(CP) if is_bolt_acc_pedal_long(CP) else None
+    if self.bolt_acc_pedal is not None:
+      self.pid = self.bolt_acc_pedal.pid  # controlsd logs pid.p/i/f
+
   def _refresh_stopping_accel(self):
     try:
       value = float(self.params.get_float("StoppingAccel"))
@@ -127,6 +133,8 @@ class LongControl:
     self.pid.k_f = 1.0
 
   def reset(self):
+    if self.bolt_acc_pedal is not None:
+      self.bolt_acc_pedal.reset()
     self.pid.reset()
     self.coasting.reset()
 
@@ -137,6 +145,13 @@ class LongControl:
     v_target_now = long_plan.vTargetNow
     j_target_now = long_plan.jTargetNow
     should_stop = long_plan.shouldStop
+
+    if self.bolt_acc_pedal is not None:
+      output_accel = self.bolt_acc_pedal.update(active, CS, a_target_ff, should_stop, accel_limits,
+                                                has_lead=long_plan.hasLead, soft_hold_active=soft_hold_active)
+      self.long_control_state = self.bolt_acc_pedal.long_control_state
+      self.last_output_accel = output_accel
+      return self.last_output_accel, a_target_ff, j_target_now
 
     self.readParamCount += 1
     if self.readParamCount >= 100:

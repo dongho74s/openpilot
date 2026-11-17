@@ -88,7 +88,8 @@ class TestNNFFSubstitute(unittest.TestCase):
 
   def test_substitutes_are_explicit(self):
     self.assertEqual(interfaces.NNFF_MODEL_SUBSTITUTES,
-                     {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER", "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_EUV"})
+                     {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER", "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_EUV",
+                      "CHEVROLET_BOLT_ACC_PEDAL": "CHEVROLET_BOLT_EUV"})
     self.assertIsNone(self.select(car="UNSUPPORTED_CAR", enabled=True))
     self.assertIsNone(self.select(car="CHEVROLET_TRAVERSE_OTHER", enabled=True))
 
@@ -231,7 +232,19 @@ class TestNNFFOverCommaNN(unittest.TestCase):
     return IsolatedGMInterface(cp)
 
   def test_exceptions_are_only_the_bolts_and_volt(self):
-    self.assertEqual(interfaces.NNFF_OVER_COMMA_NN, ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT", "CHEVROLET_BOLT_CC"))
+    self.assertEqual(interfaces.NNFF_OVER_COMMA_NN,
+                     ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT", "CHEVROLET_BOLT_CC", "CHEVROLET_BOLT_ACC_PEDAL"))
+
+  def test_bolt_acc_pedal_steers_like_the_bolt_cc(self):
+    """The Bolt ACC with pedal is the same car and steering as the Bolt No-ACC: same NNFF donor, comma NN and timing."""
+    for enabled in (False, True):
+      cc = self.interface(CAR.CHEVROLET_BOLT_CC, nnff=enabled)
+      acc_pedal = self.interface(CAR.CHEVROLET_BOLT_ACC_PEDAL, nnff=enabled)
+      self.assertEqual(cc.use_nnff, acc_pedal.use_nnff)
+      self.assertEqual(cc.CP.lateralTuning.to_dict(), acc_pedal.CP.lateralTuning.to_dict())
+      self.assertEqual(cc.CP.steerActuatorDelay, acc_pedal.CP.steerActuatorDelay)
+      self.assertEqual(cc.CP.steerRatio, acc_pedal.CP.steerRatio)
+    self.assertTrue(self.interface(CAR.CHEVROLET_BOLT_ACC_PEDAL).check_comma_nn_ff_support(CAR.CHEVROLET_BOLT_ACC_PEDAL))
 
   def test_bolt_euv_and_volt_use_nnff_over_comma_nn(self):
     for car, model in ((CAR.CHEVROLET_BOLT_EUV, "CHEVROLET_BOLT_EUV.json"), (CAR.CHEVROLET_VOLT, "CHEVROLET_VOLT.json")):
