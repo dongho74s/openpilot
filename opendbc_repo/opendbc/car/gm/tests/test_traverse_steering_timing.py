@@ -119,7 +119,8 @@ def violations_at_any_phase(messages):
   return {phase: v for phase in range(0, 260_000, 10_000) if (v := panda_gm_torque_violations(messages, -phase))}
 
 
-def command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_BOLT_CC, stall_at=None, guard=True):
+def command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_BOLT_CC, stall_at=None, guard=True,
+                  lead_zero=True, dt_ms=10.):
   class CustomParams(MemoryParams):
     def __init__(self, *args):
       super().__init__(*args)
@@ -133,11 +134,11 @@ def command_trace(runtime, monkeypatch, up, down, candidate=CAR.CHEVROLET_BOLT_C
   state = controller_state()
   messages, now = [], 1_000_000_000
   for tick in range(800):
-    dt = 10_000_000
+    dt = int(dt_ms * 1e6)
     if stall_at is not None:   # the loop runs 80 ms late once, then catches up with 7.5 ms calls (Codex review 2)
       dt = 90_000_000 if tick == stall_at else 7_500_000 if stall_at < tick <= stall_at + 32 else dt
     now += dt
-    cc.actuators.torque = 0. if tick < 50 or tick >= 700 else (1. if tick < 300 else -1.)
+    cc.actuators.torque = 0. if (lead_zero and tick < 50) or tick >= 700 else (1. if tick < 300 else -1.)
     _, sends = controller.update(cc.as_reader(), state, now)
     state.loopback_lka_steering_cmd_updated = False
     for addr, data, _bus in sends:
@@ -187,10 +188,12 @@ def test_guard_band():
   guard = PandaRtGuard(128, 250)
   ms = 1_000_000
   assert guard.clip(100, 0) == 100
-  assert guard.clip(300, 10 * ms) == 228          # 100 + 128
-  assert guard.clip(-300, 20 * ms) == -128         # unwinding through zero is allowed down to -128
-  assert guard.clip(0, 400 * ms) == 0             # older commands leave the window
-  assert guard.clip(300, 410 * ms) == 128
+  assert guard.clip(300, 10 * ms) == 128          # the panda's initial reference 0 is still in the window
+  assert guard.clip(-300, 20 * ms) == -128        # unwinding through zero is allowed down to -128
+  # the window is anchored at the previous command: at 400 ms everything sent by 20 ms still counts
+  assert guard.clip(300, 400 * ms) == 128
+  # at 700 ms only the 128 sent at 400 ms is left
+  assert guard.clip(300, 700 * ms) == 256
 
 
 def test_panda_check_emulation_matches_the_c_code_on_known_cases():
@@ -199,3 +202,42 @@ def test_panda_check_emulation_matches_the_c_code_on_known_cases():
   assert violations_at_any_phase([(i * 30_000, min(12 * i, 300)) for i in range(30)]) == {}
   # a violation resets the last torque to 0 as in C: (0,0),(30000,21),(60000,22) both 21 and 22 are violations
   assert panda_gm_torque_violations([(0, 0), (30_000, 21), (60_000, 22)]) == [(30_000, 21), (60_000, 22)]
+
+
+@pytest.mark.parametrize("candidate", [CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_TRAVERSE])
+@pytest.mark.parametrize("up,down", [(0, 0), (50, 50)])
+@pytest.mark.parametrize("dt_ms", [6., 10.])
+def test_start_without_leading_zero_respects_the_initial_panda_reference(runtime, monkeypatch, candidate, up, down, dt_ms):
+  # Codex review 3: torque from the first command, fast calls, panda reference still its initial 0
+  _, messages = command_trace(runtime, monkeypatch, up, down, candidate, lead_zero=False, dt_ms=dt_ms)
+  assert messages[0][1] != 0 or messages[1][1] != 0
+  assert violations_at_any_phase(messages) == {}
+
+
+def boundary_commands(guard):
+  # Codex review 3: the 0 reference reaches the panda 40 ms late, the following commands on time, each rising 16
+  ms = 1_000_000
+  host = [1000 * ms] + [1290 * ms + 500 - 30 * ms * j for j in range(8, -1, -1)] + [1320 * ms + 500]
+  sent, last = [guard.clip(0, host[0])], 0
+  for t in host[1:]:
+    last = guard.clip(min(last + 16, 300), t)
+    sent.append(last)
+  panda_us = [1_040_000] + [t // 1000 for t in host[1:]]   # whole microseconds: 1290.0005 ms -> 1_290_000
+  return list(zip(panda_us, sent))
+
+
+def test_guard_keeps_a_reference_the_panda_still_holds_at_exactly_250_ms():
+  from opendbc.car.gm.torque_rt_guard import PandaRtGuard
+  messages = boundary_commands(PandaRtGuard(128, 250))
+  assert messages[-2] == (1_290_000, 128) and messages[-1] == (1_320_000, 128)
+  assert panda_gm_torque_violations(messages, rt_ts_start=1_040_000 - 300_000) == []
+  # a window of exactly 250 + 40 ms drops the 0 at 1290.0005 ms and lets the next command break the C check
+  late = boundary_commands(PandaRtGuard(128, 250, margin_ms=40))
+  assert late[-1][1] > 128
+  assert panda_gm_torque_violations(late, rt_ts_start=1_040_000 - 300_000) != []
+
+
+def test_guard_starts_from_the_panda_initial_zero():
+  from opendbc.car.gm.torque_rt_guard import PandaRtGuard
+  guard = PandaRtGuard(128, 250)
+  assert guard.clip(200, 0) == 128
