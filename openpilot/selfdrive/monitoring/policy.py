@@ -168,6 +168,10 @@ class DriverMonitoring:
     # 실험용: 실내 카메라 폰 사용 경고 끄기 (CarrotPhoneWarningOff=1이면 폰 감지를 무시).
     # 폰 경로만 끄고, 시선·졸음·자세 등 다른 주의산만 판정은 그대로 동작한다.
     self.phone_warning_off = Params().get_bool("CarrotPhoneWarningOff")
+    # 실험용: 졸음·눈 감김·고개 숙임/돌림 경고 끄기 (각각 1이면 해당 감지만 무시, 다른 판정은 그대로).
+    self.sleep_warning_off = Params().get_bool("CarrotSleepWarningOff")
+    self.eye_warning_off = Params().get_bool("CarrotEyeWarningOff")
+    self.pose_warning_off = Params().get_bool("CarrotPoseWarningOff")
 
     self._reset_awareness()
     self._set_policy(MonitoringPolicy.vision)
@@ -239,10 +243,10 @@ class DriverMonitoring:
     pitch_threshold = self.settings._POSE_PITCH_THRESHOLD * self.pose.cfactor_pitch if self.pose.calibrated else self.settings._PITCH_NATURAL_THRESHOLD
     yaw_threshold = self.settings._POSE_YAW_THRESHOLD * self.pose.cfactor_yaw
 
-    self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold))
-    self.distracted_types['eye'] = bool((self.blink.left + self.blink.right)*0.5 > self.settings._BLINK_THRESHOLD)
+    self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold)) and not self.pose_warning_off
+    self.distracted_types['eye'] = bool((self.blink.left + self.blink.right)*0.5 > self.settings._BLINK_THRESHOLD) and not self.eye_warning_off
     self.distracted_types['phone'] = bool(self.phone_prob > self.settings._PHONE_THRESH) and not self.phone_warning_off
-    self.distracted_types['sleep'] = bool(self.sleep_prob > self.settings._SLEEP_THRESH)
+    self.distracted_types['sleep'] = bool(self.sleep_prob > self.settings._SLEEP_THRESH) and not self.sleep_warning_off
 
   def _update_states(self, driver_state, cal_rpy, car_speed, op_engaged, lowspeed, demo_mode=False, steering_angle_deg=0.):
     rhd_pred = driver_state.wheelOnRightProb

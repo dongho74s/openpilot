@@ -260,6 +260,10 @@ def run_dm2(params, experimental, initial_car_params=None):
         dm.always_on = params.get_bool("AlwaysOnDM")
         # 실험용: 실내 카메라 폰 사용 경고 끄기 (재시작 없이 약 2초 안에 반영)
         dm.phone_warning_off = params.get_bool("CarrotPhoneWarningOff")
+        # 실험용: 졸음·눈 감김·고개 숙임/돌림 경고 끄기 (재시작 없이 약 2초 안에 반영)
+        dm.sleep_warning_off = params.get_bool("CarrotSleepWarningOff")
+        dm.eye_warning_off = params.get_bool("CarrotEyeWarningOff")
+        dm.pose_warning_off = params.get_bool("CarrotPoseWarningOff")
       demo_mode = params.get_bool("IsDriverViewEnabled")
       rhd_saved = params.get_bool("IsRhdDetected")
     if sm.updated['carParams']:

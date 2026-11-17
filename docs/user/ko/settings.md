@@ -295,7 +295,7 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 | 현대·기아 | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera` | SCC 연결 방식, LDWS 차량과 카메라 구간 햅틱 |
 | CANFD·HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdDebug`, `HDPuse`, `CcncClusterDisplay`, `CcncTrafficBackground` | HDA2 차량, 계기판 직접 송신, 차로변경 깜빡이 자동, CAN FD 디버그·HDP 기능과 CCNC 계기판 표시 옵션 |
 | 레이더 | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity` | SCC 레이더, 전방 트랙 좌우 보정, 코너 레이더와 당근레이더 처리·컷인 감도 |
-| 운전자 모니터링 | `DriverMonitoringEnabled`(검색 전용), `DriverMonitoringMode`, `CarrotPhoneWarningOff`(실험용), `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | 운전자 모니터링과 일부 차량 경고음 처리 |
+| 운전자 모니터링 | `DriverMonitoringEnabled`(검색 전용), `DriverMonitoringMode`, `CarrotPhoneWarningOff`(실험용), `CarrotSleepWarningOff`(실험용), `CarrotEyeWarningOff`(실험용), `CarrotPoseWarningOff`(실험용), `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | 운전자 모니터링과 일부 차량 경고음 처리 |
 | 차량 보조 | `MaxAngleFrames`, `SpeedFromPCM` | 최대 조향각 관련 프레임과 순정 SCC 속도 제어 방식 |
 | 기기 하드웨어 | `CommaPedalEnabled`, `HardwareC3xLite` | ACC 미장착 차량의 Comma Pedal 허용 설정, C3X Lite 하드웨어 구성 |
 
@@ -333,6 +333,12 @@ Bosch MRRevo14F 수신을 지원하는 버전에서 Bosch MRRevo14F 후보 차�
 `DriverMonitoringEnabled`의 기본값은 켜짐이며 Carrot Web 설정 검색에서만 찾을 수 있습니다. 파라미터 이름으로 검색하세요. 끄기 기능은 DM 카메라가 없거나 고장 난 경우를 위한 것으로, 기본 켜짐을 변경하지 않는 것을 권장합니다. 끄면 일반 주행 중 운전자 감시 경고·감시로 인한 강제 감속·재사용 제한이 사라지며, 사용 지역과 조건에 따라 적용 법규나 운행 요건에 위배될 수 있습니다. Driver View에서는 얼굴 미리보기만 유지하고 판정은 중립입니다. Web에서 끈 설정은 다음 주행과 재시작 후에도 유지되므로 직접 다시 켜야 합니다. 파일·QR 백업, 복원 및 설정 프로필은 이 값을 제외합니다. 복원 작업은 현재 값을 바꾸지 않으며 다른 기기의 끄기 값을 가져오지 않습니다.
 
 `CarrotPhoneWarningOff`(실험용: 폰 사용 경고 끄기)는 실내 카메라가 폰을 감지해도 폰 사용 경고를 띄우지 않게 합니다. 폰 감지만 무시하고, 시선 이탈·눈 감김·졸음·자세 등 다른 운전자 감시 경고는 그대로 동작합니다. 기본값은 꺼짐(0, 경고 정상 동작)이며, 켜면 재시작 없이 약 2초 안에 반영됩니다. 폰 사용 경고는 안전 기능이므로 주차 중에만 테스트하고, 주행 중에는 끈 채로 두지 마세요.
+
+`CarrotSleepWarningOff`(실험용: 졸음 경고 끄기)는 실내 카메라가 졸음을 감지해도 졸음 경고를 띄우지 않게 합니다. 졸음 감지만 무시하고, 폰 사용·눈 감김·자세 등 다른 운전자 감시 경고는 그대로 동작합니다. 기본값은 꺼짐(0, 경고 정상 동작)이며, 켜면 재시작 없이 약 2초 안에 반영됩니다. 졸음 경고는 안전 기능이므로 주차 중에만 테스트하고, 주행 중에는 끈 채로 두지 마세요.
+
+`CarrotEyeWarningOff`(실험용: 눈 감김 경고 끄기)는 실내 카메라가 눈 감김(깜빡임)을 감지해도 눈 감김 경고를 띄우지 않게 합니다. 눈 감김 감지만 무시하고, 폰 사용·졸음·자세 등 다른 운전자 감시 경고는 그대로 동작합니다. 기본값은 꺼짐(0, 경고 정상 동작)이며, 켜면 재시작 없이 약 2초 안에 반영됩니다. 눈 감김 경고는 안전 기능이므로 주차 중에만 테스트하고, 주행 중에는 끈 채로 두지 마세요.
+
+`CarrotPoseWarningOff`(실험용: 고개 숙임/돌림 경고 끄기)는 실내 카메라가 고개 숙임이나 돌림(머리 자세)을 감지해도 자세 경고를 띄우지 않게 합니다. 고개 숙임은 아래를 보는 경우이고, 좌우로 돌리는 경우도 함께 무시합니다. 자세 감지만 무시하고, 폰 사용·눈 감김·졸음 등 다른 운전자 감시 경고는 그대로 동작합니다. 기본값은 꺼짐(0, 경고 정상 동작)이며, 켜면 재시작 없이 약 2초 안에 반영됩니다. 자세 경고는 안전 기능이므로 주차 중에만 테스트하고, 주행 중에는 끈 채로 두지 마세요.
 
 기어와 속도에 관계없이 정차 중에도 실제 차량 CANCEL 버튼을 놓았다 다시 누르는 방식으로 3초 안에 세 번 누르면 `DriverMonitoringEnabled` 설정을 바꾸지 않고 현재 시동 구간 동안 감시를 끕니다. 기어 또는 속도가 바뀌어도 횟수를 초기화하지 않습니다. 자동 제어 CANCEL 반사와 BT CANCEL은 세지 않습니다. 다른 차량 버튼의 누름 또는 놓음 신호, 무효·오래된 차량 상태, 입력 스트림 끊김이나 시간 초과는 횟수를 초기화하며, 실제 입력과 구분할 수 없는 순정 ACC 속도 버튼 반사도 보수적으로 초기화할 수 있습니다. 다음 시동을 켜거나 manager/기기를 재시작하면 임시 꺼짐 상태만 해제하므로, 저장된 설정이 켜짐일 때만 감시가 다시 켜집니다. `DriverMonitoringMode`와 `CarrotVisionEnabled`는 바꾸지 않습니다.
 
