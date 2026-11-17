@@ -73,6 +73,20 @@ class CarControllerParams:
       self.STEER_DELTA_UP = 10
       self.STEER_DELTA_DOWN = 15
 
+  # Panda GM torque limits (safety_gm.h GM_STEERING_LIMITS); a CustomSteerDelta* setting is clipped to stay inside them.
+  PANDA_MAX_RATE_UP = 20
+  PANDA_MAX_RATE_DOWN = 25
+  PANDA_MAX_RT_DELTA = 128
+  PANDA_RT_INTERVAL_MS = 250
+
+  def max_custom_steer_delta_up(self) -> int:
+    """Largest per-command rise whose sum stays inside the panda's real-time check at this command rate.
+    The panda compares each command with a reference it resets only after 250 ms have passed, and it checks before
+    resetting, so 250 // period + 1 rises land on one reference (9 at 3 frames, 7 at 4). One more command is allowed
+    for timing jitter. 3 frames: 12 (15 broke the check after the Bolt CC moved to 3 frames); 4 frames: 16."""
+    rises = self.PANDA_RT_INTERVAL_MS // (self.STEER_STEP * 10) + 2
+    return min(self.PANDA_MAX_RATE_UP, self.PANDA_MAX_RT_DELTA // rises)
+
   # determined by letting Volt regen to a stop in L gear from 89mph,
   # and by letting off gas and allowing car to creep, for determining
   # the positive threshold values at very low speed
@@ -358,7 +372,7 @@ CC_REGEN_PADDLE_CAR = {CAR.CHEVROLET_BOLT_CC}
 # Trailblazer use the same timing at the user's request. The Bolt No-ACC joins them (user request 2026-11-17): in a
 # 75 km/h Bolt EUV No-ACC log the +5 ramp (0.42/s) left the sent torque at 0.05 while the controller asked for 1.0 and
 # the car drifted over the outer line of a curve; a replay with the fitted steering response cut the tracking lag
-# from 0.60 to 0.28-0.30 s. Not yet checked in the car; the fingerprint also covers the Bolt EV 2017-21 No-ACC.
+# from 0.60 to 0.28-0.30 s. Not yet checked in the car; the fingerprint also covers the Bolt EV 2017-23 No-ACC.
 FROGPILOT_STEER_TIMING_CAR = {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
                               CAR.CHEVROLET_BOLT_CC}
 # We're integrated at the Safety Data Gateway Module on these cars

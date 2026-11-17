@@ -129,10 +129,11 @@ class CarController(CarControllerBase):
       steerDeltaDown = params.get_int("CustomSteerDeltaDown")
       if steerMax > 0:
         self.params.STEER_MAX = min(steerMax, self.params.STEER_MAX_EPS)
+      # a stored value larger than the panda limits for this command rate is clipped to them
       if steerDeltaUp > 0:
-        self.params.STEER_DELTA_UP = steerDeltaUp
+        self.params.STEER_DELTA_UP = min(steerDeltaUp, self.params.max_custom_steer_delta_up())
       if steerDeltaDown > 0:
-        self.params.STEER_DELTA_DOWN = steerDeltaDown
+        self.params.STEER_DELTA_DOWN = min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN)
       self.cluster_take_steering_mode = params.get_int("GmClusterTakeSteering")
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")
