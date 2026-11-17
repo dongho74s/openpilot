@@ -16,8 +16,15 @@ def ramp_commands(params, target, start=0, limit=500):
   return commands
 
 
-def test_frogpilot_timing_cars_are_traverse_trailblazer_and_trax():
-  assert FROGPILOT_STEER_TIMING_CAR == {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX}
+def test_frogpilot_timing_cars_are_traverse_trailblazer_trax_and_bolt_cc():
+  assert FROGPILOT_STEER_TIMING_CAR == {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
+                                        CAR.CHEVROLET_BOLT_CC}
+
+
+def test_bolt_euv_with_acc_keeps_existing_timing():
+  # only the Bolt No-ACC had a log showing the slow ramp; the Bolt EUV with ACC is unchanged
+  p = CarControllerParams(NS(carFingerprint=CAR.CHEVROLET_BOLT_EUV))
+  assert (p.STEER_STEP, p.STEER_DELTA_UP, p.STEER_DELTA_DOWN) == (4, 5, 7)
 
 
 @pytest.mark.parametrize("candidate", sorted(FROGPILOT_STEER_TIMING_CAR))
@@ -58,3 +65,22 @@ def test_custom_steer_max_is_capped_at_eps_limit(runtime, monkeypatch, custom, e
   assert controller.params.STEER_MAX == expected
   assert max(abs(x) for x in sent) == expected
   assert controller.params.STEER_STEP == 3
+
+
+def test_bolt_cc_controller_sends_at_33hz_with_frogpilot_steps(runtime, monkeypatch):
+  """Real GM CarController on the Bolt No-ACC: a full request ramps +10 every 3 frames and stays in panda's rate limits."""
+  monkeypatch.setattr(runtime.controller, "Params", MemoryParams)
+  controller = runtime.controller.CarController(DBC[CAR.CHEVROLET_BOLT_CC], build_cp(runtime, CAR.CHEVROLET_BOLT_CC, alpha=False))
+  assert (controller.params.STEER_STEP, controller.params.STEER_DELTA_UP, controller.params.STEER_DELTA_DOWN) == (3, 10, 15)
+  cc = structs.CarControl(enabled=True, latActive=True)
+  state = controller_state()
+  sent = []
+  for tick in range(150):
+    cc.actuators.torque = 1.0 if tick < 100 else -1.0
+    output, _ = controller.update(cc.as_reader(), state, 1_000_000_000 + tick * 10_000_000)
+    sent.append(output.torqueOutputCan)
+  changes = [b - a for a, b in zip(sent, sent[1:]) if b != a]
+  assert max(sent) == 300
+  assert max(changes) <= 10 and min(changes) >= -15   # within panda's +20/-25 per message
+  # 0 -> 300 in 30 commands of 3 frames = 0.9 s (25 Hz +5 needed 2.4 s)
+  assert sent.index(300) <= 92

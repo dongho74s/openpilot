@@ -355,8 +355,12 @@ EV_CAR = {CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_2019, CAR.CHEVROLET_BOLT_EUV, C
 CC_ONLY_CAR = {CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.CHEVROLET_SUBURBAN_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC}
 CC_REGEN_PADDLE_CAR = {CAR.CHEVROLET_BOLT_CC}
 # LKA command timing taken from FrogPilot GM (~33 Hz, +10/-15). Measured on the Traverse; the Trax and
-# Trailblazer use the same timing at the user's request.
-FROGPILOT_STEER_TIMING_CAR = {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX}
+# Trailblazer use the same timing at the user's request. The Bolt No-ACC joins them (user request 2026-11-17): in a
+# 75 km/h Bolt EUV No-ACC log the +5 ramp (0.42/s) left the sent torque at 0.05 while the controller asked for 1.0 and
+# the car drifted over the outer line of a curve; a replay with the fitted steering response cut the tracking lag
+# from 0.60 to 0.28-0.30 s. Not yet checked in the car; the fingerprint also covers the Bolt EV 2017-21 No-ACC.
+FROGPILOT_STEER_TIMING_CAR = {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
+                              CAR.CHEVROLET_BOLT_CC}
 # We're integrated at the Safety Data Gateway Module on these cars
 SDGM_CAR = {CAR.CADILLAC_XT4, CAR.CHEVROLET_TRAVERSE, CAR.BUICK_BABYENCLAVE, CAR.CHEVROLET_VOLT_2019}
 
