@@ -1293,6 +1293,8 @@ class ClusterUiRenderer:
         self._nav_model_checked = 0.
         self._nav_model_mtime = 0
         self._nav_model_fresh = False
+        self._nav_map_style = 0
+        self._nav_map_style_checked = 0.
         self._window_open = False
         self._font = None
         self._owns_font = False
@@ -1929,6 +1931,22 @@ class ClusterUiRenderer:
         self._draw_alert_overlay(getattr(state, "alert", None))
         self._profile_add("render.alert", profile_stage)
 
+    def _nav_map_satellite(self) -> bool:
+        # MapboxStyle 2 draws the Esri satellite background; read it at most once a second.
+        now = time.monotonic()
+        if now >= self._nav_map_style_checked:
+            self._nav_map_style_checked = now + 1.0
+            try:
+                from openpilot.common.params import Params
+                for params in (Params("/dev/shm/params"), Params()):
+                    raw = params.get("MapboxStyle")
+                    if raw is not None:
+                        self._nav_map_style = int(raw)
+                        break
+            except (OSError, ValueError):
+                pass
+        return self._nav_map_style == 2
+
     def _draw_nav_model_map(self):
         from openpilot.selfdrive.navigation.preview import PREVIEW_PATH, preview_fresh
         # Mode 7 keeps the normal driving view/HUD on the left. The map uses
@@ -1958,7 +1976,8 @@ class ClusterUiRenderer:
             rl.draw_texture_pro(self._nav_model_texture, rl.Rectangle(0, 0, 256, 256),
                                 rl.Rectangle(center_x - size / 2, 20, size, size),
                                 rl.Vector2(0, 0), 0, rl.WHITE)
-            self._draw_text("Mapbox / Protomaps | (c) OpenStreetMap", center_x,
+            self._draw_text("Mapbox / Protomaps | Esri | (c) OpenStreetMap" if self._nav_map_satellite()
+                            else "Mapbox / Protomaps | (c) OpenStreetMap", center_x,
                             DESIGN_HEIGHT - 40, 14, (180, 180, 180), "center")
         else:
             self._draw_text("NAV MAP: waiting for route / GPS / tiles", center_x,

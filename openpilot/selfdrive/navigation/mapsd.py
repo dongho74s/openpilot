@@ -45,10 +45,11 @@ def main():
   params = Params()
   demand_checked, demand = 0., False
   mapbox_token = ''
+  map_style = 0  # MapboxStyle: 0 normal, 1 dark (not implemented), 2 satellite
   archive_created = 0.
   diagnostics = RuntimeDiagnostics('mapsd', cloudlog.event, interval=5.)
   rk = Ratekeeper(10., print_delay_threshold=None)
-  route, tracker, archive, renderer = np.empty((0, 2)), None, None, None
+  route, tracker, archive, renderer, satellite = np.empty((0, 2)), None, None, None, None
   retry_at = next_render = next_preview = 0.
   was_ready = False
   route_id = 0
@@ -71,12 +72,16 @@ def main():
         token = os.environ.get('MAPBOX_TOKEN') or params.get('MapboxPublicKey') or ''
         if isinstance(token, bytes):
           token = token.decode('utf-8')
-        if token != mapbox_token or (archive is not None and now - archive_created >= 3600):
+        style = params.get_int('MapboxStyle')
+        if token != mapbox_token or style != map_style or (archive is not None and now - archive_created >= 3600):
           if archive is not None:
             archive.close()
-          archive = renderer = None
+          if satellite is not None:
+            satellite.close()
+          archive = renderer = satellite = None
           retry_at = next_render = 0.
           mapbox_token = token
+          map_style = style
         demand_checked = now + 1.
       ready = demand and tracker is not None and gps is not None and fresh_tbt
       if now >= next_render or (was_ready and not ready):
@@ -89,12 +94,15 @@ def main():
             if renderer is None:
               archive = MapboxTiles(mapbox_token) if mapbox_token else PMTiles(RemoteTiles())
               archive_created = now
-              renderer = MapRenderer(archive)
+              if map_style == 2:
+                from openpilot.selfdrive.navigation.esri_tiles import EsriTiles
+                satellite = EsriTiles()
+              renderer = MapRenderer(archive, satellite=satellite)
             pose = tracker.update_pose(gps.longitude, gps.latitude, gps.speed * (now - gps.time))
             # Fetch only the current view; do not prefetch a whole country/route.
             if pose is not None:
               lon, lat, bearing = pose
-            result = renderer.render(Position(lat, lon, bearing), route) if pose is not None else None
+            result = renderer.render(Position(lat, lon, bearing), route, satellite=(map_style == 2)) if pose is not None else None
             valid = result is not None and result.valid
             reason = 'ready' if valid else 'route_position' if pose is None else 'tiles'
             if valid:
@@ -103,7 +111,9 @@ def main():
           cloudlog.warning('mapsd: map unavailable; retry in 30 seconds')
           if archive is not None:
             archive.close()
-          archive = renderer = None
+          if satellite is not None:
+            satellite.close()
+          archive = renderer = satellite = None
           retry_at = time.monotonic() + 30.
         finished = time.monotonic()
         if finished - started >= .5:
@@ -126,6 +136,8 @@ def main():
   finally:
     if archive is not None:
       archive.close()
+    if satellite is not None:
+      satellite.close()
 
 
 if __name__ == '__main__':

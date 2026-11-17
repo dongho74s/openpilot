@@ -177,3 +177,66 @@ class TestRouteTracking(unittest.TestCase):
     self.assertAlmostEqual(RouteTracker(route).snap(9 * m, 150 * m)[2], 180, places=3)
     with self.assertRaises(ValueError):
       RouteTracker(np.array([[0, 0]])).snap(0, 0)
+
+class FakeSatellite:
+  """A satellite source returning one synthetic tile for every request, or None to simulate a fetch failure."""
+  def __init__(self, value=100, fail=False, gradient=False):
+    self.value = value
+    self.fail = fail
+    self.gradient = gradient
+
+  def get(self, zoom, x, y):
+    if self.fail:
+      return None
+    if self.gradient:
+      return np.tile(np.arange(256, dtype=np.uint8), (256, 1))  # value is the tile's x pixel
+    return np.full((256, 256), self.value, dtype=np.uint8)
+
+  def close(self):
+    pass
+
+class TestSatellite(unittest.TestCase):
+  def test_satellite_background_and_fallback(self):
+    route = np.array([[0, -0.01], [0, 0.01]])
+    with local_archive(make_archive()) as archive:
+      # Satellite on, tiles available: the imagery shows away from the road/route/arrow,
+      # and the route (grey) stays drawn on top of it.
+      renderer = MapRenderer(archive, satellite=FakeSatellite(value=100))
+      result = renderer.render(Position(0, 0, 0), route, satellite=True)
+      self.assertTrue(result.valid)
+      self.assertEqual(result.image[0, 0], 100)
+      self.assertEqual(result.image[128, 128], 128)  # the route replaces the road at the center
+      # The road itself (white) is still drawn on top of the imagery; render without
+      # a route so the route does not cover it.
+      road_only = renderer.render(Position(0, 0, 0), satellite=True)
+      self.assertEqual(road_only.image[0, 0], 100)
+      self.assertEqual(road_only.image[100, 128], 255)  # on the road, off the arrow
+      # Satellite off: the old black background.
+      plain = MapRenderer(archive).render(Position(0, 0, 0), route)
+      self.assertEqual(plain.image[0, 0], 0)
+      self.assertEqual(plain.image[128, 128], 128)
+      # Satellite on but tiles unavailable: falls back to the vector-only render, never blank.
+      failing = MapRenderer(archive, satellite=FakeSatellite(fail=True))
+      fallback = failing.render(Position(0, 0, 0), route, satellite=True)
+      self.assertEqual(fallback.image[0, 0], 0)
+      self.assertEqual(fallback.image[128, 128], 128)
+      self.assertTrue(fallback.valid)
+
+  def test_satellite_sampling(self):
+    # A gradient tile (value = tile x pixel) pins the inverse projection: at the
+    # top-left corner of a bearing-0 view over the prime meridian, the sampled
+    # tile pixel is 149 (computed by hand from the mercator math).
+    with local_archive(make_archive()) as archive:
+      renderer = MapRenderer(archive, satellite=FakeSatellite(gradient=True))
+      result = renderer.render(Position(0, 0, 0), satellite=True)
+      self.assertEqual(result.image[0, 0], 149)
+      self.assertNotEqual(result.image[0, 0], result.image[0, 255])  # the imagery varies across the view
+
+  def test_satellite_tiles_cover_view(self):
+    # Seoul at the satellite zoom: a handful of tiles around the city center.
+    # The view radius spans about one tile each way, so 3-4 tiles per axis.
+    with local_archive(make_archive()) as archive:
+      renderer = MapRenderer(archive, satellite=FakeSatellite())
+      tiles = renderer.satellite_tiles(126.9780, 37.5665)
+      self.assertTrue(1 <= len(tiles) <= 16)
+      self.assertTrue(all(0 <= y < (1 << 17) for _, y in tiles))

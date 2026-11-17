@@ -21,6 +21,8 @@ from openpilot.selfdrive.navigation.vector_tile import Road, decode_roads
 
 SIZE = 256
 ZOOM = 15  # tile zoom; the style zoom is derived from METERS_PER_PIXEL
+SAT_ZOOM = 17  # Esri imagery zoom; ~1 m per pixel near Seoul
+SAT_TILE = 256  # Esri tiles are 256x256, matching the render size
 METERS_PER_PIXEL = 1.0
 FORWARD_OFFSET = 64.0  # the ego sits three quarters down the frame
 EARTH_CIRCUMFERENCE = 40075016.68557849
@@ -195,8 +197,9 @@ def draw_vehicle(image: np.ndarray, center: np.ndarray):
 
 
 class MapRenderer:
-  def __init__(self, archive: PMTiles):
+  def __init__(self, archive: PMTiles, satellite=None):
     self.archive = archive
+    self.satellite = satellite  # EsriTiles or None; raster background for the satellite style
     self.zoom = min(max(ZOOM, archive.min_zoom), archive.max_zoom)
     self.roads = lru_cache(maxsize=128)(self._load_roads)
 
@@ -236,6 +239,56 @@ class MapRenderer:
     tiles = [(x % count, y) for y in range(low[1], high[1] + 1) for x in range(low[0], high[0] + 1) if 0 <= y < count]
     return tiles, len(tiles) == (high[0] - low[0] + 1) * (high[1] - low[1] + 1)
 
+  def satellite_tiles(self, longitude: float, latitude: float) -> list[tuple[int, int]]:
+    """Esri tiles covering the view at the satellite zoom, for every heading."""
+    origin = mercator(np.array([[longitude, latitude]]))[0]
+    radius = (SIZE * METERS_PER_PIXEL / math.sqrt(2) + FORWARD_OFFSET + 16) / (EARTH_CIRCUMFERENCE * math.cos(math.radians(latitude)))
+    count = 1 << SAT_ZOOM
+    low = np.floor((origin - radius) * count).astype(int)
+    high = np.floor((origin + radius) * count).astype(int)
+    if (high[0] - low[0] + 1) * (high[1] - low[1] + 1) > 256:
+      raise ValueError("Satellite view requires more than 256 tiles; use a lower zoom")
+    return [(x % count, y) for y in range(low[1], high[1] + 1) for x in range(low[0], high[0] + 1) if 0 <= y < count]
+
+  def _satellite_background(self, position: Position) -> np.ndarray | None:
+    """Grayscale imagery under the view, or None if any tile covering it is unavailable.
+
+    The caller falls back to the vector-only render, so a missing tile never
+    blanks the map. Sampling is the inverse of project(): screen pixels back
+    to Web Mercator, then into the covering Esri tiles.
+    """
+    if self.satellite is None:
+      return None
+    wanted = self.satellite_tiles(position.longitude, position.latitude)
+    tiles = {}
+    for x, y in wanted:
+      tile = self.satellite.get(SAT_ZOOM, x, y)
+      if tile is None:
+        return None
+      tiles[(x, y)] = tile
+    ys, xs = np.mgrid[0:SIZE, 0:SIZE]
+    right = (xs + 0.5 - SIZE / 2) * METERS_PER_PIXEL
+    forward = (SIZE / 2 - (ys + 0.5)) * METERS_PER_PIXEL + FORWARD_OFFSET
+    angle = math.radians(position.bearing)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    east = right * cos_a + forward * sin_a
+    north = -right * sin_a + forward * cos_a
+    scale = EARTH_CIRCUMFERENCE * math.cos(math.radians(position.latitude))
+    origin = mercator(np.array([[position.longitude, position.latitude]]))[0]
+    count = 1 << SAT_ZOOM
+    fx = (origin[0] + east / scale) * count
+    fy = (origin[1] - north / scale) * count
+    tile_x = np.floor(fx).astype(np.int64) % count
+    tile_y = np.floor(fy).astype(np.int64)
+    px = np.clip(((fx - np.floor(fx)) * SAT_TILE).astype(np.int64), 0, SAT_TILE - 1)
+    py = np.clip(((fy - np.floor(fy)) * SAT_TILE).astype(np.int64), 0, SAT_TILE - 1)
+    background = np.zeros((SIZE, SIZE), dtype=np.uint8)
+    for (x, y), tile in tiles.items():
+      mask = (tile_x == x) & (tile_y == y)
+      if mask.any():
+        background[mask] = tile[py[mask], px[mask]]
+    return background
+
   def route_tiles(self, route: np.ndarray) -> set[tuple[int, int]]:
     """Every tile the view can show while the pose is snapped onto the route."""
     tiles: set[tuple[int, int]] = set()
@@ -248,8 +301,11 @@ class MapRenderer:
   def prefetch(self, route: np.ndarray):
     self.archive.prefetch((self.zoom, x, y) for x, y in self.route_tiles(route))
 
-  def render(self, position: Position, route: np.ndarray | None = None) -> RenderResult:
+  def render(self, position: Position, route: np.ndarray | None = None, satellite: bool = False) -> RenderResult:
     image = np.full((SIZE, SIZE), BACKGROUND, dtype=np.uint8)
+    satellite_bg = self._satellite_background(position) if satellite else None
+    if satellite_bg is not None:
+      image = satellite_bg
     wanted, complete = self.view_tiles(position.longitude, position.latitude)
     loaded = [self.roads(x, y) for x, y in wanted]
     tiles = [tile for tile in loaded if tile is not None]
@@ -273,10 +329,17 @@ class MapRenderer:
           # Cut the roads beneath, open at way endpoints so a bridge does not end in a black oval.
           draw_segments(image, starts[chosen], ends[chosen], (widths[chosen] + CUT_WIDTH) / 2, BACKGROUND,
                         overlay=True, caps=~caps[chosen])
+        if satellite_bg is not None:
+          # A dark outline keeps the white roads readable on bright imagery.
+          draw_segments(image, starts[chosen], ends[chosen], (widths[chosen] + 2.0) / 2, BACKGROUND, overlay=True)
         draw_segments(image, starts[chosen], ends[chosen], widths[chosen] / 2, ROAD_INTENSITY)
     route_present = route is not None and len(route) >= 2
     if route_present:
-      draw_line(image, project(mercator(route), position), ROUTE_INTENSITY, ROUTE_WIDTH, overlay=True)
+      projected = project(mercator(route), position)
+      if satellite_bg is not None:
+        # A dark outline keeps the grey route readable on bright imagery.
+        draw_line(image, projected, BACKGROUND, ROUTE_WIDTH + 2.0, overlay=True)
+      draw_line(image, projected, ROUTE_INTENSITY, ROUTE_WIDTH, overlay=True)
     draw_vehicle(image, ego)
     return RenderResult(image, complete, route_present, road_distance)
 
