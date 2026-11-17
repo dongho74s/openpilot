@@ -6,6 +6,7 @@ import numpy as np
 from opendbc.can.packer import CANPacker
 from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, structs, create_gas_interceptor_command
 from opendbc.car.gm import gmcan
+from opendbc.car.gm.torque_rt_guard import PandaRtGuard
 from opendbc.car.gm.auto_resume import GMAutoResume
 from opendbc.car.gm.auto_stop_off import AutoStopOff, BUTTON_MAX_AGE_NS, LATCH_MAX_AGE_NS, feature_now_ns, fresh
 from openpilot.common.swaglog import cloudlog
@@ -67,6 +68,7 @@ class CarController(CarControllerBase):
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
+    self.panda_rt_guard = PandaRtGuard(self.params.PANDA_MAX_RT_DELTA, self.params.PANDA_RT_INTERVAL_MS)
     self.params_ = Params() # kans: button spam
     self.traverse_sdgm_long = bool(
       CP.carFingerprint == CAR.CHEVROLET_TRAVERSE and CP.openpilotLongitudinalControl
@@ -177,6 +179,8 @@ class CarController(CarControllerBase):
         apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params)
       else:
         apply_torque = 0
+      # stays inside the panda's 250 ms change limit even when the loop runs late and catches up
+      apply_torque = self.panda_rt_guard.clip(apply_torque, now_nanos)
 
       self.last_steer_frame = self.frame
       self.apply_torque_last = apply_torque
