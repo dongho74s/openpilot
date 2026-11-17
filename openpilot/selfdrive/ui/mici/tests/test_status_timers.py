@@ -412,10 +412,11 @@ def test_bsd_strips_survive_timer_while_only_optional_vision_card_is_hidden():
   assert [args[0] for args in draws] == [(66, 78, 6, 56), (524, 78, 6, 56)]
 
 
+@pytest.mark.parametrize('face', ['clock_ui', 'robot_ui'])
 @pytest.mark.parametrize('kind', ['parking', 'hold'])
-def test_clock_ui_hides_stop_timers_and_the_notice_they_cover(monkeypatch, kind):
+def test_clock_ui_hides_stop_timers_and_the_notice_they_cover(monkeypatch, kind, face):
   renderer, ns, cs, sm, draws = make_renderer(monkeypatch)
-  ns['ui_state'].clock_ui = True
+  setattr(ns['ui_state'], face, True)
   if kind == 'parking':
     cs.parkingBrake = True
     covered = ns['Alert']('주차 브레이크', '', size=1, alert_type='parkBrake/noEntry')
@@ -431,7 +432,7 @@ def test_clock_ui_hides_stop_timers_and_the_notice_they_cover(monkeypatch, kind)
   # The stop is still timed behind the clock: switching back shows the real elapsed time.
   monkeypatch.setattr(ns['time'], 'monotonic', lambda: 15.)
   sm.recv_time = dict.fromkeys(sm.recv_time, 15.)
-  ns['ui_state'].clock_ui = False
+  setattr(ns['ui_state'], face, False)
   renderer.will_render()
   renderer._render(renderer.rect)
   assert draws[-1][1].kind == kind and draws[-1][1].elapsed == pytest.approx(5.)

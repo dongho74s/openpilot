@@ -134,8 +134,8 @@ class AlertRenderer(Widget):
       self._reset_timers()
     alert = self.get_alert(ui_state.sm)
     timer = self._timer_display(alert)
-    if timer is not None and getattr(ui_state, "clock_ui", False):
-      # NewUi 2 (clock): no parking/hold timer over the clock, and not the low-priority notice it
+    if timer is not None and (getattr(ui_state, "clock_ui", False) or getattr(ui_state, "robot_ui", False)):
+      # NewUi 2/3 (clock, robot face): no parking/hold timer over the face, and not the low-priority notice it
       # would have covered either. The timers keep counting; other and critical alerts still show.
       alert = timer = None
     self.timer_visible = timer is not None

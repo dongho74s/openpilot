@@ -212,3 +212,18 @@ def test_switching_clock_off_restores_the_new_ui_view(view):
   v.obj._render(None)
   names = [c[0] for c in v.calls]
   assert 'clock' not in names and {'camera', 'model', 'hud', 'vision'} <= set(names)
+
+
+def test_robot_face_replaces_the_view_like_the_clock(view):
+  v = view
+  v.ui.new_ui, v.ui.robot_ui, v.ui.clock_ui = True, True, False
+  v.obj._robot = lambda: NS(render=lambda rect: v.calls.append(('robot', rect)))
+  v.obj._clock = lambda: pytest.fail('clock drawn in robot mode')
+  v.obj._alert_renderer.will_render = lambda: (NS(), True)
+  v.obj._render(None)
+  names = [c[0] for c in v.calls]
+  assert ('robot', v.rl.Rectangle(0, 0, 536, 240)) in v.calls
+  for hidden in ('camera', 'model', 'hud', 'vision', 'signal', 'confidence'):
+    assert hidden not in names
+  assert names.index('robot') < names.index('alert')
+  assert next(c[2] for c in v.calls if c[0] == 'wayon_dm') is True
