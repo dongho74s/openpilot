@@ -258,6 +258,8 @@ def run_dm2(params, experimental, initial_car_params=None):
       monitoring_enabled = requested_enabled
       if monitoring_enabled:
         dm.always_on = params.get_bool("AlwaysOnDM")
+        # 실험용: 실내 카메라 폰 사용 경고 끄기 (재시작 없이 약 2초 안에 반영)
+        dm.phone_warning_off = params.get_bool("CarrotPhoneWarningOff")
       demo_mode = params.get_bool("IsDriverViewEnabled")
       rhd_saved = params.get_bool("IsRhdDetected")
     if sm.updated['carParams']:

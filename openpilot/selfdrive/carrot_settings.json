@@ -512,6 +512,7 @@
           "params": [
             "DriverMonitoringEnabled",
             "DriverMonitoringMode",
+            "CarrotPhoneWarningOff",
             "CarrotVisionEnabled",
             "CarrotVisionParkedEnabled",
             "MuteDoor",
@@ -2399,6 +2400,24 @@
           "实验（仅供测试）"
         ]
       },
+      "risk": "high"
+    },
+    {
+      "group": "시작",
+      "name": "CarrotPhoneWarningOff",
+      "title": "실험용: 폰 사용 경고 끄기",
+      "descr": "실험용 설정입니다. 켜면 실내 카메라가 폰을 감지해도 폰 사용 경고를 띄우지 않습니다. 폰 감지만 무시할 뿐, 시선 이탈·눈 감김·졸음·자세 등 다른 운전자 감시 경고는 그대로 동작합니다. 폰 사용 경고는 안전 기능이므로 주차 중에만 테스트하고, 주행 중에는 끈 채로 두지 마세요.\n0: 끄기 (기본, 경고 정상 동작)\n1: 켜기 (폰 경고 안 뜸, 실험용)",
+      "egroup": "START",
+      "etitle": "Experimental: Turn Off Phone-Use Warning",
+      "edescr": "Experimental setting. When on, the phone-use warning is not shown even when the cabin camera detects a phone. Only phone detection is ignored; other driver-monitoring warnings (eyes off road, eye closure, drowsiness, head pose) keep working. The phone warning is a safety feature: test only while parked, and do not leave it off while driving.\n0: Off (default, warning works normally)\n1: On (no phone warning, experimental)",
+      "cgroup": "启动设置",
+      "ctitle": "实验：关闭手机使用警告",
+      "cdescr": "实验设置。开启后即使车内摄像头检测到手机，也不会显示手机使用警告。仅忽略手机检测；视线偏离、闭眼、困倦、头部姿态等其他驾驶员监控警告照常工作。手机警告属于安全功能，仅限停车时测试，行车时请勿保持关闭。\n0：关闭（默认，警告正常工作）\n1：开启（无手机警告，实验用）",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle",
       "risk": "high"
     },
     {
