@@ -49,6 +49,8 @@ On a fresh install, `Tools > Web Settings > Layout` starts with **Area 1 full sc
 
 ### C4 display selection: new ui
 
+**Display → On-screen Info → new ui** (`NewUi`) takes 0, 1 or 2 and defaults to 0. 0 is the Carrot UI, 1 is the Wayon/sunnypilot-style layout described below (called ON below), and 2 is the clock face. A previously enabled ON value stays as 1.
+
 In new ui, lane lines and road edges are continuous white outlines without lane-type, engagement or steering-torque color changes. Confidence-based opacity and lane geometry remain; the central driving path and lead-bar colors are unchanged. Navdy still receives the original lane types and solid/dashed markings. OFF restores the legacy C4 presentation.
 
 ON uses the full 536×240 display. The right-hand confidence ball and traffic-light indicator are hidden and their reserved 60px column is removed. Camera projection, lanes, front-vehicle markers, BSM and the HUD share the full width. OFF restores the original 476px camera area and right-hand status column. This is a display change only; signal detection, alerts and control behavior remain unchanged.
@@ -65,7 +67,9 @@ DM uses the original Wayon person silhouette and direction cone instead of the a
 
 BSM/DM attribution: This project uses software from Haibin Wen and SUNNYPILOT LLC and is licensed under a custom license requiring permission for use. See the [retained upstream license](../../third_party/sunnypilot-bsm-license.md).
 
-The selection refreshes about every 0.5 seconds without a reboot; OFF restores the existing Carrot UI. It does not change C3, the external cluster, offroad greetings/summary, steering, braking or driver-monitoring decisions. The initial software update must complete its normal build to register the new parameter.
+**2 (clock)**: while driving, the C4 screen turns off the camera, lanes, speed panel and DM display and shows only a wide analog clock in Korea time: minute and hour marks along the outer edge, 12/3/6/9 numerals, hour and minute hands and a sweeping second hand. The left side shows a steering-wheel icon and the current speed, the right side the weekday (in English) and date. The wheel icon is green while openpilot steers and gray otherwise. After dark the whole face turns red and the second hand is hidden; the wheel icon is then bright red while steering and dark red otherwise. Night uses the same sun rule as the Navdy ambient light: it starts once the sun is 4° below the horizon (computed for Seoul, about 20 minutes after sunset) and ends when it rises above -3° at dawn, fading over about a second. Camera exposure is not used because at night it reads like overcast daytime driving, so daytime tunnels and garages do not switch it. Right after starting it shows the mode for the current time at once; until the comma clock is set it stays in day mode. Alerts and timers still appear over the clock. Only the display changes; alert decisions, sounds and vehicle control are unchanged.
+
+The selection refreshes about every 0.5 seconds without a reboot; 0 restores the existing Carrot UI. It does not change C3, the external cluster, offroad greetings/summary, steering, braking or driver-monitoring decisions. The initial software update must complete its normal build to register the new parameter.
 
 Carrot Web provides:
 

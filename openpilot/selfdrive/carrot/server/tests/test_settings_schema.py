@@ -78,13 +78,16 @@ def test_sound_volume_auto_sentinel_preserves_existing_defaults_and_engage(param
     assert service.get_param_value("SoundVolumeAdjust", 100) == value
 
 
-def test_new_ui_is_default_off_live_toggle_first_in_display(settings):
+def test_new_ui_is_default_carrot_live_select_first_in_display(settings):
   _, by_name, _ = group_index(settings)
   toggle = by_name["NewUi"]
-  assert (toggle["control"], toggle["min"], toggle["max"], toggle["default"]) == ("toggle", 0, 1, 0)
+  assert (toggle["control"], toggle["min"], toggle["max"], toggle["default"]) == ("select", 0, 2, 0)
   assert all(toggle[key] == "new ui" for key in ("title", "etitle", "ctitle"))
-  assert "C4" in toggle["descr"] and "재부팅 없이" in toggle["descr"]
-  assert '{"NewUi", {PERSISTENT, BOOL, "0"}}' in PARAMS_KEYS_PATH.read_text(encoding="utf-8")
+  assert "C4" in toggle["descr"] and "재부팅 없이" in toggle["descr"] and "시계" in toggle["descr"]
+  assert toggle["options"]["ko"] == ["0 당근", "1 new ui", "2 시계"]
+  assert all(len(toggle["options"][locale]) == 3 for locale in ("ko", "en", "zh"))
+  # INT, not BOOL: a BOOL key would read a stored 2 as OFF.
+  assert '{"NewUi", {PERSISTENT, INT, "0"}}' in PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   categories = build_menu_categories(settings, by_name)
   section = next(section for category in categories for group in category["groups"] for section in group["sections"]
                  if "ShowDebugUI" in section["items"])

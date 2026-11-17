@@ -170,3 +170,45 @@ def test_new_ui_without_onroad_keeps_offroad_cover_and_no_status_rail(view):
   names = [c[0] for c in view.calls]
   assert 'offroad' in names and 'draw_rectangle' in names
   assert 'signal' not in names and 'confidence' not in names
+
+
+@pytest.mark.parametrize('mode', range(4))
+@pytest.mark.parametrize('suppress', [False, True])
+@pytest.mark.parametrize('alert', [False, True])
+def test_clock_replaces_camera_model_and_hud_but_alerts_draw_on_top(view, mode, suppress, alert):
+  v = view
+  v.ui.new_ui, v.ui.clock_ui, v.ui.show_model_view = True, True, mode
+  v.obj._suppress_camera_for_cluster = suppress
+  v.obj._clock = lambda: NS(render=lambda rect: v.calls.append(('clock', rect)))
+  if alert:
+    v.obj._alert_renderer.will_render = lambda: (NS(), True)
+  v.obj._render(None)
+  names = [c[0] for c in v.calls]
+  full = v.rl.Rectangle(0, 0, 536, 240)
+  assert ('clock', full) in v.calls
+  for hidden in ('camera', 'model', 'hud', 'vision', 'draw_texture_pro', 'draw_texture_ex', 'signal', 'confidence'):
+    assert hidden not in names
+  assert names.index('clock') < names.index('alert') < names.index('draw_rectangle_rounded_lines_ex')
+  assert next(c[2] for c in v.calls if c[0] == 'dm') is True
+  assert next(c[2] for c in v.calls if c[0] == 'wayon_dm') is True
+  assert 'bookmark' in names and 'uiDebug' in names
+
+
+def test_clock_only_while_onroad(view):
+  view.ui.new_ui, view.ui.clock_ui, view.ui.started = True, True, False
+  view.obj._clock = lambda: pytest.fail('clock drawn offroad')
+  view.obj._render(None)
+  names = [c[0] for c in view.calls]
+  assert 'camera' in names and 'offroad' in names
+
+
+def test_switching_clock_off_restores_the_new_ui_view(view):
+  v = view
+  v.ui.new_ui, v.ui.clock_ui = True, True
+  v.obj._clock = lambda: NS(render=lambda rect: v.calls.append(('clock', rect)))
+  v.obj._render(None)
+  v.calls.clear()
+  v.ui.clock_ui = False
+  v.obj._render(None)
+  names = [c[0] for c in v.calls]
+  assert 'clock' not in names and {'camera', 'model', 'hud', 'vision'} <= set(names)
