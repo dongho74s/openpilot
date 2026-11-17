@@ -4047,7 +4047,7 @@
       "min": 10,
       "max": 200,
       "default": 30,
-      "unit": 5,
+      "unit": 1,
       "display_unit": "speedKph"
     },
     {
