@@ -487,6 +487,7 @@ class ClusterUiState:
     traffic_state: int = 0
     driving_mode: int | None = None
     git_status: GitBranchStatus | None = None
+    cellular_data_text: str | None = None
     actual_fps: float | None = None
     cluster_core_usage_text: str | None = None
     cpu_usage_percent: float | None = None

@@ -459,6 +459,7 @@ GIT_STATUS_BOTTOM_MARGIN = 12
 GIT_STATUS_DOT_RADIUS = 7
 GIT_STATUS_DOT_TEXT_GAP = 6
 GIT_STATUS_MAX_TEXT_W = 610
+CELLULAR_DATA_GAP = 18
 FPS_STATUS_MARGIN = 4
 FPS_STATUS_DOT_RADIUS = 7
 FPS_STATUS_DOT_TEXT_GAP = 6
@@ -5608,11 +5609,11 @@ class ClusterUiRenderer:
             rl.rl_push_matrix()
             try:
                 rl.rl_translatef(offset_x, 0.0, 0.0)
-                self._draw_git_status(state.git_status, state.network_address, state.actual_fps)
+                self._draw_git_status(state.git_status, state.network_address, state.actual_fps, state.cellular_data_text)
             finally:
                 rl.rl_pop_matrix()
         else:
-            self._draw_git_status(state.git_status, state.network_address, state.actual_fps)
+            self._draw_git_status(state.git_status, state.network_address, state.actual_fps, state.cellular_data_text)
         self._profile_add("hud.git_status", profile_stage)
         if include_core_usage:
             profile_stage = self._profile_start()
@@ -8257,8 +8258,9 @@ class ClusterUiRenderer:
         status: GitBranchStatus | None,
         network_address: str | None = None,
         actual_fps: float | None = None,
+        cellular_data_text: str | None = None,
     ) -> None:
-        if status is None and network_address is None:
+        if status is None and network_address is None and not cellular_data_text:
             return
 
         theme = self._current_theme()
@@ -8268,6 +8270,7 @@ class ClusterUiRenderer:
         row_h = max(text_height, GIT_STATUS_DOT_RADIUS * 2)
         center_y = DESIGN_HEIGHT - GIT_STATUS_BOTTOM_MARGIN - row_h * 0.5
         text_x = GIT_STATUS_MARGIN + GIT_STATUS_DOT_RADIUS * 2 + GIT_STATUS_DOT_TEXT_GAP
+        data_x = text_x
         if status is not None:
             color = self._git_status_color(status, theme)
             text = status.branch if not status.detail else f"{status.branch} ({status.detail})"
@@ -8275,6 +8278,12 @@ class ClusterUiRenderer:
             dot_center_x = GIT_STATUS_MARGIN + GIT_STATUS_DOT_RADIUS
             rl.draw_circle_v(rl.Vector2(dot_center_x, center_y), GIT_STATUS_DOT_RADIUS, rl_color(color))
             self._draw_text_with_stroke(text, text_x, center_y, text_size, WHITE, (5, 9, 12), 2, cache=True)
+            branch_width, _ = self._measure_text(text, text_size, spacing)
+            data_x = text_x + branch_width + CELLULAR_DATA_GAP
+        if cellular_data_text:
+            max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
+            data_text = self._ellipsize_text(cellular_data_text, text_size, max_w)
+            self._draw_text_with_stroke(data_text, data_x, center_y, text_size, WHITE, (5, 9, 12), 2)
         if network_address:
             network_text = self._ellipsize_text(network_address, text_size, GIT_STATUS_MAX_TEXT_W)
             network_y = center_y - row_h - 4.0

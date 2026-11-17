@@ -10,6 +10,7 @@ import threading
 import time
 from pathlib import Path
 
+from cluster_cellular_data import CellularDataProvider
 from cluster_config import (
     CLUSTER_BRIGHTNESS_PARAM,
     CLUSTER_CAMERA_VIEW_MODE_PARAM,
@@ -873,6 +874,7 @@ def run_demo(
     )
     renderer.set_profile_enabled(profile_render)
     git_status_provider = GitBranchStatusProvider(Path(__file__).resolve().parent)
+    cellular_data_provider = CellularDataProvider()
     network_address_provider = NetworkAddressProvider()
     cluster_core_usage_sampler = (
         ClusterProcessCoreUsageSampler(debug=cluster_core_usage_debug)
@@ -1581,6 +1583,7 @@ def run_demo(
                 camera_view_mode=active_camera_view_mode,
                 center_clock_text=center_clock_text,
                 git_status=git_status_provider.status(),
+                cellular_data_text=cellular_data_provider.text(now),
                 network_address=network_address,
                 network_connected=network_address is not None,
                 actual_fps=display_actual_fps,
