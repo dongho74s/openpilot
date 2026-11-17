@@ -4,7 +4,6 @@ from openpilot.selfdrive.ui.mici.layouts.home import MiciHomeLayout
 from openpilot.selfdrive.ui.mici.layouts.settings.settings import SettingsLayout
 from openpilot.selfdrive.ui.mici.layouts.offroad_alerts import MiciOffroadAlerts
 from openpilot.selfdrive.ui.mici.onroad.augmented_road_view import AugmentedRoadView
-from openpilot.selfdrive.ui.mici.onroad.screen_off_clock import draw_screen_off_clock
 from openpilot.selfdrive.ui.mici.onroad import SIDE_PANEL_WIDTH
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.selfdrive.ui.b1_badge import draw as draw_b1_badge
@@ -146,29 +145,7 @@ class MiciMainLayout(Scroller):
     # S3 link on a second row, aligned with it and clear of the side panel.
     draw_b1_badge(self._rect, top=52, right_margin=SIDE_PANEL_WIDTH + 24)
 
-    # 화면 꺼짐(밝기 0) + 시계 켜짐 + 주차/정지 상태: 빨간 아날로그 시계를
-    # 기기 화면 전체에 그린다 (주행 화면 대신 표시, 외부 HUD는 건드리지 않음).
-    # 주행 중(오픈파일럿 켜짐 + 움직이는 중)에는 시계를 띄우지 않는다.
-    # 가장 마지막에 그려 화면의 다른 요소를 모두 덮는다.
-    if self._screen_off_clock_active():
-      draw_screen_off_clock(self._rect)
-
     self._handle_carrot_record_cmd(ui_state.sm)
-
-  def _screen_off_clock_active(self) -> bool:
-    # 밝기 0이 아니면 화면이 꺼진 상태가 아니라 시계를 띄우지 않는다.
-    if ui_state.show_brightness_ratio >= 0:
-      return False
-    if not ui_state.screen_off_clock:
-      return False
-    # 주차/정지 상태일 때만 시계를 띄운다. 시동이 꺼진 상태(offroad)는 항상 표시,
-    # 주행 화면(onroad)에서는 정지 상태일 때만 표시한다.
-    if not ui_state.started:
-      return True
-    try:
-      return bool(ui_state.sm["carState"].standstill)
-    except Exception:
-      return False
 
   def _handle_transitions(self):
     # Don't pop if onboarding

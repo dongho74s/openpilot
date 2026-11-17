@@ -373,7 +373,7 @@ Jetson HUD에는 `jetSON` 아래에 Jetson 내부 센서의 최고 온도가 표
 |---|---|---|
 | 정보 표시 | `ShowDebugUI`, `ShowTpms`, `ShowDateTime`, `ShowPathEnd`, `ShowDeviceState`, `ShowLaneInfo`, `ShowRadarInfo`, `ShowRouteInfo`, `ShowPlotMode` | 주행 화면의 디버그, 타이어, 시간, 차선, 레이더와 경로 정보 |
 | 경로 표시 | `ShowPathMode`, `ShowPathColor`, `ShowPathColorCruiseOff`, `ShowPathModeLane`, `ShowPathColorLane` | 레인리스·레인모드·크루즈 OFF 상태의 경로 모양과 색상 |
-| 밝기·주행화면 | `ShowCustomBrightness`, `OnroadMinimalMode`, `CarrotScreenOffClock`, `ShowModelView`, `ShowCameraWithCluster` | 주행 중 밝기, 최소 모드(기기 화면만), 화면 꺼짐 시 빨간 시계, 카메라·모델 표시 조합과 외부 HUD 연결 중 본체 카메라 표시 |
+| 밝기·주행화면 | `ShowCustomBrightness`, `OnroadMinimalMode`, `ShowModelView`, `ShowCameraWithCluster` | 주행 중 밝기, 최소 모드(기기 화면만), 카메라·모델 표시 조합과 외부 HUD 연결 중 본체 카메라 표시 |
 | 외부 HUD·기본 | `ClusterHud`, `ClusterHudBrightness`, `ClusterHudOrientation`, `ClusterHudMirror`, `ClusterHudTheme`, `ClusterNaviMapTheme`, `ClusterNaviMapType`, `ClusterNaviMapFps` | TURZX 외부 HUD, 밝기, 화면 회전, 미러링과 지도 테마 |
 | 외부 HUD·화면·카메라 | `ClusterHudEncoder`, `ClusterHudScreenMode`, `ClusterHudPanelLayout`, `ClusterHudCameraViewMode` | 인코더와 화면·카메라·좌우 패널 구성 |
 | 외부 HUD·레이더 표시 | `ClusterHudRadarInfo`, `ClusterHudRadarDisplay`, `ClusterHudRadarSourceColor` | 외부 HUD의 레이더 정보와 색상 |
@@ -399,7 +399,7 @@ Onroad에서는 본체 UI가 CPU 6번, 외부 HUD가 CPU 7번을 일반 스케�
 
 `ShowRouteInfo` 설명에 남아 있는 APN 표기는 경로 정보 입력 상태를 뜻합니다. 이를 CarrotMan 또는 CarrotLink 지원 안내로 해석하면 안 됩니다.
 
-`ShowCustomBrightness=0`은 기기 화면을 끕니다 (외부 HUD는 별도 디스플레이라 영향 없음 — 다시 켜려면 웹 설정에서 밝기를 바꾸세요). `1`은 주변 밝기에 따른 자동 조절이고, `2~100`은 수동 밝기입니다. `CarrotScreenOffClock=1`(기본)이면 밝기 0일 때 기기 화면에 빨간 아날로그 시계가 희미하게 표시됩니다 (검은 배경, 아이폰 대기 시계 디자인 — 밝기는 화면 밝기를 따라가며, 꺼짐 상태에서는 최소 밝기로 유지됩니다). 밝기를 0보다 크게 올리면 시계가 사라지고 일반 화면으로 돌아옵니다. 시계는 주차/정지 상태일 때만 표시되고 주행 중에는 뜨지 않습니다. `0`이면 화면이 완전히 꺼집니다. `ShowCameraWithCluster=0`은 외부 HUD 연결 중 본체 카메라를 숨기는 기존 기본 동작이고, `1`은 본체 카메라 영상을 표시합니다. `ClusterHud` 계열은 지원되는 외부 HUD를 연결한 경우에만 사용하세요.
+`ShowCustomBrightness=0`은 기기 화면을 끕니다 (백라이트 0, 외부 HUD는 별도 디스플레이라 영향 없음 — 다시 켜려면 웹 설정에서 밝기를 바꾸세요). `1`은 주변 밝기에 따른 자동 조절이고, `2~100`은 수동 밝기입니다. `ShowCameraWithCluster=0`은 외부 HUD 연결 중 본체 카메라를 숨기는 기존 기본 동작이고, `1`은 본체 카메라 영상을 표시합니다. `ClusterHud` 계열은 지원되는 외부 HUD를 연결한 경우에만 사용하세요.
 
 `OnroadMinimalMode`(주행 화면 최소 모드)는 콤마 기기 화면에만 적용합니다 (외부 HUD 모니터는 그대로). `1`이면 현재 속도·차선·주행 경로(타이어 궤적 포함)만 보이고, 설정속도·날짜/시간·TPMS·기기 상태·앞차·제한속도 등 나머지 정보는 숨깁니다. 최소 모드에서는 `CarrotTireTrajectory` 값과 무관하게 타이어 궤적이 항상 표시됩니다.
 
