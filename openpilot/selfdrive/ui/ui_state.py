@@ -14,6 +14,7 @@ from openpilot.selfdrive.modeld.big_model import model_cache_dir
 from openpilot.selfdrive.modeld.big_model_status import delivery_badge, read_big_model_status
 from openpilot.selfdrive.ui.carrot_param_cache import RealtimeUiParamSnapshot, TimedSnapshotCache, read_realtime_ui_params
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
+from openpilot.selfdrive.ui.mici.onroad.screen_off_clock import CLOCK_BACKLIGHT_FLOOR
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
 
@@ -236,6 +237,8 @@ class UIState:
       self.show_brightness_ratio = _brightness_value / 100.0
     # 주행 화면 최소 모드 (기기 화면만, 외부 HUD는 건드리지 않음).
     self.onroad_minimal = self.params.get_int("OnroadMinimalMode") == 1
+    # 화면 꺼짐 시 빨간 아날로그 시계 (기본 켜짐). 기기 화면만, 외부 HUD는 건드리지 않음.
+    self.screen_off_clock = self.params.get_bool("CarrotScreenOffClock")
     self.show_model_view = self.params.get_int("ShowModelView")
     self.share_data = self.params.get_bool("ShareData")
     self.show_camera_with_cluster = self.params.get_int("ShowCameraWithCluster") == 1
@@ -322,8 +325,13 @@ class Device:
       clipped_brightness = float(np.clip(100.0 * clipped_brightness, 10.0, 100.0))
       ratio = ui_state.show_brightness_ratio
       if ratio < 0.0:
-        # ShowCustomBrightness=0: 화면 끄기 — 백라이트 0 (기기 화면만, 외부 HUD는 별도 디스플레이).
-        clipped_brightness = 0.0
+        if ui_state.screen_off_clock:
+          # ShowCustomBrightness=0 + 시계 켜짐: 백라이트를 완전히 끄면 시계가 안 보이므로
+          # 희미하게 보이도록 하한까지만 낮춘다 (기기 화면만, 외부 HUD는 별도 디스플레이).
+          clipped_brightness = float(CLOCK_BACKLIGHT_FLOOR)
+        else:
+          # ShowCustomBrightness=0: 화면 끄기 — 백라이트 0 (기기 화면만, 외부 HUD는 별도 디스플레이).
+          clipped_brightness = 0.0
       elif ratio <= 0.0:
         # ShowCustomBrightness=1: 자동 밝기 (기존 0=자동 동작).
         try:

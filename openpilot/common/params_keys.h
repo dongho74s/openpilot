@@ -198,6 +198,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CarrotEyeWarningOff", {PERSISTENT, BOOL, "0"}},  // 실험용: 실내 카메라 눈 감김 경고 끄기 (깜빡임 감지 무시)
     {"CarrotPoseWarningOff", {PERSISTENT, BOOL, "0"}},  // 실험용: 실내 카메라 고개 숙임/돌림 경고 끄기 (자세 감지 무시)
     {"CarrotWheelTouchWarningOff", {PERSISTENT, BOOL, "0"}},  // 테스트용: 핸들 안 잡음 경고 끄기 (핸들 잡은 것으로 간주)
+    {"CarrotScreenOffClock", {PERSISTENT, BOOL, "1"}},  // 화면 꺼짐 시 빨간 아날로그 시계 표시 (기기 화면만)
     {"ShowCustomBrightness", {PERSISTENT, INT, "100"}},
     {"ShowModelView", {PERSISTENT, INT, "0"}},
     {"ShowCameraWithCluster", {PERSISTENT, INT, "0"}},

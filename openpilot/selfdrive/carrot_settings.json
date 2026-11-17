@@ -590,6 +590,7 @@
           "params": [
             "ShowCustomBrightness",
             "OnroadMinimalMode",
+            "CarrotScreenOffClock",
             "ShowModelView",
             "ShowCameraWithCluster"
           ]
@@ -4624,6 +4625,21 @@
       "min": 0,
       "max": 1,
       "default": 0
+    },
+    {
+      "group": "화면",
+      "name": "CarrotScreenOffClock",
+      "title": "화면 꺼짐 시 빨간 아날로그 시계",
+      "descr": "화면 밝기를 0(꺼짐)으로 했을 때 기기 화면에 빨간 아날로그 시계를 표시합니다 (검은 배경, 아이폰 대기 시계 디자인). 시계 밝기는 화면 밝기를 따라가며, 꺼짐 상태에서는 희미하게 보이도록 백라이트를 최소 밝기로 유지합니다. 밝기를 0보다 크게 올리면 시계가 사라지고 일반 화면으로 돌아옵니다. 주차/정지 상태일 때만 표시되고, 주행 중에는 뜨지 않습니다. 외부 HUD 모니터는 건드리지 않습니다.\n0: 끄기 (화면이 완전히 꺼짐)\n1: 켜기 (기본)",
+      "egroup": "DISPLAY",
+      "etitle": "Red Analog Clock on Screen Off",
+      "edescr": "When the screen brightness is 0 (off), shows a red analog clock on the device screen (black background, iPhone StandBy clock design). The clock brightness follows the screen brightness; while off, the backlight stays at a dim minimum so the clock is faintly visible. Raising the brightness above 0 hides the clock and returns the normal screen. Shown only when parked/at a standstill, never while driving. The external HUD monitor is untouched.\n0: Off (screen fully off)\n1: On (default)",
+      "cgroup": "显示",
+      "ctitle": "屏幕关闭时红色模拟时钟",
+      "cdescr": "屏幕亮度为 0（关闭）时，在本机屏幕上显示红色模拟时钟（黑色背景，iPhone 待机时钟设计）。时钟亮度跟随屏幕亮度；关闭状态下背光保持最低亮度，时钟隐约可见。亮度调到 0 以上时时钟消失并恢复正常画面。仅在停车/静止时显示，行车中不显示。不影响外部 HUD 监视器。\n0: 关闭（屏幕全黑）\n1: 开启（默认）",
+      "min": 0,
+      "max": 1,
+      "default": 1
     },
     {
       "group": "화면",

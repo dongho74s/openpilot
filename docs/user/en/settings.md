@@ -379,7 +379,7 @@ With `CarrotVisionEnabled` on, the external HUD and web camera view can be used 
 |---|---|---|
 | Information | `ShowDebugUI`, `ShowTpms`, `ShowDateTime`, `ShowPathEnd`, `ShowDeviceState`, `ShowLaneInfo`, `ShowRadarInfo`, `ShowRouteInfo`, `ShowPlotMode` | Debug, tire, time, lane, radar, and route information |
 | Path | `ShowPathMode`, `ShowPathColor`, `ShowPathColorCruiseOff`, `ShowPathModeLane`, `ShowPathColorLane` | Path shape and color by driving state |
-| Brightness/on-road view | `ShowCustomBrightness`, `OnroadMinimalMode`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, minimal on-road mode (device screen only), camera/model composition, and the on-device camera while the external HUD is connected |
+| Brightness/on-road view | `ShowCustomBrightness`, `OnroadMinimalMode`, `CarrotScreenOffClock`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, minimal on-road mode (device screen only), red clock on screen off, camera/model composition, and the on-device camera while the external HUD is connected |
 | External HUD | `ClusterHud`, `ClusterHudBrightness`, `ClusterHudOrientation`, and related `ClusterHud*` settings | Supported TURZX HUD layout, live brightness, screen rotation, camera, radar, and encoder options |
 
 For RAV4 2022 with the ARS display stream, `ShowRadarInfo=3` on the standard device
@@ -403,7 +403,7 @@ Negative relative speed means the gap is closing; positive relative speed means 
 
 An APN label remaining in the `ShowRouteInfo` description refers to route-input state. It is not an indication that CarrotMan or CarrotLink is supported.
 
-`ShowCustomBrightness=0` turns the device screen off (backlight 0; the external HUD is a separate display and is unaffected — change the brightness in web settings to turn it back on). `1` follows ambient light automatically, and `2` through `100` select manual brightness.
+`ShowCustomBrightness=0` turns the device screen off (the external HUD is a separate display and is unaffected — change the brightness in web settings to turn it back on). `1` follows ambient light automatically, and `2` through `100` select manual brightness. With `CarrotScreenOffClock=1` (default), brightness 0 shows a dim red analog clock on the device screen instead of a fully black screen (black background, iPhone StandBy clock design — the clock brightness follows the screen brightness, staying at a dim minimum while off). Raising the brightness above 0 hides the clock and returns the normal screen. The clock is shown only when parked/at a standstill, never while driving. `0` turns the screen fully off.
 
 `OnroadMinimalMode` (Minimal Onroad Screen) applies to the comma device screen only (the external HUD monitor is unchanged). When `1`, only the current speed, lane lines and driving path (with tire tracks) are shown; set speed, date/time, TPMS, device state, lead vehicle, speed limit and all other info are hidden. In minimal mode the tire tracks are always shown regardless of `CarrotTireTrajectory`.
 
