@@ -410,3 +410,40 @@ def test_bsd_strips_survive_timer_while_only_optional_vision_card_is_hidden():
   render = ui_method('vision_renderer.py', 'VisionRenderer', '_render', ns)
   render(obj, SimpleNamespace(x=60, y=0, width=476, height=240))
   assert [args[0] for args in draws] == [(66, 78, 6, 56), (524, 78, 6, 56)]
+
+
+@pytest.mark.parametrize('kind', ['parking', 'hold'])
+def test_clock_ui_hides_stop_timers_and_the_notice_they_cover(monkeypatch, kind):
+  renderer, ns, cs, sm, draws = make_renderer(monkeypatch)
+  ns['ui_state'].clock_ui = True
+  if kind == 'parking':
+    cs.parkingBrake = True
+    covered = ns['Alert']('주차 브레이크', '', size=1, alert_type='parkBrake/noEntry')
+  else:
+    cs.brakeHoldActive = True
+    covered = ns['Alert']('브레이크 홀드', '', size=1, alert_type='brakeHold/warning')
+  renderer.get_alert = lambda _: covered
+  assert renderer.will_render() == (None, True)
+  assert not renderer.timer_visible
+  renderer._render(renderer.rect)
+  assert draws == []
+  assert renderer._alert_text1_label.text != covered.text1
+  # The stop is still timed behind the clock: switching back shows the real elapsed time.
+  monkeypatch.setattr(ns['time'], 'monotonic', lambda: 15.)
+  sm.recv_time = dict.fromkeys(sm.recv_time, 15.)
+  ns['ui_state'].clock_ui = False
+  renderer.will_render()
+  renderer._render(renderer.rect)
+  assert draws[-1][1].kind == kind and draws[-1][1].elapsed == pytest.approx(5.)
+
+
+@pytest.mark.parametrize('alert_type', ['steerSaturated/warning', 'driverDistracted2/warning'])
+def test_clock_ui_still_shows_other_alerts_while_stopped(monkeypatch, alert_type):
+  renderer, ns, cs, _, draws = make_renderer(monkeypatch)
+  ns['ui_state'].clock_ui = True
+  cs.parkingBrake = True
+  alert = ns['Alert']('경고', '핸들을 잡아주세요', size=1, alert_type=alert_type)
+  renderer.get_alert = lambda _: alert
+  assert renderer.will_render()[0] is alert
+  renderer._render(renderer.rect)
+  assert draws == [] and renderer._alert_text1_label.text == alert.text1
