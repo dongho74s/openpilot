@@ -1145,7 +1145,7 @@
       "min": 0,
       "max": 2500,
       "default": 0,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "distanceCm"
     },
     {
@@ -1390,7 +1390,7 @@
       "min": 400,
       "max": 1000,
       "default": 600,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "distanceCm"
     },
     {
@@ -1423,7 +1423,7 @@
       "min": -600,
       "max": 600,
       "default": -150,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "distanceCm"
     },
     {
@@ -2952,7 +2952,7 @@
       "min": 0,
       "max": 500,
       "default": 0,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "distanceCm"
     },
     {
@@ -4507,7 +4507,7 @@
       "min": 0,
       "max": 5000,
       "default": 200,
-      "unit": 10,
+      "unit": 1,
       "display_unit": "distanceCm",
       "risk": "high"
     },
