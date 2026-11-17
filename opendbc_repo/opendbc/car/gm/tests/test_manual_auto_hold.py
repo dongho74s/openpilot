@@ -99,6 +99,53 @@ def test_engaged_state_cannot_carry_manual_hold():
   assert not hold.armed and not hold.active
 
 
+def test_gas_release_requests_one_shot_resume():
+  hold = armed_hold()
+  assert not hold.resume_requested
+  hold.update(state(gasPressed=True, brakePressed=False), 0, False)
+  assert not hold.active and not hold.armed
+  assert hold.resume_requested
+  assert hold.command(state(gasPressed=True, brakePressed=False), False) == 0
+
+
+def test_gas_release_survives_repeated_updates():
+  # update() runs twice per control cycle (interface update, then apply);
+  # the latch must survive the second call while gas is still pressed.
+  hold = armed_hold()
+  hold.update(state(gasPressed=True, brakePressed=False), 0, False)
+  assert hold.resume_requested
+  for _ in range(10):
+    hold.update(state(gasPressed=True, brakePressed=False), 0, False)
+    assert hold.resume_requested
+
+
+def test_brake_repress_cancels_resume():
+  hold = armed_hold()
+  hold.update(state(gasPressed=True, brakePressed=False), 0, False)
+  assert hold.resume_requested
+  hold.update(state(brakePressed=True), 0, False)
+  assert not hold.resume_requested
+
+
+def test_brake_light_tap_cancels_without_resume():
+  hold = armed_hold()
+  hold.update(state(brakePressed=False), 0, False)
+  hold.update(state(), 20, False)
+  hold.update(state(brakePressed=False), 0, False)
+  assert not hold.active
+  assert not hold.resume_requested
+
+
+@pytest.mark.parametrize("changes", [dict(gearShifter="park"), dict(gearShifter="reverse"),
+  dict(gearShifter="neutral"), dict(canValid=False), dict(canTimeout=True),
+  dict(accFaulted=True), dict(cruiseState={"enabled": True})])
+def test_non_gas_release_requests_no_resume(changes):
+  hold = armed_hold()
+  hold.update(state(**changes), 0, False)
+  assert not hold.active
+  assert not hold.resume_requested
+
+
 CAM_HOLD_CARS = [CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAX]
 
 
@@ -134,30 +181,90 @@ def test_camera_car_without_camera_cannot_hold(runtime, candidate):
   assert not manual_hold_supported(cp)
 
 
-@pytest.mark.parametrize("long_state", ["off", "stopping", "starting"])
-def test_real_controller_brakes_only_no_set_resume(runtime, long_state):
+def test_real_controller_gas_release_sends_res_once(runtime):
+  # Gas release of an active hold sends RES once; no RES while the hold is
+  # active, and none after the one-shot is consumed. Auto cruise is off so
+  # the only button on the bus is the resume. longControlState is "off":
+  # the hold only exists while disengaged, and stopping/starting would send
+  # RES through the separate ACC stop-go path.
   cp = build_cp(runtime)
   controller = runtime.controller.CarController(DBC[CAR.CHEVROLET_TRAVERSE], cp)
-  controller.v_cruise_carrot.autoCruiseControl = 2
+  controller.v_cruise_carrot.autoCruiseControl = 0
   cs = controller_state()
-  cs.out = state(activateCruise=1)
-  cs.manual_auto_hold = armed_hold()
+  cs.out = state()
+  hold = armed_hold()
+  cs.manual_auto_hold = hold
   cc = structs.CarControl()
-  cc.actuators.longControlState = long_state
-  decoder = runtime.CANParser(DBC[CAR.CHEVROLET_TRAVERSE][Bus.pt], [("ASCMGasRegenCmd", 25)], 0)
-  for tick in range(100):
+  cc.actuators.longControlState = "off"
+  btn = runtime.CANParser(DBC[CAR.CHEVROLET_TRAVERSE][Bus.pt], [("ASCMSteeringButton", 25)], 0)
+
+  def res_count(packets, now):
+    count = 0
+    for addr, data, bus in packets:
+      if addr == 0x1E1:
+        btn.update([(now, [(addr, data, bus)])])
+        if btn.vl["ASCMSteeringButton"]["ACCButtons"] == 2:  # RES_ACCEL
+          count += 1
+    return count
+
+  # Hold active: brake 400, no RES.
+  res = 0
+  brakes = 0
+  for tick in range(10):
     now = 1_000_000_000 + tick * 10_000_000
     out, packets = controller.update(cc.as_reader(), cs, now)
-    assert all(addr != 0x1E1 for addr, _, _ in packets)
+    res += res_count(packets, now)
     for addr, data, bus in packets:
-      if addr == 0x315:
-        assert bus == 2 and len(data) == 5 and data[0] >> 4 == 0xA
-        assert (-int.from_bytes(data[:2], "big")) & 0xFFF == 400
-        assert out.brake == 400
-      if addr == 0x2CB:
-        decoder.update([(now, [(addr, data, bus)])])
-        assert not decoder.vl["ASCMGasRegenCmd"]["GasRegenCmdActive"]
-        assert decoder.vl["ASCMGasRegenCmd"]["GasRegenCmd"] == controller.params.INACTIVE_REGEN
+      if addr == 0x315 and (-int.from_bytes(data[:2], "big")) & 0xFFF == 400:
+        brakes += 1
+  assert res == 0
+  assert brakes > 0
+  assert not hold.resume_requested
+
+  # Release the hold with gas: RES once, then never again.
+  release = state(gasPressed=True, brakePressed=False)
+  hold.update(release, 0, False)
+  assert hold.resume_requested and not hold.active
+  cs.out = release
+  for tick in range(10, 100):
+    now = 1_000_000_000 + tick * 10_000_000
+    out, packets = controller.update(cc.as_reader(), cs, now)
+    res += res_count(packets, now)
+  assert res == 1
+  assert not hold.resume_requested
+  assert out.brake == 0
+
+
+@pytest.mark.parametrize("candidate", [CAR.CHEVROLET_TRAVERSE, *CAM_HOLD_CARS])
+def test_controller_non_gas_release_sends_no_res(runtime, candidate):
+  # A hold released by a gear change (not gas) must not resume cruise.
+  traverse = candidate == CAR.CHEVROLET_TRAVERSE
+  cp = build_cp(runtime) if traverse else hold_cp(runtime, candidate)
+  controller = runtime.controller.CarController(DBC[candidate], cp)
+  controller.v_cruise_carrot.autoCruiseControl = 0
+  cs = controller_state() if traverse else camera_controller_state()
+  cs.out = state()
+  hold = armed_hold()
+  cs.manual_auto_hold = hold
+  cc = structs.CarControl()
+  cc.actuators.longControlState = "off"
+  btn = runtime.CANParser(DBC[candidate][Bus.pt], [("ASCMSteeringButton", 25)], 0)
+  release = state(gearShifter="park")
+  hold.update(release, 0, False)
+  assert not hold.active and not hold.resume_requested
+  cs.out = release
+  res = 0
+  for tick in range(100):
+    now = 1_000_000_000 + tick * 10_000_000
+    if not traverse:
+      cs.cam_ascm_2cb_counter = (tick // 4) % 4
+    out, packets = controller.update(cc.as_reader(), cs, now)
+    for addr, data, bus in packets:
+      if addr == 0x1E1:
+        btn.update([(now, [(addr, data, bus)])])
+        if btn.vl["ASCMSteeringButton"]["ACCButtons"] == 2:  # RES_ACCEL
+          res += 1
+  assert res == 0
 
 
 def camera_controller_state():
@@ -171,34 +278,56 @@ def camera_controller_state():
 
 
 @pytest.mark.parametrize("candidate", CAM_HOLD_CARS)
-@pytest.mark.parametrize("long_state", ["off", "stopping", "starting"])
-def test_camera_controller_brakes_on_powertrain_no_set_resume(runtime, candidate, long_state):
+def test_camera_controller_gas_release_sends_res_once(runtime, candidate):
+  # Same one-shot RES as the Traverse, on the camera-long powertrain path.
+  # Auto cruise is off so the only button on the bus is the resume.
+  # longControlState is "off" (see the Traverse test above).
   cp = hold_cp(runtime, candidate)
   controller = runtime.controller.CarController(DBC[candidate], cp)
-  controller.v_cruise_carrot.autoCruiseControl = 2
+  controller.v_cruise_carrot.autoCruiseControl = 0
   cs = camera_controller_state()
-  cs.out = state(activateCruise=1)
-  cs.manual_auto_hold = armed_hold()
+  cs.out = state()
+  hold = armed_hold()
+  cs.manual_auto_hold = hold
   cc = structs.CarControl()
-  cc.actuators.longControlState = long_state
-  decoder = runtime.CANParser(DBC[candidate][Bus.pt], [("ASCMGasRegenCmd", 25)], 0)
+  cc.actuators.longControlState = "off"
+  btn = runtime.CANParser(DBC[candidate][Bus.pt], [("ASCMSteeringButton", 25)], 0)
+
+  def res_count(packets, now):
+    count = 0
+    for addr, data, bus in packets:
+      if addr == 0x1E1:
+        btn.update([(now, [(addr, data, bus)])])
+        if btn.vl["ASCMSteeringButton"]["ACCButtons"] == 2:  # RES_ACCEL
+          count += 1
+    return count
+
+  res = 0
   brakes = 0
-  for tick in range(100):
+  for tick in range(10):
     now = 1_000_000_000 + tick * 10_000_000
     cs.cam_ascm_2cb_counter = (tick // 4) % 4
     out, packets = controller.update(cc.as_reader(), cs, now)
-    assert all(addr != 0x1E1 for addr, _, _ in packets)
+    res += res_count(packets, now)
     for addr, data, bus in packets:
-      if addr == 0x315:
+      if addr == 0x315 and (-int.from_bytes(data[:2], "big")) & 0xFFF == 400:
         brakes += 1
-        assert bus == 0 and len(data) == 5 and data[0] >> 4 == 0xA
-        assert (-int.from_bytes(data[:2], "big")) & 0xFFF == 400
-        assert out.brake == 400
-      if addr == 0x2CB:
-        assert bus == 0
-        decoder.update([(now, [(addr, data, bus)])])
-        assert not decoder.vl["ASCMGasRegenCmd"]["GasRegenCmdActive"]
+  assert res == 0
   assert brakes > 0
+  assert not hold.resume_requested
+
+  release = state(gasPressed=True, brakePressed=False)
+  hold.update(release, 0, False)
+  assert hold.resume_requested and not hold.active
+  cs.out = release
+  for tick in range(10, 100):
+    now = 1_000_000_000 + tick * 10_000_000
+    cs.cam_ascm_2cb_counter = (tick // 4) % 4
+    out, packets = controller.update(cc.as_reader(), cs, now)
+    res += res_count(packets, now)
+  assert res == 1
+  assert not hold.resume_requested
+  assert out.brake == 0
 
 
 @pytest.mark.parametrize("candidate", CAM_HOLD_CARS)

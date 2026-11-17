@@ -66,6 +66,9 @@ class CarInterface(CarInterfaceBase):
         hold.update(self.CS.out, self.CS.brake_pedal_position, self.CS.manual_hold_controls_active)
       else:
         hold.reset()
+        # Stale CAN cancels a pending one-shot resume (reset() leaves the
+        # latch alone so it survives the twice-per-cycle update calls).
+        hold.resume_requested = False
       self.CS.out.brakeHoldActive = hold.active
 
   def update(self, can_packets):
