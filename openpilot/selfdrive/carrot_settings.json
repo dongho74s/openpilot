@@ -579,6 +579,7 @@
           "zh": "亮度与视图",
           "params": [
             "ShowCustomBrightness",
+            "OnroadMochiMode",
             "ShowModelView",
             "ShowCameraWithCluster"
           ]
@@ -4376,6 +4377,21 @@
       "default": 100,
       "unit": 5,
       "display_unit": "percent"
+    },
+    {
+      "group": "화면",
+      "name": "OnroadMochiMode",
+      "title": "모찌 화면보호기",
+      "descr": "콤마 기기 주행 화면을 모찌 캐릭터 화면보호기로 바꿉니다 (외부 HUD 모니터는 그대로 다 보입니다). 켜면 주행 화면 대신 검은 화면에 눈·입만 큰 모찌가 주행 상황에 맞는 표정(급감속·긴급제동·급가속·차선변경·깜빡이·출발·인게이지·후진·신호대기·오토홀드 등)을 보여줍니다.\n주행 화면을 650ms 길게 누르면 모찌 화면으로 바뀌고, 모찌 화면을 터치하면 주행 화면으로 돌아옵니다. 짧게 터치하면 바뀌지 않습니다.\n0: 끄기\n1: 켜기",
+      "egroup": "DISPLAY",
+      "etitle": "Mochi Screensaver",
+      "edescr": "Replace the comma device onroad screen with a mochi character screensaver (the external HUD monitor is unchanged). When on, a mochi face with big eyes on a dark screen shows expressions matching the driving situation (sudden deceleration, emergency braking, acceleration, lane change, blinker, departure, engage, reverse, traffic light, auto hold, and more).\nLong-press the driving screen for 650ms to switch to the mochi screen; touch the mochi screen to return. A short tap does nothing.\n0: Off\n1: On",
+      "cgroup": "显示",
+      "ctitle": "麻糬屏保",
+      "cdescr": "将本机行车画面替换为麻糬角色屏保（外部HUD监视器不变）。开启后，黑色画面上只显示大眼睛麻糬，并根据行车情况变换表情（急减速、紧急制动、急加速、变道、转向灯、起步、接管、倒车、信号灯等待、自动驻车等）。\n长按行车画面650毫秒切换到麻糬画面，触摸麻糬画面返回行车画面。短按不切换。\n0: 关闭\n1: 开启",
+      "min": 0,
+      "max": 1,
+      "default": 0
     },
     {
       "group": "화면",

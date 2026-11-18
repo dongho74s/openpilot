@@ -192,6 +192,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TimezoneName", {PERSISTENT, STRING, ""}},                // 로컬 타임존 IANA 이름 (예: "Asia/Seoul"), 앱/WiFi/GPS로 해석되면 기록
     {"TimezoneSource", {PERSISTENT, STRING, ""}},              // 타임존 출처 우선순위 추적 ("app" > "wifi" > "gps")
     {"CarrotTireTrajectory", {PERSISTENT, INT, "0"}},
+    {"OnroadMochiMode", {PERSISTENT, INT, "0"}},  // 모찌 화면보호기 (주행 화면 대체, 기본 꺼짐)
     {"ShowCustomBrightness", {PERSISTENT, INT, "100"}},
     {"ShowModelView", {PERSISTENT, INT, "0"}},
     {"ShowCameraWithCluster", {PERSISTENT, INT, "0"}},

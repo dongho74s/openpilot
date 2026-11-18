@@ -351,7 +351,7 @@ With `CarrotVisionEnabled` on, the external HUD and web camera view can be used 
 |---|---|---|
 | Information | `ShowDebugUI`, `ShowTpms`, `ShowDateTime`, `ShowPathEnd`, `ShowDeviceState`, `ShowLaneInfo`, `ShowRadarInfo`, `ShowRouteInfo`, `ShowPlotMode` | Debug, tire, time, lane, radar, and route information |
 | Path | `ShowPathMode`, `ShowPathColor`, `ShowPathColorCruiseOff`, `ShowPathModeLane`, `ShowPathColorLane` | Path shape and color by driving state |
-| Brightness/on-road view | `ShowCustomBrightness`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, camera/model composition, and the on-device camera while the external HUD is connected |
+| Brightness/on-road view | `ShowCustomBrightness`, `OnroadMochiMode`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, mochi screensaver (device screen only), camera/model composition, and the on-device camera while the external HUD is connected |
 | External HUD | `ClusterHud`, `ClusterHudBrightness`, `ClusterHudOrientation`, and related `ClusterHud*` settings | Supported TURZX HUD layout, live brightness, screen rotation, camera, radar, and encoder options |
 
 For RAV4 2022 with the ARS display stream, `ShowRadarInfo=3` on the standard device
@@ -374,6 +374,8 @@ Onroad, the main UI uses CPU 6 and the external HUD uses CPU 7 with low-priority
 Negative relative speed means the gap is closing; positive relative speed means it is opening. Lead values display as zero when no lead is detected, and this setting changes only the diagnostic display, with no effect on vehicle control.
 
 An APN label remaining in the `ShowRouteInfo` description refers to route-input state. It is not an indication that CarrotMan or CarrotLink is supported.
+
+`OnroadMochiMode` (Mochi Screensaver) replaces the comma device onroad screen with a mochi character screensaver (the external HUD monitor is unchanged). When `1`, a mochi face with big eyes on a dark screen shows expressions matching the driving situation (sudden deceleration, emergency braking, acceleration, lane change, blinker, departure, engage, reverse, traffic light, auto hold, and more). Long-press the driving screen for 650ms to switch to the mochi screen; touch the mochi screen to return. A short tap does nothing.
 
 `ShowCameraWithCluster=0` keeps the existing default: while the external HUD is connected, the on-device camera is hidden. Set it to `1` to show the on-device camera video.
 

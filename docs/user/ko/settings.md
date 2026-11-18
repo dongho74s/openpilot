@@ -345,7 +345,7 @@ Jetson HUD에는 `jetSON` 아래에 Jetson 내부 센서의 최고 온도가 표
 |---|---|---|
 | 정보 표시 | `ShowDebugUI`, `ShowTpms`, `ShowDateTime`, `ShowPathEnd`, `ShowDeviceState`, `ShowLaneInfo`, `ShowRadarInfo`, `ShowRouteInfo`, `ShowPlotMode` | 주행 화면의 디버그, 타이어, 시간, 차선, 레이더와 경로 정보 |
 | 경로 표시 | `ShowPathMode`, `ShowPathColor`, `ShowPathColorCruiseOff`, `ShowPathModeLane`, `ShowPathColorLane` | 레인리스·레인모드·크루즈 OFF 상태의 경로 모양과 색상 |
-| 밝기·주행화면 | `ShowCustomBrightness`, `ShowModelView`, `ShowCameraWithCluster` | 주행 중 밝기, 카메라·모델 표시 조합과 외부 HUD 연결 중 본체 카메라 표시 |
+| 밝기·주행화면 | `ShowCustomBrightness`, `OnroadMochiMode`, `ShowModelView`, `ShowCameraWithCluster` | 주행 중 밝기, 모찌 화면보호기(기기 화면만), 카메라·모델 표시 조합과 외부 HUD 연결 중 본체 카메라 표시 |
 | 외부 HUD·기본 | `ClusterHud`, `ClusterHudBrightness`, `ClusterHudOrientation`, `ClusterHudMirror`, `ClusterHudTheme`, `ClusterNaviMapTheme`, `ClusterNaviMapType`, `ClusterNaviMapFps` | TURZX 외부 HUD, 밝기, 화면 회전, 미러링과 지도 테마 |
 | 외부 HUD·화면·카메라 | `ClusterHudEncoder`, `ClusterHudScreenMode`, `ClusterHudPanelLayout`, `ClusterHudCameraViewMode` | 인코더와 화면·카메라·좌우 패널 구성 |
 | 외부 HUD·레이더 표시 | `ClusterHudRadarInfo`, `ClusterHudRadarDisplay`, `ClusterHudRadarSourceColor` | 외부 HUD의 레이더 정보와 색상 |
@@ -372,6 +372,8 @@ Onroad에서는 본체 UI가 CPU 6번, 외부 HUD가 CPU 7번을 일반 스케�
 `ShowRouteInfo` 설명에 남아 있는 APN 표기는 경로 정보 입력 상태를 뜻합니다. 이를 CarrotMan 또는 CarrotLink 지원 안내로 해석하면 안 됩니다.
 
 `ShowCustomBrightness=0`은 주변 밝기에 따른 자동 조절입니다. `ShowCameraWithCluster=0`은 외부 HUD 연결 중 본체 카메라를 숨기는 기존 기본 동작이고, `1`은 본체 카메라 영상을 표시합니다. `ClusterHud` 계열은 지원되는 외부 HUD를 연결한 경우에만 사용하세요.
+
+`OnroadMochiMode`(모찌 화면보호기)는 콤마 기기 주행 화면을 모찌 캐릭터 화면보호기로 바꿉니다 (외부 HUD 모니터는 그대로). `1`이면 주행 화면 대신 검은 화면에 눈·입만 큰 모찌가 주행 상황에 맞는 표정(급감속·긴급제동·급가속·차선변경·깜빡이·출발·인게이지·후진·신호대기·오토홀드 등)을 보여줍니다. 주행 화면을 650ms 길게 누르면 모찌 화면으로 바뀌고, 모찌 화면을 터치하면 주행 화면으로 돌아옵니다. 짧게 터치하면 바뀌지 않습니다.
 
 `ShowModelView`(주행화면 구성)는 C4에서 `0` 카메라 + 차선·경로, `1` 카메라만, `2` 검은 배경에 차선·경로만, `3` 둘 다 숨김을 선택합니다. 차선·경로 그림에는 앞차 표시도 포함됩니다. 자동 밝기와 100%를 포함한 모든 밝기 설정에서 적용되며, 주행 시작 후 별도의 대기 시간은 없습니다. 주행 중 변경하면 재부팅 없이 약 5초 안에 반영됩니다. 속도·경고·운전자 상태는 계속 표시되고, 카메라 촬영·주행 판단·차량 제어는 바뀌지 않습니다. C3/C3X에는 적용되지 않습니다. 외부 HUD 연결 중 `ShowCameraWithCluster=0`이면 이 선택과 관계없이 본체의 카메라와 차선·경로를 모두 숨깁니다.
 
