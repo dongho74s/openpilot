@@ -13,8 +13,14 @@ CAMERA_OFFSET = 0 #0.08
 MIN_LANE_DISTANCE = 2.6
 MAX_LANE_DISTANCE = 3.7
 MAX_LANE_CENTERING_AWAY = 1.85
+# 클램프 최소거리 기본값. 웹 ej 탭(ClampMinDistLane/ClampMinDistEdge)에서 바꾸면
+# 그 값이 쓰이고, 이 상수는 Params를 읽을 수 없을 때의 폴백이다.
 KEEP_MIN_DISTANCE_FROM_LANE = 1.35
 KEEP_MIN_DISTANCE_FROM_EDGELANE = 1.15
+# 최소거리 클램프(apply_min_distance_clamp)용 임계값
+ROAD_EDGE_STD_MAX = 0.5  # 도로경계 신뢰도 상한: std가 이보다 크면 경계 위치를 믿지 않음
+CLAMP_PROB_ON = 0.5      # 클램프 활성화 확률: 이 위면 해당 측 클램프 켜짐
+CLAMP_PROB_OFF = 0.3     # 클램프 비활성화 확률: 이 아래로 떨어져야 꺼짐 (경계값 깜빡임 방지)
 
 def clamp(num, min_value, max_value):
   # weird broken case, do something reasonable
@@ -69,6 +75,18 @@ class LanePlanner:
     self.lane_width_right_filtered = FirstOrderFilter(1.0, 1.0, DT_MDL)
     self.lane_offset_filtered = FirstOrderFilter(0.0, 2.0, DT_MDL)
 
+    # 최소거리 클램프 상태
+    self.l_prob = 0.
+    self.r_prob = 0.
+    self.edge_x = np.zeros((TRAJECTORY_SIZE,))
+    self.le_std = float('inf')
+    self.re_std = float('inf')
+    self.edges_valid = False
+    self.clamp_left_active = False
+    self.clamp_right_active = False
+    self.clamp_max_correction = 0.0
+    self.clamp_sides = ""
+
     self.lanefull_mode = False
     self.d_prob_count = 0
 
@@ -93,9 +111,14 @@ class LanePlanner:
     if len(edges[0].t) == TRAJECTORY_SIZE:
       self.le_y = np.array(edges[0].y) + md.roadEdgeStds[0] * 0.4
       self.re_y = np.array(edges[1].y) - md.roadEdgeStds[1] * 0.4
+      self.edge_x = np.array(edges[0].x)
+      self.le_std = float(md.roadEdgeStds[0])
+      self.re_std = float(md.roadEdgeStds[1])
+      self.edges_valid = True
     else:
       self.le_y = self.lll_y
       self.re_y = self.rll_y
+      self.edges_valid = False
 
     desire_state = md.meta.desireState
     if len(desire_state):
@@ -251,6 +274,123 @@ class LanePlanner:
     self.offset_total = self.lane_offset_filtered.x
 
     return path_xyz, laneline_active
+
+  def _read_clamp_settings(self):
+    """클램프 설정을 Params에서 읽는다. (당근 웹 ej 탭에서 실시간 변경 가능)
+
+    반환: (enabled, min_dist_lane_m, min_dist_edge_m)
+
+    - get(..., return_default=True)을 쓴다. get_int/get_bool은 파일이 없으면
+      0/False를 반환해서, 한 번도 저장하지 않은 fresh install에서 클램프가
+      꺼지거나 거리가 0이 되기 때문이다. return_default=True면 파일이 없을 때
+      params_keys.h에 등록된 기본값(켜짐, 135cm, 115cm)을 반환한다.
+    - 키가 등록되지 않은 구 빌드에서 실행되면 UnknownKeyName이 나는데, 그 경우를
+      포함해 읽기·변환에 실패하면 상수 기본값으로 폴백한다. 클램프가 꺼지거나
+      controlsd가 죽지 않는다.
+    - 거리는 웹에서 cm 단위 정수로 저장되므로 m로 변환하고 0~3m로 클립한다.
+      (음수면 선 바깥쪽까지 허용하게 되므로 0 아래로는 내리지 않는다.)
+    """
+    try:
+      enabled = self.params.get("ClampEnable", return_default=True)
+      min_lane_cm = self.params.get("ClampMinDistLane", return_default=True)
+      min_edge_cm = self.params.get("ClampMinDistEdge", return_default=True)
+      if enabled is None:
+        enabled = True
+      elif isinstance(enabled, str):
+        enabled = enabled.strip().lower() in ("1", "true", "on", "yes")
+      if min_lane_cm is None:
+        min_lane = KEEP_MIN_DISTANCE_FROM_LANE
+      else:
+        min_lane = float(np.clip(float(min_lane_cm) * 0.01, 0.0, 3.0))
+      if min_edge_cm is None:
+        min_edge = KEEP_MIN_DISTANCE_FROM_EDGELANE
+      else:
+        min_edge = float(np.clip(float(min_edge_cm) * 0.01, 0.0, 3.0))
+      return bool(enabled), min_lane, min_edge
+    except Exception:
+      return True, KEEP_MIN_DISTANCE_FROM_LANE, KEEP_MIN_DISTANCE_FROM_EDGELANE
+
+  def apply_min_distance_clamp(self, path_xyz, v_ego):
+    """최종 경로가 감지된 차선·도로경계를 밟지 않도록 최소 거리를 유지한다.
+
+    레인리스 모드에서는 차선 중심 보정이 꺼져 있어 모델 경로가 안쪽 선을 밟을 수
+    있다. 이 클램프는 레인/레인리스 공통으로 동작하는 안전 가드이며, 경로가
+    하한을 위반할 때만, 위반한 만큼만 밀어낸다. 평상시에는 경로에 손대지 않는다.
+
+    - 좌/우 각각: 차선이 보이면 차선 기준, 차선이 안 보이면 도로경계 기준
+      (경계 std가 작을 때만)으로 최소 거리를 유지한다. 거리 기본값은 차선
+      1.35m·도로경계 1.15m이며 당근 웹 ej 탭에서 실시간으로 바꿀 수 있다.
+    - 차선변경 중에는 차선을 넘는 것이 의도된 동작이므로 동작하지 않는다.
+    - 저속에서는 횡단보도·주차선 등에 반응하지 않도록 서서히 활성화한다.
+    - 차로가 너무 좁아 양쪽 하한이 충돌하면 차선 중앙으로 폴백한다.
+    """
+    self.clamp_max_correction = 0.0
+    self.clamp_sides = ""
+    enabled, min_dist_lane, min_dist_edge = self._read_clamp_settings()
+    # 웹 ej 탭에서 끄면 클램프 전체를 끈다. 히스테리시스 상태도 초기화해서
+    # 다시 켰을 때 깨끗하게 시작한다.
+    if not enabled:
+      self.clamp_left_active = False
+      self.clamp_right_active = False
+      return path_xyz
+    # 차선변경 중이거나 ATC 동작 중에는 의도적으로 선을 넘으므로 클램프를 끈다.
+    if self.lane_change_multiplier < 0.5:
+      self.clamp_left_active = False
+      self.clamp_right_active = False
+      return path_xyz
+    # 저속 페이드인: 5km/h 이하 0, 10km/h 이상 100% (d_prob 저속 페이드와 동일 구간)
+    strength = float(np.interp(v_ego * 3.6, [5.0, 10.0], [0.0, 1.0]))
+    if strength <= 0.0:
+      return path_xyz
+
+    # 히스테리시스: 0.5를 넘으면 켜고 0.3 아래로 떨어져야 끈다 (경계값 깜빡임 방지).
+    if self.l_prob > CLAMP_PROB_ON:
+      self.clamp_left_active = True
+    elif self.l_prob < CLAMP_PROB_OFF:
+      self.clamp_left_active = False
+    if self.r_prob > CLAMP_PROB_ON:
+      self.clamp_right_active = True
+    elif self.r_prob < CLAMP_PROB_OFF:
+      self.clamp_right_active = False
+
+    n = path_xyz.shape[0]
+    path_x = path_xyz[:, 0]
+    lo = np.full(n, -np.inf)  # 좌측 하한: 경로는 이 값보다 우측이어야 한다
+    hi = np.full(n, np.inf)   # 우측 하한: 경로는 이 값보다 좌측이어야 한다
+    if self.clamp_left_active:
+      left_y = np.interp(path_x, self.ll_x, self.lll_y)
+      lo = np.maximum(lo, left_y + min_dist_lane)
+    elif self.edges_valid and self.le_std < ROAD_EDGE_STD_MAX:
+      # 좌측 차선이 안 보일 때만 도로경계로 폴백한다.
+      left_edge_y = np.interp(path_x, self.edge_x, self.le_y)
+      lo = np.maximum(lo, left_edge_y + min_dist_edge)
+    if self.clamp_right_active:
+      right_y = np.interp(path_x, self.ll_x, self.rll_y)
+      hi = np.minimum(hi, right_y - min_dist_lane)
+    elif self.edges_valid and self.re_std < ROAD_EDGE_STD_MAX:
+      right_edge_y = np.interp(path_x, self.edge_x, self.re_y)
+      hi = np.minimum(hi, right_edge_y - min_dist_edge)
+
+    # 모델이 NaN을 뱉으면 해당 측 하한을 무효화한다 (NaN이 경로로 번지는 것 방지).
+    lo = np.where(np.isfinite(lo), lo, -np.inf)
+    hi = np.where(np.isfinite(hi), hi, np.inf)
+    if not np.isfinite(lo).any() and not np.isfinite(hi).any():
+      return path_xyz
+
+    target = np.clip(path_xyz[:, 1], lo, hi)
+    # 양쪽 하한이 충돌하면(차로가 좁아 양쪽 최소거리 합보다 좁으면) 양쪽 경계의
+    # 중간 = 차선 중앙으로 간다.
+    conflict = lo > hi
+    if np.any(conflict):
+      target[conflict] = (lo[conflict] + hi[conflict]) / 2.0
+    correction = target - path_xyz[:, 1]
+    self.clamp_max_correction = float(np.max(np.abs(correction))) * strength
+    if np.any(correction > 0.005):
+      self.clamp_sides += "L"
+    if np.any(correction < -0.005):
+      self.clamp_sides += "R"
+    path_xyz[:, 1] = path_xyz[:, 1] + strength * correction
+    return path_xyz
 
   def calculate_plan_yaw_and_yaw_rate(self, path_xyz):
     if path_xyz.shape[0] < 3:
