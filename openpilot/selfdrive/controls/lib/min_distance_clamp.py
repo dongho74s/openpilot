@@ -151,6 +151,7 @@ class ClampSteerCorrector:
     self._alert_quiet_until = 0.0
     self._holdoff_until = 0.0
     self._last_t: float | None = None
+    self._left_lost = self._right_lost = False   # a line it was using is broken (sticky until it is fine or gone)
 
   def update(self, md, v_ego: float, lane_changing: bool, settings: ClampSettings, now: float | None = None,
              usable: bool = True) -> float:
@@ -211,9 +212,11 @@ class ClampSteerCorrector:
     # each side on its own: one side's broken line never makes the other side's good line stop counting
     left_state, right_state = line_state(1), line_state(2)
     left_ok, right_ok = left_state == 'ok', right_state == 'ok'
-    # a line it was using that breaks is a broken boundary (no quiet switch to the road edge on that side)
-    left_lost = left_state == 'broken' and self.lines.left
-    right_lost = right_state == 'broken' and self.lines.right
+    # a line it was using that breaks is a broken boundary for as long as it stays broken (no quiet switch to the road
+    # edge on that side); only the line coming back, or no line at all in the message, ends that
+    left_lost = left_state == 'broken' and (self.lines.left or self._left_lost)
+    right_lost = right_state == 'broken' and (self.lines.right or self._right_lost)
+    self._left_lost, self._right_lost = left_lost, right_lost
     left_on, right_on = self.lines.update(float(md.laneLineProbs[1]) if left_ok else None,
                                           float(md.laneLineProbs[2]) if right_ok else None)
     edges_ok = len(edges) >= 2 and len(md.roadEdgeStds) >= 2

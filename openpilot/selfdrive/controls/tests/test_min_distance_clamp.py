@@ -319,3 +319,18 @@ def test_one_sides_empty_line_keeps_the_other_sides_line():
   md = model(path_y=-1.75 + 0.95, edge_std=0.9)
   md.laneLines[2].y = []                               # the right line's array is empty
   assert run(mdc.ClampSteerCorrector(), md, 25.0, 2.0)[0] > 0
+
+
+def test_a_broken_line_keeps_blocking_the_road_edge_while_it_stays_broken():
+  for side in (1, 2):
+    c = mdc.ClampSteerCorrector()
+    out, clock = run(c, model(path_y=-1.75 + 0.9 if side == 1 else 1.75 - 0.9, left_edge=-2.0, right_edge=2.0), 25.0, 2.0)
+    assert abs(out) > 0.001
+    md = model(path_y=-1.75 + 0.9 if side == 1 else 1.75 - 0.9, left_edge=-2.0, right_edge=2.0)
+    md.laneLines[1].x = []
+    md.laneLines[2].x = []
+    for _ in range(200):                                  # 2 s of the same broken message (Codex re-check 3)
+      assert c.update(md, 25.0, False, mdc.ClampSettings(), now=clock()) == 0.0
+    good = model(path_y=-1.75 + 0.9 if side == 1 else 1.75 - 0.9, left_edge=-2.0, right_edge=2.0)
+    out, clock = run(c, good, 25.0, 2.0, clock=clock)     # the lines come back: it corrects again
+    assert out != 0.0
