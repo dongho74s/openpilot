@@ -111,9 +111,14 @@ class LineHysteresis:
   def __init__(self):
     self.left = self.right = False
 
-  def update(self, l_prob: float, r_prob: float) -> tuple[bool, bool]:
-    self.left = True if l_prob > PROB_ON else False if l_prob < PROB_OFF else self.left
-    self.right = True if r_prob > PROB_ON else False if r_prob < PROB_OFF else self.right
+  @staticmethod
+  def _step(on: bool, prob) -> bool:
+    if prob is None:                 # this side's line is unusable: it no longer counts (the other side is untouched)
+      return False
+    return True if prob > PROB_ON else False if prob < PROB_OFF else on
+
+  def update(self, l_prob, r_prob) -> tuple[bool, bool]:
+    self.left, self.right = self._step(self.left, l_prob), self._step(self.right, r_prob)
     return self.left, self.right
 
   def reset(self):
@@ -192,34 +197,53 @@ class ClampSteerCorrector:
     def at(line):
       return float(np.interp(ahead, line.x, line.y))
 
-    lines_ok = len(lines) >= 3 and len(lines[1].y) >= 2 and len(lines[2].y) >= 2 and len(md.laneLineProbs) >= 3
-    if lines_ok:
-      left_on, right_on = self.lines.update(float(md.laneLineProbs[1]), float(md.laneLineProbs[2]))
-    else:
-      self.lines.reset()
-      left_on = right_on = False
+    def line_state(i):
+      """'ok', 'missing' (no line in the message) or 'broken' (its arrays do not fit together)."""
+      try:
+        if len(lines) <= i or len(md.laneLineProbs) <= i:
+          return 'missing'
+        nx, ny = len(lines[i].x), len(lines[i].y)
+      except (TypeError, AttributeError):
+        return 'broken'
+      if nx < 2 and ny < 2:
+        return 'missing'
+      return 'ok' if nx >= 2 and ny >= 2 and nx == ny else 'broken'
+    # each side on its own: one side's broken line never makes the other side's good line stop counting
+    left_state, right_state = line_state(1), line_state(2)
+    left_ok, right_ok = left_state == 'ok', right_state == 'ok'
+    # a line it was using that breaks is a broken boundary (no quiet switch to the road edge on that side)
+    left_lost = left_state == 'broken' and self.lines.left
+    right_lost = right_state == 'broken' and self.lines.right
+    left_on, right_on = self.lines.update(float(md.laneLineProbs[1]) if left_ok else None,
+                                          float(md.laneLineProbs[2]) if right_ok else None)
     edges_ok = len(edges) >= 2 and len(md.roadEdgeStds) >= 2
 
     def side_bound(line_on, line, edge_idx, sign, min_lane, min_edge):
-      """One side's bound, on its own: a seen line first, else a sure road edge, else none. A failure on this side
-      never takes the other side's bound with it (as ej)."""
+      """One side's bound, on its own: a seen line first, else a sure road edge, else none. Returns (bound or None,
+      broken): broken when the boundary it chose could not be worked out (bad numbers), not when there is none."""
       try:
         if line_on:
           b = at(line) - sign * min_lane
-        elif edges_ok and len(edges[edge_idx].y) >= 2 and float(md.roadEdgeStds[edge_idx]) < EDGE_STD_MAX:
+        elif edges_ok and len(edges[edge_idx].x) >= 2 and len(edges[edge_idx].y) >= 2 and \
+             float(md.roadEdgeStds[edge_idx]) < EDGE_STD_MAX:
           std = float(md.roadEdgeStds[edge_idx])
           b = at(edges[edge_idx]) - sign * std * EDGE_STD_MARGIN - sign * min_edge
         else:
-          return None
+          return None, False
       except (IndexError, ValueError, TypeError, AttributeError):
-        return None
-      return b if math.isfinite(b) else None
+        return None, True
+      return (b, False) if math.isfinite(b) else (None, True)
 
-    lo = side_bound(left_on, lines[1] if lines_ok else None, 0, -1, settings.min_lane, settings.min_edge)
-    hi = side_bound(right_on, lines[2] if lines_ok else None, 1, 1, settings.min_lane, settings.min_edge)
+    lo, lo_broken = (None, True) if left_lost else side_bound(left_on, lines[1] if left_ok else None, 0, -1,
+                                                               settings.min_lane, settings.min_edge)
+    hi, hi_broken = (None, True) if right_lost else side_bound(right_on, lines[2] if right_ok else None, 1, 1,
+                                                                settings.min_lane, settings.min_edge)
+    lo_broken = lo_broken or (lo is None and left_state == 'broken')
+    hi_broken = hi_broken or (hi is None and right_state == 'broken')
     if lo is None and hi is None:
       self.correcting = False
-      return 0.0
+      # nothing left to measure against: a broken boundary is a protective stop (at once), no boundary seen eases out
+      return None if (lo_broken or hi_broken) else 0.0
     target_y = float(clamp_target(path_y, -np.inf if lo is None else lo, np.inf if hi is None else hi))
     violation = abs(target_y - path_y)
     self.correcting = violation >= DEADBAND_OFF if self.correcting else violation > DEADBAND_ON

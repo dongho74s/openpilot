@@ -296,3 +296,26 @@ def test_selfdrived_ignores_a_stale_clamp_flag():
   src = (ROOT / "selfdrive" / "selfdrived" / "selfdrived.py").read_text()
   line = next(ln for ln in src.splitlines() if "clampSteerActive" in ln and ln.strip().startswith("if "))
   assert "valid['controlsState']" in line and "alive['controlsState']" in line          # R7
+
+
+# ---- Codex re-check (2026-11-18): the two remaining data-error cases
+
+def test_both_boundaries_broken_stops_at_once():
+  for broken in ("nan", "empty_x"):
+    c, clock = settled()
+    md = model(path_y=-1.75 + 0.9)
+    if broken == "nan":
+      md.laneLines[1].y = [float('nan')] * 33
+      md.laneLines[2].y = [float('nan')] * 33
+    else:
+      md.laneLines[1].x = []
+      md.laneLines[2].x = []
+    md.roadEdgeStds = [0.9, 0.9]                       # no sure edge to fall back on
+    assert c.update(md, 25.0, False, mdc.ClampSettings(), now=clock()) == 0.0, broken
+    assert not c.alert_active
+
+
+def test_one_sides_empty_line_keeps_the_other_sides_line():
+  md = model(path_y=-1.75 + 0.95, edge_std=0.9)
+  md.laneLines[2].y = []                               # the right line's array is empty
+  assert run(mdc.ClampSteerCorrector(), md, 25.0, 2.0)[0] > 0
