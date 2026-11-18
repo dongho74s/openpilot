@@ -89,6 +89,25 @@ def config(path=CONFIG_PATH):
     return {'version': 1, 'devices': {}}
 
 
+def bluetooth_remote_connected(root=Path('/sys/class/input')):
+  """True when a Bluetooth HID input device (bustype 0005) is present.
+
+  The same bustype check the daemon uses to enumerate remotes. Intended for
+  the on-road and cluster displays; callers cache the result (about once a
+  second) instead of scanning sysfs every frame.
+  """
+  try:
+    for node in Path(root).glob('event*'):
+      try:
+        if (node / 'device/id/bustype').read_text().strip() == '0005':
+          return True
+      except OSError:
+        continue
+  except OSError:
+    pass
+  return False
+
+
 class Clicks:
   """Release-triggered gestures. Single clicks wait only when double is assigned."""
   def __init__(self, mapping=None, learning=False, gestures=None):

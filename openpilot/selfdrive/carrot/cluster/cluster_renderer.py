@@ -1296,6 +1296,10 @@ class ClusterUiRenderer:
         self._nav_model_fresh = False
         self._nav_map_style = 0
         self._nav_map_style_checked = 0.
+        self._auto_overtake = None
+        self._auto_overtake_checked = 0.
+        self._bluetooth_connected = None
+        self._bluetooth_checked = 0.
         self._window_open = False
         self._font = None
         self._owns_font = False
@@ -1947,6 +1951,49 @@ class ClusterUiRenderer:
             except (OSError, ValueError):
                 pass
         return self._nav_map_style == 2
+
+    def _auto_overtake_enabled(self) -> bool | None:
+        # AutoOvertake param, read at most once a second. None = unreadable.
+        now = time.monotonic()
+        if now >= self._auto_overtake_checked:
+            self._auto_overtake_checked = now + 1.0
+            try:
+                from openpilot.common.params import Params
+                for params in (Params("/dev/shm/params"), Params()):
+                    try:
+                        self._auto_overtake = bool(params.get_bool("AutoOvertake"))
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        return self._auto_overtake
+
+    def _bluetooth_remote_connected(self) -> bool | None:
+        # Bluetooth HID remote present, checked at most once a second.
+        # None = unreadable (e.g. /sys/class/input missing).
+        now = time.monotonic()
+        if now >= self._bluetooth_checked:
+            self._bluetooth_checked = now + 1.0
+            try:
+                from openpilot.selfdrive.carrot.bluetooth.model import bluetooth_remote_connected
+                self._bluetooth_connected = bool(bluetooth_remote_connected())
+            except Exception:
+                self._bluetooth_connected = None
+        return self._bluetooth_connected
+
+    @staticmethod
+    def _draw_bluetooth_icon(x: float, y: float, height: float, connected: bool, theme: ClusterTheme) -> None:
+        # Bluetooth rune (vertical spine + X, Feather-icons geometry) in a
+        # height x width box of 2:1. Green when connected, muted when
+        # disconnected so the connection state is visible at a glance.
+        color = rl_color(GREEN if connected else theme.muted)
+        w = max(4.0, height * 0.5)
+        thick = max(2.0, height / 12.0)
+        cx = x + w * 0.5
+        rl.draw_line_ex(rl.Vector2(cx, y + height * 0.167), rl.Vector2(cx, y + height * 0.833), thick, color)
+        rl.draw_line_ex(rl.Vector2(x + w * 0.29, y + height * 0.333), rl.Vector2(x + w * 0.71, y + height * 0.667), thick, color)
+        rl.draw_line_ex(rl.Vector2(x + w * 0.71, y + height * 0.333), rl.Vector2(x + w * 0.29, y + height * 0.667), thick, color)
 
     def _draw_nav_model_map(self):
         from openpilot.selfdrive.navigation.preview import PREVIEW_PATH, preview_fresh
@@ -8260,7 +8307,9 @@ class ClusterUiRenderer:
         actual_fps: float | None = None,
         cellular_data_text: str | None = None,
     ) -> None:
-        if status is None and network_address is None and not cellular_data_text:
+        overtake = self._auto_overtake_enabled()
+        bt_connected = self._bluetooth_remote_connected()
+        if status is None and network_address is None and not cellular_data_text and overtake is None and bt_connected is None:
             return
 
         theme = self._current_theme()
@@ -8284,6 +8333,18 @@ class ClusterUiRenderer:
             max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
             data_text = self._ellipsize_text(cellular_data_text, text_size, max_w)
             self._draw_text_with_stroke(data_text, data_x, center_y, text_size, WHITE, (5, 9, 12), 2)
+            data_width, _ = self._measure_text(data_text, text_size, spacing)
+            data_x += data_width + CELLULAR_DATA_GAP
+        if overtake is not None:
+            overtake_text = "자동 추월 ON" if overtake else "자동 추월 OFF"
+            overtake_color = GREEN if overtake else theme.muted
+            max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
+            overtake_text = self._ellipsize_text(overtake_text, text_size, max_w)
+            self._draw_text_with_stroke(overtake_text, data_x, center_y, text_size, overtake_color, (5, 9, 12), 2)
+            overtake_width, _ = self._measure_text(overtake_text, text_size, spacing)
+            data_x += overtake_width + CELLULAR_DATA_GAP
+        if bt_connected is not None:
+            self._draw_bluetooth_icon(data_x, center_y - row_h * 0.5, row_h, bt_connected, theme)
         if network_address:
             network_text = self._ellipsize_text(network_address, text_size, GIT_STATUS_MAX_TEXT_W)
             network_y = center_y - row_h - 4.0
