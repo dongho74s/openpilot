@@ -216,3 +216,83 @@ def test_controlsd_reads_the_settings_once_a_second_not_per_cycle():
   state_control = ast.get_source_segment(src, next(
     n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == 'state_control'))
   assert not any(key in state_control for key in ('"Clamp', '"LatJerkMax"', 'read_clamp_settings('))
+
+
+# ---- Codex cross-review (2026-11-18) R1-R7
+
+def settled(md=None, v=25.0):
+  c = mdc.ClampSteerCorrector()
+  out, clock = run(c, md or model(path_y=-1.75 + 0.9), v, 2.0)
+  assert out > 0.001
+  return c, clock
+
+
+@pytest.mark.parametrize("change", ["lane_change", "disabled", "gain0", "unusable", "bad_data", "slow"])
+def test_protective_stops_are_immediate_not_eased(change):
+  c, clock = settled()
+  md, v, settings, lane_changing, usable = model(path_y=-1.75 + 0.9), 25.0, mdc.ClampSettings(), False, True
+  if change == "lane_change":
+    lane_changing = True
+  elif change == "disabled":
+    settings = mdc.ClampSettings(enabled=False)
+  elif change == "gain0":
+    settings = mdc.ClampSettings(gain=0.0)
+  elif change == "unusable":
+    usable = False
+  elif change == "bad_data":
+    md.position = NS(x=[], y=[])
+  elif change == "slow":
+    v = 1.0
+  out = c.update(md, v, lane_changing, settings, now=clock(), usable=usable)
+  assert out == 0.0 and not c.alert_active                # the very next cycle (R1, R3)
+
+
+def test_lane_change_outside_laneless_still_holds_it_off_and_ends_the_alert():
+  c, clock = settled()
+  assert c.alert_active
+  md = model(path_y=-1.75 + 0.9)
+  for _ in range(30):                                     # lane mode / not steering, a lane change meanwhile (R4)
+    assert c.update(md, 25.0, True, mdc.ClampSettings(), now=clock(), usable=False) == 0.0
+  assert not c.alert_active
+  out, clock = run(c, md, 25.0, 1.9, clock=clock)         # back in laneless: still in the 2 s hold-off
+  assert out == 0.0
+  out, clock = run(c, md, 25.0, 1.0, clock=clock)
+  assert out > 0 and not c.alert_active                   # correcting again, but within the 5 s alert cooldown
+
+
+def test_output_stays_under_the_current_speeds_cap_while_speeding_up():
+  c = mdc.ClampSteerCorrector()
+  md = model(path_y=-1.75 + 0.35)                         # a 1 m violation: the target sits at the cap
+  v, clock = 9.0, Clock()
+  for _ in range(300):
+    c.update(md, v, False, mdc.ClampSettings(), now=clock())
+  for _ in range(20):                                     # 3 m/s^2 for 0.2 s (R5)
+    v += 0.03
+    out = c.update(md, v, False, mdc.ClampSettings(), now=clock())
+    assert abs(out) <= mdc.curvature_cap(v) + 1e-12
+
+
+def test_one_bad_side_does_not_take_the_other_sides_bound():
+  md = model(path_y=-1.75 + 0.95, right=float('nan'))     # a NaN right line (R6)
+  assert run(mdc.ClampSteerCorrector(), md, 25.0, 2.0)[0] > 0
+  md = model(path_y=-1.75 + 0.95)
+  md.roadEdges = [NS(x=[], y=[0.0, 0.0]), NS(x=[], y=[0.0, 0.0])]   # unusable edges, not needed with both lines
+  assert run(mdc.ClampSteerCorrector(), md, 25.0, 2.0)[0] > 0
+
+
+def test_lane_mode_path_clamp_rests_for_turn_signals_and_two_seconds_after():
+  lp = lane_planner()
+  lp.ll_x, lp.lll_y, lp.rll_y = X, np.full(33, -1.75), np.full(33, 1.75)
+  lp.l_prob = lp.r_prob = 0.9
+  lp.edges_valid = False
+  path = np.stack([X, np.full(33, -0.8), np.zeros(33)], axis=1)
+  t = 1000.0
+  assert np.allclose(lp.apply_min_distance_clamp(path.copy(), 25.0, True, now=t)[:, 1], path[:, 1])   # signal on (R2)
+  assert np.allclose(lp.apply_min_distance_clamp(path.copy(), 25.0, False, now=t + 1.9)[:, 1], path[:, 1])
+  assert lp.apply_min_distance_clamp(path.copy(), 25.0, False, now=t + 2.1)[:, 1].min() > -0.8   # clamps again
+
+
+def test_selfdrived_ignores_a_stale_clamp_flag():
+  src = (ROOT / "selfdrive" / "selfdrived" / "selfdrived.py").read_text()
+  line = next(ln for ln in src.splitlines() if "clampSteerActive" in ln and ln.strip().startswith("if "))
+  assert "valid['controlsState']" in line and "alive['controlsState']" in line          # R7

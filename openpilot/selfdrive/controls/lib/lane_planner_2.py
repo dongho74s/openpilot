@@ -1,4 +1,5 @@
 import math
+import time
 import numpy as np
 from openpilot.cereal import log
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -79,6 +80,7 @@ class LanePlanner:
     self.edges_valid = False
     self.clamp_max_correction = 0.0
     self.clamp_sides = ""
+    self.clamp_holdoff_until = 0.0
 
     self.lanefull_mode = False
     self.d_prob_count = 0
@@ -267,14 +269,19 @@ class LanePlanner:
 
     return path_xyz, laneline_active
 
-  def apply_min_distance_clamp(self, path_xyz, v_ego):
+  def apply_min_distance_clamp(self, path_xyz, v_ego, lane_changing=False, now=None):
     """Keep the final path (PathOffset included) a minimum distance from the lane lines, or from the road edge where no
-    line is seen (min_distance_clamp.py). It only moves the path where it breaks the bound, by as much; off during a
-    lane change, faded in from 5 to 10 km/h, and halfway between the bounds when the lane is too narrow for both."""
+    line is seen (min_distance_clamp.py). It only moves the path where it breaks the bound, by as much; faded in from 5
+    to 10 km/h and halfway between the bounds when the lane is too narrow for both. Off during a lane change (the
+    planner's multiplier, the model's lane change state or a turn signal: lane_changing) and LANE_CHANGE_HOLDOFF_S after
+    it, as the laneless correction."""
     self.clamp_max_correction = 0.0
     self.clamp_sides = ""
     settings = self.clamp_settings
-    if not settings.enabled or self.lane_change_multiplier < 0.5:
+    now = time.monotonic() if now is None else now
+    if lane_changing or self.lane_change_multiplier < 0.5:
+      self.clamp_holdoff_until = now + mdc.LANE_CHANGE_HOLDOFF_S
+    if not settings.enabled or now < self.clamp_holdoff_until:
       self.clamp_lines.reset()
       return path_xyz
     strength = mdc.fade_in(v_ego)

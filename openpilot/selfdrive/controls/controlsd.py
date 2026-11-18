@@ -248,6 +248,10 @@ class Controls:
       return alpha * val + (1 - alpha) * prev_val
 
     self.clamp_steer_ran = False   # set by the laneless branch below
+    # a lane change (from the model, or the turn signals, which start before the model's desire and end after it)
+    # stops the minimum-distance clamp; tracked every cycle so its hold-off also covers one made outside laneless
+    clamp_lane_changing = model_v2.meta.desire != Desire.none or model_v2.meta.laneChangeState != LaneChangeState.off or \
+                          CS.leftBlinker or CS.rightBlinker
     if not CC.latActive:
       new_desired_curvature = self.curvature
     elif self.is_vw_meb:
@@ -271,14 +275,14 @@ class Controls:
       # own action head / modeld timing): replaying 11/13 drives without this filter gave 2-5x the request jumps, so
       # the parity cars keep it (2026-11-14).
       # The minimum-distance clamp adds its correction to the model's curvature: zero unless the model's plan comes
-      # too close to a line or the road edge (min_distance_clamp.py). A lane change (from the model, or the turn
-      # signals, which start before the model's desire and end after it) turns it off.
-      meta = model_v2.meta
-      lane_changing = meta.desire != Desire.none or meta.laneChangeState != LaneChangeState.off or \
-                      CS.leftBlinker or CS.rightBlinker
-      clamp_kappa = self.clamp_steer.update(model_v2, CS.vEgo, lane_changing, self.clamp_settings)
+      # too close to a line or the road edge (min_distance_clamp.py), and only from a valid, current model message.
+      model_ok = self.sm.valid['modelV2'] and self.sm.alive['modelV2']
+      clamp_kappa = self.clamp_steer.update(model_v2, CS.vEgo, clamp_lane_changing, self.clamp_settings, usable=model_ok)
       self.clamp_steer_ran = True
       new_desired_curvature = smooth_value(model_v2.action.desiredCurvature + clamp_kappa, self.desired_curvature, 0.1)
+    if not self.clamp_steer_ran:
+      # not steering laneless: no correction, but the lane change hold-off and the alert's end keep their history
+      self.clamp_steer.update(model_v2, CS.vEgo, clamp_lane_changing, self.clamp_settings, usable=False)
 
     # FrogPilot keeps the lateral acceleration limit (3.0 m/s^2, LateralAccelLimit) at every speed
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,

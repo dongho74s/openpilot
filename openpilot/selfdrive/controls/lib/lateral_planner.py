@@ -160,8 +160,12 @@ class LateralPlanner:
     #self.lanelines_active = True if self.LP.d_prob > 0.3 and self.LP.lanefull_mode else False
 
     self.path_xyz[:, 1] += self.pathOffset
-    # minimum-distance clamp on the final path (PathOffset included): it keeps off the lines and the road edge
-    self.path_xyz = self.LP.apply_min_distance_clamp(self.path_xyz, v_ego_car)
+    # minimum-distance clamp on the final path (PathOffset included): it keeps off the lines and the road edge, and rests
+    # during a lane change, while a turn signal is on and 2 s after (as the laneless correction in controlsd)
+    cs = sm['carState']
+    clamp_lane_changing = md.meta.desire != log.Desire.none or md.meta.laneChangeState != log.LaneChangeState.off or \
+                          cs.leftBlinker or cs.rightBlinker
+    self.path_xyz = self.LP.apply_min_distance_clamp(self.path_xyz, v_ego_car, clamp_lane_changing)
 
     if self.lanelines_active:
       # the heading from the clamped final path

@@ -215,9 +215,10 @@ Laneless driving steers with the model's own curvature, so `PathOffset` (lane-mo
   - It turns off once the violation is under 10 cm.
   - The correction never exceeds 1.5 m/s² of lateral acceleration or a curvature of 0.02, and eases from 0 to full over about half a second.
   - `ClampSteerGain` (×0.1, 0–20, default 10 = 1.0×) sets how strong it is; 0 turns off only the laneless correction (the lane-mode path clamp stays).
-- It rests during a lane change, while a turn signal is on and for 2 s after a lane change. It is off below 5 km/h and fades in up to 10 km/h.
+- In both lane mode and laneless it rests during a lane change, while a turn signal is on and for 2 s after a lane change. It is off below 5 km/h and fades in up to 10 km/h.
+- A lane change or turn signal, switching it off, low speed, or invalid or stale model data stops the laneless correction at once, not gradually. Speeding up never takes the correction past that speed's limit (1.5 m/s² of lateral acceleration).
 - `ClampSteerAlert` (default on): when the laneless correction kicks in, a small `클램프 조향 보정 작동` alert shows with a ding; it stays quiet for 5 s after one ends. Off silences the alert only.
-- Settings apply within about a second after saving. The control loop (100 Hz) reads them once a second, never every cycle.
+- Settings apply within about a second after saving. The control loop (100 Hz) reads the clamp and jerk settings once a second; the lane planner reads them with its other settings twice a second.
 - The model's view is no longer shifted, so the drawn lane lines and path and the model outputs are in the original camera frame.
 
 A larger `SteerActuatorDelay` compensates by commanding earlier. A larger `LatSmoothSec` is smoother but may respond more slowly. Changing both together makes diagnosis difficult.

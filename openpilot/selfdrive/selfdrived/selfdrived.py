@@ -412,8 +412,9 @@ class SelfdriveD:
                                                     LaneChangeState.laneChangeFinishing):
       self.events.add(EventName.laneChange)
 
-    # the minimum-distance clamp's laneless correction is on (controlsd decides, with its own cooldown)
-    if self.sm['controlsState'].clampSteerActive:
+    # the minimum-distance clamp's laneless correction is on (controlsd decides, with its own cooldown); a stale or
+    # invalid controlsState's last True is not a correction that is happening
+    if self.sm.valid['controlsState'] and self.sm.alive['controlsState'] and self.sm['controlsState'].clampSteerActive:
       self.events.add(EventName.clampSteerActive)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):

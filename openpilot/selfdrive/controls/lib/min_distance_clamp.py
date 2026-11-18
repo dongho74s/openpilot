@@ -11,8 +11,8 @@ the car by shifting what the model sees.
   ClampSteerCorrector's curvature to the model's: zero unless the model's plan, one second ahead, comes closer to a
   line than the bound (beyond a 20 cm deadband), and then a pure-pursuit nudge capped at 1.5 m/s^2 and 0.02 1/m.
 
-Settings are read by the callers once a second (read_clamp_settings), never per control cycle (ej read eight Params
-files every 10 ms in controlsd). Signs (as carrot logs them, checked with GPS heading): model y is + to the right
+Settings are read by controlsd once a second and by the lateral planner with its other settings (2 Hz), never per
+control cycle (ej read eight Params files every 10 ms in controlsd). Signs (as carrot logs them, checked with GPS heading): model y is + to the right
 (laneLines[1] is the left line, negative), curvature is + for a right turn.
 """
 from __future__ import annotations
@@ -120,91 +120,114 @@ class LineHysteresis:
     self.left = self.right = False
 
 
+def curvature_cap(v_ego: float) -> float:
+  """The most curvature the laneless correction itself may add at this speed (1/m)."""
+  return min(MAX_LAT_ACCEL / max(v_ego, 1.0) ** 2, MAX_CURVATURE)
+
+
 class ClampSteerCorrector:
   """The laneless half of the clamp: update() returns a curvature (1/m, + right) to add to the model's.
 
-  It is zero while the plan keeps its distance, during a lane change and LANE_CHANGE_HOLDOFF_S after it, below 5 km/h
-  and on missing or bad model data. Its output changes at most SLEW_RATE, so it eases in and out. alert_active is the
-  ding (controlsState.clampSteerActive): on above ALERT_ON, off below ALERT_OFF, then quiet for ALERT_COOLDOWN_S."""
+  It follows its target at most SLEW_RATE, so a correction eases in and out while the plan comes and goes. A protective
+  stop is immediate instead: a lane change or a turn signal (and LANE_CHANGE_HOLDOFF_S after), the clamp switched off
+  or its gain at 0, below 5 km/h, stale or invalid model input (usable=False), the laneless branch not running and bad
+  model data all set the output to 0 at once (controlsd's 0.1 s filter and clip_curvature's jerk limit still smooth
+  the request). The output never exceeds the current speed's cap, also after the slew limit. alert_active is the ding
+  (controlsState.clampSteerActive): on above ALERT_ON, off below ALERT_OFF, then quiet for ALERT_COOLDOWN_S.
+
+  controlsd calls it every control cycle, also when the laneless branch is not steering (usable=False), so the lane
+  change hold-off and the alert's cooldown keep their history."""
 
   def __init__(self):
     self.lines = LineHysteresis()
     self.correcting = False      # past the deadband
-    self.correction = 0.0        # the last output, after the slew limit
+    self.correction = 0.0        # the last output
     self.alert_active = False
     self._alert_quiet_until = 0.0
     self._holdoff_until = 0.0
     self._last_t: float | None = None
 
-  def update(self, md, v_ego: float, lane_changing: bool, settings: ClampSettings, now: float | None = None) -> float:
+  def update(self, md, v_ego: float, lane_changing: bool, settings: ClampSettings, now: float | None = None,
+             usable: bool = True) -> float:
     now = time.monotonic() if now is None else now
-    target = self._target(md, v_ego, lane_changing, settings, now)
-    if self._last_t is None or now - self._last_t > GAP_RESET_S:
+    target = self._target(md, v_ego, lane_changing, settings, now, usable)
+    if target is None:                           # a protective stop: off at once
+      self.correcting = False
+      self.correction = 0.0
+    elif self._last_t is None or now - self._last_t > GAP_RESET_S:
       self.correction = 0.0                      # it was not running: start from zero
     else:
       step = SLEW_RATE * min(max(now - self._last_t, 0.0), 0.1)
       self.correction += float(np.clip(target - self.correction, -step, step))
+    cap = curvature_cap(v_ego)
+    self.correction = float(np.clip(self.correction, -cap, cap))   # the cap shrinks as the car speeds up
     self._last_t = now
     self._update_alert(settings, now)
     return self.correction
 
-  def _target(self, md, v_ego, lane_changing, settings, now) -> float:
-    if not settings.enabled or settings.gain <= 0.0:
-      self.lines.reset()
-      self.correcting = False
-      return 0.0
+  def _target(self, md, v_ego, lane_changing, settings, now, usable):
+    """The correction to ease toward, or None for a protective stop."""
     if lane_changing:                            # crossing the line is the point; hold off a while after it too
-      self.lines.reset()
-      self.correcting = False
       self._holdoff_until = now + LANE_CHANGE_HOLDOFF_S
-      return 0.0
+    if lane_changing or now < self._holdoff_until or not usable or not settings.enabled or settings.gain <= 0.0:
+      self.lines.reset()
+      return None
     strength = fade_in(v_ego)
-    if now < self._holdoff_until or strength <= 0.0:
-      self.correcting = False
-      return 0.0
+    if strength <= 0.0:
+      return None
     try:
       return self._compute(md, v_ego, settings, strength)
     except (IndexError, ValueError, TypeError, AttributeError):
-      self.correcting = False
-      return 0.0
+      return None
 
-  def _compute(self, md, v_ego, settings, strength) -> float:
+  def _compute(self, md, v_ego, settings, strength):
     lines, edges = md.laneLines, md.roadEdges
+    if len(md.position.x) < 2 or len(md.position.y) < 2:
+      return None
+    ahead = float(np.clip(v_ego * LOOKAHEAD_TIME, LOOKAHEAD_MIN, LOOKAHEAD_MAX))
+    path_y = float(np.interp(ahead, md.position.x, md.position.y))
+    if not math.isfinite(path_y):
+      return None
+
+    def at(line):
+      return float(np.interp(ahead, line.x, line.y))
+
     lines_ok = len(lines) >= 3 and len(lines[1].y) >= 2 and len(lines[2].y) >= 2 and len(md.laneLineProbs) >= 3
-    edges_ok = len(edges) >= 2 and len(edges[0].y) >= 2 and len(edges[1].y) >= 2 and len(md.roadEdgeStds) >= 2
-    if len(md.position.x) < 2 or (not lines_ok and not edges_ok):
-      self.correcting = False
-      return 0.0
     if lines_ok:
       left_on, right_on = self.lines.update(float(md.laneLineProbs[1]), float(md.laneLineProbs[2]))
     else:
       self.lines.reset()
       left_on = right_on = False
+    edges_ok = len(edges) >= 2 and len(md.roadEdgeStds) >= 2
 
-    ahead = float(np.clip(v_ego * LOOKAHEAD_TIME, LOOKAHEAD_MIN, LOOKAHEAD_MAX))
-    path_y = float(np.interp(ahead, md.position.x, md.position.y))
-    at = lambda line: float(np.interp(ahead, line.x, line.y))  # noqa: E731
-    left_line = at(lines[1]) if left_on else 0.0
-    right_line = at(lines[2]) if right_on else 0.0
-    left_std = float(md.roadEdgeStds[0]) if edges_ok else math.inf
-    right_std = float(md.roadEdgeStds[1]) if edges_ok else math.inf
-    left_edge = at(edges[0]) + left_std * EDGE_STD_MARGIN if edges_ok else 0.0
-    right_edge = at(edges[1]) - right_std * EDGE_STD_MARGIN if edges_ok else 0.0
-    lo, hi = bounds(left_line, right_line, left_edge, right_edge, left_on, right_on, left_std, right_std, settings)
-    if not (math.isfinite(path_y) and (math.isfinite(lo) or math.isfinite(hi))):
+    def side_bound(line_on, line, edge_idx, sign, min_lane, min_edge):
+      """One side's bound, on its own: a seen line first, else a sure road edge, else none. A failure on this side
+      never takes the other side's bound with it (as ej)."""
+      try:
+        if line_on:
+          b = at(line) - sign * min_lane
+        elif edges_ok and len(edges[edge_idx].y) >= 2 and float(md.roadEdgeStds[edge_idx]) < EDGE_STD_MAX:
+          std = float(md.roadEdgeStds[edge_idx])
+          b = at(edges[edge_idx]) - sign * std * EDGE_STD_MARGIN - sign * min_edge
+        else:
+          return None
+      except (IndexError, ValueError, TypeError, AttributeError):
+        return None
+      return b if math.isfinite(b) else None
+
+    lo = side_bound(left_on, lines[1] if lines_ok else None, 0, -1, settings.min_lane, settings.min_edge)
+    hi = side_bound(right_on, lines[2] if lines_ok else None, 1, 1, settings.min_lane, settings.min_edge)
+    if lo is None and hi is None:
       self.correcting = False
       return 0.0
-    if math.isnan(lo) or math.isnan(hi):
-      self.correcting = False
-      return 0.0
-    target_y = float(clamp_target(path_y, lo, hi))
+    target_y = float(clamp_target(path_y, -np.inf if lo is None else lo, np.inf if hi is None else hi))
     violation = abs(target_y - path_y)
     self.correcting = violation >= DEADBAND_OFF if self.correcting else violation > DEADBAND_ON
     if not self.correcting:
       return 0.0
     # pure pursuit: the curvature that reaches target_y at `ahead` metres (+ y right -> + curvature right)
     kappa = 2.0 * (target_y - path_y) * strength / ahead ** 2 * settings.gain
-    cap = min(MAX_LAT_ACCEL / max(v_ego, 1.0) ** 2, MAX_CURVATURE)
+    cap = curvature_cap(v_ego)
     return float(np.clip(kappa, -cap, cap))
 
   def _update_alert(self, settings, now) -> None:
