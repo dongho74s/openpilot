@@ -281,6 +281,23 @@ def test_overtake_toggle_routes_to_cruise_channel(tmp_path):
   assert lane.read(now=11.08) is None
 
 
+def test_overtake_on_off_route_to_cruise_channel(tmp_path):
+  assert 'overtakeOn' in ACTIONS
+  assert 'overtakeOff' in ACTIONS
+  device = validate_config({'devices': {'66:C0:0C:7B:6E:71': {'profile': 'yiser-j6', 'enabled': True,
+                                        'mapping': {'1': 'overtakeOn', '2': 'overtakeOff'}}}})['devices']['66:C0:0C:7B:6E:71']
+  assert device['mapping'] == {'1': 'overtakeOn', '2': 'overtakeOff'}
+  writer = CommandWriter(tmp_path)
+  reader = CommandReader('cruise', tmp_path)
+  lane = CommandReader('lane', tmp_path)
+  reader.started = lane.started = 10
+  writer.send('A', 'overtakeOn', 11)
+  assert reader.read(now=11.05) == 'overtakeOn'
+  writer.send('A', 'overtakeOff', 11.1)
+  assert reader.read(now=11.15) == 'overtakeOff'
+  assert lane.read(now=11.18) is None
+
+
 def test_device_disconnect_and_test_only_cancel_its_queued_commands(tmp_path):
   writer = CommandWriter(tmp_path)
   reader = CommandReader('cruise', tmp_path)

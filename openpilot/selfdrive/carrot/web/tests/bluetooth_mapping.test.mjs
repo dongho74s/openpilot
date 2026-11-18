@@ -9,6 +9,8 @@ test("every native button has a separately selectable one-shot long action", () 
   }
   assert.equal(new Set(REMOTE_ACTIONS).size, REMOTE_ACTIONS.length);
   assert.ok(REMOTE_ACTIONS.includes("overtakeToggle"));
+  assert.ok(REMOTE_ACTIONS.includes("overtakeOn"));
+  assert.ok(REMOTE_ACTIONS.includes("overtakeOff"));
   const mapping = { up: 'accelCruiseLong' };
   assert.deepEqual(mappingButtons(mapping), ['up']);
   assert.equal(gestureToken('up', 'single'), 'up');
