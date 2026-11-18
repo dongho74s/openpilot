@@ -1150,6 +1150,9 @@ class ClusterUiRenderer:
         self.is_metric = bool(is_metric)
         self._theme = current_cluster_theme(self.theme_mode)
         self.hidden = False
+        self._auto_overtake = None
+        self._auto_overtake_checked = 0.
+
         self._window_open = False
         self._font = None
         self._owns_font = False
@@ -1772,10 +1775,28 @@ class ClusterUiRenderer:
         self._draw_alert_overlay(getattr(state, "alert", None))
         self._profile_add("render.alert", profile_stage)
 
+    def _auto_overtake_enabled(self) -> bool | None:
+        # AutoOvertake param, read at most once a second. None = unreadable.
+        now = time.monotonic()
+        if now >= self._auto_overtake_checked:
+            self._auto_overtake_checked = now + 1.0
+            try:
+                from openpilot.common.params import Params
+                for params in (Params("/dev/shm/params"), Params()):
+                    try:
+                        self._auto_overtake = bool(params.get_bool("AutoOvertake"))
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        return self._auto_overtake
+
     def _close_ambient_resources(self) -> None:
         for name in ("_phone_media_art_texture", "_ambient_reference_texture",
                      "_ambient_cruise_icon_texture", "_ambient_lane_assist_icon_texture"):
             texture = getattr(self, name)
+
             if texture is not None:
                 rl.unload_texture(texture)
                 setattr(self, name, None)
@@ -7095,7 +7116,9 @@ class ClusterUiRenderer:
         network_address: str | None = None,
         actual_fps: float | None = None,
     ) -> None:
-        if status is None and network_address is None:
+        overtake = self._auto_overtake_enabled()
+        if status is None and network_address is None and overtake is None:
+
             return
 
         theme = self._current_theme()
@@ -7105,6 +7128,7 @@ class ClusterUiRenderer:
         row_h = max(text_height, GIT_STATUS_DOT_RADIUS * 2)
         center_y = DESIGN_HEIGHT - GIT_STATUS_BOTTOM_MARGIN - row_h * 0.5
         text_x = GIT_STATUS_MARGIN + GIT_STATUS_DOT_RADIUS * 2 + GIT_STATUS_DOT_TEXT_GAP
+        data_x = text_x
         if status is not None:
             color = self._git_status_color(status, theme)
             text = status.branch if not status.detail else f"{status.branch} ({status.detail})"
@@ -7112,6 +7136,15 @@ class ClusterUiRenderer:
             dot_center_x = GIT_STATUS_MARGIN + GIT_STATUS_DOT_RADIUS
             rl.draw_circle_v(rl.Vector2(dot_center_x, center_y), GIT_STATUS_DOT_RADIUS, rl_color(color))
             self._draw_text_with_stroke(text, text_x, center_y, text_size, WHITE, (5, 9, 12), 2, cache=True)
+            branch_width, _ = self._measure_text(text, text_size, spacing)
+            data_x = text_x + branch_width + 18
+        if overtake is not None:
+            overtake_text = "자동 추월 ON" if overtake else "자동 추월 OFF"
+            overtake_color = GREEN if overtake else theme.muted
+            max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
+            overtake_text = self._ellipsize_text(overtake_text, text_size, max_w)
+            self._draw_text_with_stroke(overtake_text, data_x, center_y, text_size, overtake_color, (5, 9, 12), 2)
+
         if network_address:
             network_text = self._ellipsize_text(network_address, text_size, GIT_STATUS_MAX_TEXT_W)
             network_y = center_y - row_h - 4.0

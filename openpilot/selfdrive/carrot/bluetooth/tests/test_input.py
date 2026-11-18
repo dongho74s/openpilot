@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from openpilot.selfdrive.carrot.bluetooth.model import Clicks, CommandReader, CommandWriter, Decoder, DEFAULT_MAPPING, atomic_json, validate_config
+from openpilot.selfdrive.carrot.bluetooth.model import ACTIONS, Clicks, CommandReader, CommandWriter, Decoder, DEFAULT_MAPPING, atomic_json, validate_config
 from openpilot.selfdrive.carrot.bluetooth.bluez import Bluez
 
 
@@ -265,6 +265,20 @@ def test_multi_device_queue_keeps_all_commands_in_order_once(tmp_path):
   assert reader.read(now=11.08) == 'decelCruise'
   assert reader.read(now=11.11) == 'carrotCruise'
   assert reader.read(now=11.14) is None
+
+
+def test_overtake_toggle_routes_to_cruise_channel(tmp_path):
+  assert 'overtakeToggle' in ACTIONS
+  device = validate_config({'devices': {'66:C0:0C:7B:6E:71': {'profile': 'yiser-j6', 'enabled': True,
+                                        'mapping': {'2': 'overtakeToggle'}}}})['devices']['66:C0:0C:7B:6E:71']
+  assert device['mapping'] == {'2': 'overtakeToggle'}
+  writer = CommandWriter(tmp_path)
+  reader = CommandReader('cruise', tmp_path)
+  lane = CommandReader('lane', tmp_path)
+  reader.started = lane.started = 10
+  writer.send('A', 'overtakeToggle', 11)
+  assert reader.read(now=11.05) == 'overtakeToggle'
+  assert lane.read(now=11.08) is None
 
 
 def test_device_disconnect_and_test_only_cancel_its_queued_commands(tmp_path):

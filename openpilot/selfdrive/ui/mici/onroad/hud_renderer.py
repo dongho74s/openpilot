@@ -805,6 +805,13 @@ class HudRenderer(Widget):
 
     return gap
 
+  def _get_auto_overtake(self) -> bool:
+    # AutoOvertake param default is on ("1"); fall back to on when unreadable.
+    try:
+      return bool(Params().get_bool("AutoOvertake"))
+    except Exception:
+      return True
+
   def _draw_set_speed(self, rect: rl.Rectangle) -> None:
     """
     Bottom-left speed panel (like your 3rd image)
@@ -855,6 +862,19 @@ class HudRenderer(Widget):
       mode_y = int(panel_y + panel_h * 0.05 - mode_size.y * 0.5 - 15)
 
       draw_text_ui_style(mode_text, mode_x, mode_y, mode_font, mode_color, font=self._font_display, border_width=1.0, shadow_offset=3.0, align="left_top", y_offset=0.0)
+
+    # ----- auto overtake indicator (top row, after the driving mode text) -----
+    overtake_on = self._get_auto_overtake()
+    overtake_text = "자동 추월 ON" if overtake_on else "자동 추월 OFF"
+    overtake_color = rl.Color(0, 255, 0, 230) if overtake_on else rl.Color(160, 160, 160, 200)
+    overtake_font = 25
+    overtake_size = measure_text_cached(self._font_semi_bold, overtake_text, overtake_font)
+    if mode_text:
+      overtake_x = mode_x + int(mode_size.x) + 16
+    else:
+      overtake_x = panel_x + 5
+    overtake_y = int(panel_y + panel_h * 0.05 - overtake_size.y * 0.5 - 15)
+    draw_text_ui_style(overtake_text, overtake_x, overtake_y, overtake_font, overtake_color, font=self._font_display, border_width=1.0, shadow_offset=3.0, align="left_top", y_offset=0.0)
 
     # ----- set speed (center, smaller) -----
     show_set = self._engaged and self.is_cruise_set
