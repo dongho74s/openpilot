@@ -20,6 +20,7 @@ from cluster_config import (
   EGO_FORWARD_M,
   GREEN,
   LIGHT_CLUSTER_THEME,
+  SKY_BLUE,
   VEHICLE_LENGTH_M,
 )
 from cluster_models import ClusterAlert, ClusterUiState, DetectedVehicle, LaneMarking, ModelPathPoint, RadarPoint, RouteOverlay
@@ -762,6 +763,12 @@ def test_traffic_states_share_the_slot_beside_driving_mode(monkeypatch, traffic_
 
 
 def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
+  # Bluetooth icon is the same height as the Wi-Fi icon and sky blue when
+  # connected (2026-11-19).
+  assert cluster_renderer.TOP_RIGHT_BT_ICON_H == pytest.approx(
+    cluster_renderer.WIFI_STATUS_ICON_SIZE
+  )
+  assert SKY_BLUE == (135, 206, 235)
   # Layout rearranged 2026-11-18: LFA (carrot steering icon) moved to the
   # top-left end, Wi-Fi + Bluetooth moved to the road view's right edge.
   # In DEBUG_GRAPH_RIGHT mode the right side is the steering graph panel,
