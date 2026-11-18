@@ -13,6 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.cluster_speed import gm_raw_display_kph_from_cluster_display_kph
 from opendbc.car.gm.manual_auto_hold import manual_hold_supported
+from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR
 from opendbc.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
@@ -94,8 +95,14 @@ class CarController(CarControllerBase):
     # 트래버스 오픈파일럿 롱컨: 오토리쥼/오토크루즈 모듈 사용
     self.traverse_long = CP.carFingerprint == CAR.CHEVROLET_TRAVERSE and CP.openpilotLongitudinalControl
     self.auto_resume = GMAutoResume(self.CP, self.params) if self.traverse_long else None
-    # Bolt ACC with pedal: camera long, with the pedal only tapped to leave the ECM's ACC standstill (see below)
-    self.bolt_acc_pedal_sng = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED
+    # Bolt ACC with pedal, BoltPedalLongMode 1: camera long, with the pedal only tapped to leave the ECM's ACC standstill
+    # (see below). Mode 2 (PEDAL_LONG) runs StarPilot's whole longitudinal flow instead (self.bolt_acc_pedal).
+    self.bolt_acc_pedal_sng = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED and \
+                              not CP.flags & GMFlags.PEDAL_LONG.value
+    # Bolt ACC with pedal, BoltPedalLongMode 2: StarPilot's whole longitudinal flow replaces the carrot one below (none of
+    # carrot's SET/RES button features, 0x2CB, 0x2CD or 0x3D1), and stock ACC is cancelled toward the camera.
+    self.bolt_acc_pedal = BoltAccPedalLongController(CP, self.packer_pt, self.packer_ch) \
+      if supports_bolt_acc_pedal_friction_experiment(CP) else None
     self.btn_rc_pt = -1
     # 오토스톱 자동 끄기(AutoStopOff, 기본 0). 판다는 오파 롱컨(pcmCruise=False)에서만 0x1E1 UNPRESS 송신을 허용
     self.auto_stop_off = AutoStopOff() if self.traverse_long and not CP.pcmCruise else None
@@ -189,7 +196,10 @@ class CarController(CarControllerBase):
       idx = self.lka_steering_cmd_counter % 4
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_torque, idx, CC.latActive))
 
-    if self.CP.openpilotLongitudinalControl:
+    if self.bolt_acc_pedal is not None:
+      # Pitch compensation is always on for this car: StarPilot's LongPitch defaults to on, carrot's to off.
+      self.apply_gas, self.apply_brake = self.bolt_acc_pedal.update(CC, CS, self.frame, True, can_sends)
+    elif self.CP.openpilotLongitudinalControl:
       hold = getattr(CS, "manual_auto_hold", None)
       manual_brake = hold.command(CS.out, CC.enabled or CC.longActive) if hold is not None and manual_hold_supported(self.CP) else 0
 

@@ -205,6 +205,11 @@ class VCruiseCarrot:
     self._cruise_cancel_state = False
     self._pause_auto_speed_up = False
     self._activate_cruise = 0
+    # The Bolt ACC with pedal in StarPilot mode (BoltPedalLongMode 2, GMFlags.PEDAL_LONG = 1) engages only from the
+    # driver's SET/RES (see _cruise_control); mode 1 runs camera long, where the panda grants control from 0x2CB.
+    self._driver_button_engage_only = (getattr(CP, "carFingerprint", "") == "CHEVROLET_BOLT_ACC_PEDAL" and
+                                       bool(getattr(CP, "enableGasInterceptorDEPRECATED", False)) and
+                                       bool(int(getattr(CP, "flags", 0)) & 1))
     self._cruise_available = False
     self._hold_interlock_active = False
     self._steering_interlock_active = False
@@ -856,6 +861,14 @@ class VCruiseCarrot:
     return v_cruise_kph
 
   def _cruise_control(self, enable, cancel_timer, reason, allow_cancel_state=False, manual=False):
+    # The Bolt ACC with pedal's panda in StarPilot mode allows longitudinal control only after the driver's own SET/RES
+    # on the wheel (StarPilot's rule), so an engage that is not that button (auto cruise, soft hold, remote, carrot
+    # command) would be refused there and end in Controls Mismatch. Those wait for the button instead.
+    if enable > 0 and getattr(self, "_driver_button_engage_only", False):
+      self._activate_cruise = 0
+      self._soft_hold_active = 0
+      self._add_log(reason + " > needs SET/RES (Bolt ACC w Pedal)")
+      return
     # Explicit HID button requests bypass automatic-engage preferences only;
     # availability/interlocks below and selfdrived's normal no-entry checks remain.
     if enable > 0 and not self._cruise_available:

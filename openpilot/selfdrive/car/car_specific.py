@@ -130,7 +130,8 @@ class CarSpecificEvents:
       if CS.vEgo < self.CP.minEnableSpeed and not (CS.standstill and CS.brake >= 20 and
                                                    self.CP.networkLocation == NetworkLocation.fwdCamera):
         events.add(EventName.belowEngageSpeed)
-      # The Bolt ACC with pedal keeps the ECM's standstill and leaves it by itself with a pedal tap, so it needs no RES
+      # The Bolt ACC with pedal keeps the ECM's standstill and leaves it by itself in both BoltPedalLongModes (a pedal tap,
+      # or StarPilot's pedal stop-hold release), so it needs no RES
       if CS.cruiseState.standstill and not (self.CP.carFingerprint == "CHEVROLET_BOLT_ACC_PEDAL" and self.CP.autoResumeSng):
         events.add(EventName.resumeRequired)
       if CS.vEgo < self.CP.minSteerSpeed:

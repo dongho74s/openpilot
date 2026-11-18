@@ -8,10 +8,11 @@ from openpilot.common.params import Params
 from opendbc.car import Bus, get_safety_config, get_friction, structs
 from opendbc.car.common.basedir import BASEDIR
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.gm import bolt_acc_pedal
 from opendbc.car.gm.carcontroller import CarController
 from opendbc.car.gm.carstate import CarState
 from opendbc.car.gm.radar_interface import RadarInterface, RADAR_HEADER_MSG, LAST_RADAR_MSG
-from opendbc.car.gm.values import CAR, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, CruiseButtons, GMSafetyFlags, ALT_ACCS
+from opendbc.car.gm.values import CAR, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, CruiseButtons, GMSafetyFlags, BOLT_PEDAL_LONG_MODE_STARPILOT, ALT_ACCS
 from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LatControlInputs, NanoFFModel
 
 #ButtonType = structs.CarState.ButtonEvent.Type 이 두 줄도 사용되지 않습니다.
@@ -71,6 +72,10 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed):
+    if CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED and \
+       CP.flags & GMFlags.PEDAL_LONG.value:
+      # StarPilot mode: full -4.0 floor (friction brake), launch-limited ceiling
+      return bolt_acc_pedal.get_pid_accel_limits(current_speed)
     return CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX
 
   # Determined by iteratively plotting and minimizing error for f(angle, speed) = steer.
@@ -142,6 +147,11 @@ class CarInterface(CarInterfaceBase):
     if PEDAL_MSG in fingerprint[0]:
       ret.enableGasInterceptorDEPRECATED = True
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.GAS_INTERCEPTOR.value
+    # Bolt ACC with a comma pedal: BoltPedalLongMode 2 runs StarPilot's pedal long (as a CC-only pedal car, never camera
+    # long); anything else (default 1) runs the Bolt EUV's camera long with the pedal only to start from a stop.
+    bolt_acc_pedal_long = candidate == CAR.CHEVROLET_BOLT_ACC_PEDAL and ret.enableGasInterceptorDEPRECATED and \
+                          Params().get_int("BoltPedalLongMode") == BOLT_PEDAL_LONG_MODE_STARPILOT
+    cc_only = candidate in CC_ONLY_CAR or bolt_acc_pedal_long
 
     if candidate in EV_CAR:
       ret.transmissionType = TransmissionType.direct
@@ -153,7 +163,8 @@ class CarInterface(CarInterfaceBase):
 
     if candidate in (CAMERA_ACC_CAR | SDGM_CAR):
       # Traverse already uses the camera-long controller; keep its opt-in across drives.
-      ret.alphaLongitudinalAvailable = (candidate not in SDGM_CAR or candidate == CAR.CHEVROLET_TRAVERSE) and candidate not in ALT_ACCS
+      ret.alphaLongitudinalAvailable = (candidate not in SDGM_CAR or candidate == CAR.CHEVROLET_TRAVERSE) and candidate not in ALT_ACCS and \
+                                       not bolt_acc_pedal_long
       ret.networkLocation = NetworkLocation.fwdCamera
       # Some Traverse harnesses expose the full stock radar stream on bus 1.
       ret.radarUnavailable = not (
@@ -305,10 +316,10 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-      if ret.enableGasInterceptorDEPRECATED and candidate != CAR.CHEVROLET_BOLT_ACC_PEDAL:
+      if ret.enableGasInterceptorDEPRECATED and (candidate != CAR.CHEVROLET_BOLT_ACC_PEDAL or bolt_acc_pedal_long):
         # ACC Bolts use pedal for full longitudinal control, not just sng
         ret.flags |= GMFlags.PEDAL_LONG.value
-      # The Bolt ACC with pedal drives through the ECM's ACC (camera long) and uses the pedal only to leave its
+      # The Bolt ACC with pedal in mode 1 drives through the ECM's ACC (camera long) and uses the pedal only to leave its
       # standstill, so it does not take PEDAL_LONG, which makes the controller cancel the ECM's ACC whenever it is on.
 
     elif candidate == CAR.CHEVROLET_SILVERADO:
@@ -395,7 +406,7 @@ class CarInterface(CarInterfaceBase):
       ret.openpilotLongitudinalControl = True
       ret.autoResumeSng = True
 
-      if candidate in CC_ONLY_CAR:
+      if cc_only:
         ret.flags |= GMFlags.PEDAL_LONG.value
         ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.PEDAL_LONG.value
         # Note: Low speed, stop and go not tested. Should be fairly smooth on highway
@@ -427,11 +438,32 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiBP = [10.7, 10.8, 28.]
       ret.longitudinalTuning.kiV = [0., 20., 20.]  # set lower end to 0 since we can't drive below that speed
 
-    if candidate in CC_ONLY_CAR:
+    if bolt_acc_pedal_long:
+      # StarPilot CHEVROLET_BOLT_ACC_2022_2023_PEDAL (interface.py:588-631, BOLT_PEDAL_LONG_CARS + is_bolt_2022_2023_pedal).
+      # LongControl uses kf as the feedforward gain, with this car's own adjustments (longcontrol_bolt_acc_pedal.py).
+      # LongTuning* Params only override single-breakpoint tunings, so they leave this one alone.
+      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
+      ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
+      ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
+      ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
+      ret.longitudinalTuning.kf = 0.20
+      # StarPilot's delay; carrot's planner and modeld take it instead of the LongActuatorDelay Param for this car
+      # (bolt_acc_pedal_long_actuator_delay in longcontrol_bolt_acc_pedal.py)
+      ret.longitudinalActuatorDelay = 0.6
+      ret.startingState = True
+      ret.startAccel = 0.55
+      ret.vEgoStarting = 0.35
+      ret.vEgoStopping = 0.25
+      ret.stopAccel = -0.25
+      ret.stoppingDecelRate = 0.8
+      if ret.openpilotLongitudinalControl and ret.flags & GMFlags.PEDAL_LONG.value:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BOLT_ACC_PEDAL.value
+
+    if cc_only:
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.NO_ACC.value
 
     # Exception for flashed cars, or cars whose camera was removed
-    if (ret.networkLocation == NetworkLocation.fwdCamera or candidate in CC_ONLY_CAR) and CAM_MSG not in fingerprint[
+    if (ret.networkLocation == NetworkLocation.fwdCamera or cc_only) and CAM_MSG not in fingerprint[
       CanBus.CAMERA] and not candidate in SDGM_CAR:
       ret.flags |= GMFlags.NO_CAMERA.value
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.NO_CAMERA.value

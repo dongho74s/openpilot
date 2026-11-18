@@ -475,7 +475,8 @@
           "params": [
             "MaxAngleFrames",
             "SpeedFromPCM",
-            "AutoStopOff"
+            "AutoStopOff",
+            "BoltPedalLongMode"
           ]
         },
         {
@@ -2178,6 +2179,24 @@
       "unit": 1,
       "control": "select",
       "options": {"ko": ["0 사용 안 함", "1 자동 끄기"], "en": ["0 Off", "1 Auto off"], "zh": ["0 关闭", "1 自动关闭"]}
+    },
+    {
+      "group": "시작",
+      "name": "BoltPedalLongMode",
+      "title": "볼트 ACC w Pedal 종제어 방식",
+      "descr": "차종이 'Chevrolet Bolt EUV/EV 2022-23 - ACC w Pedal'이고 콤마 페달이 있을 때만 쓰입니다. 다른 차종에서는 저장해도 아무것도 바꾸지 않습니다.\n1: 혼합(기본) - 평소 가감속은 차의 순정 ACC 명령(볼트 EUV 카메라 종제어)과 당근 종제어기·당근웹 종제어 설정으로 하고, 콤마 페달은 정지 후 출발할 때만 살짝 밟습니다. 원페달 설정과 상관없이 감속합니다.\n2: StarPilot - 가속은 전부 콤마 페달, 감속은 회생 패들 신호와 마찰 브레이크로 하며 StarPilot의 이 차 전용 종제어기와 튜닝을 씁니다. 원페달 주행을 켜야 감속이 제대로 되고, 당근웹 종제어 설정은 먹지 않으며 SET/RES 버튼으로만 켜집니다.\n차량 설정을 시작할 때 읽으므로 바꾼 뒤 재부팅해야 적용됩니다. 판다 펌웨어는 두 방식 모두 같습니다. 두 방식 모두 실차 검증 중입니다.",
+      "egroup": "START",
+      "etitle": "Bolt ACC w Pedal longitudinal mode",
+      "edescr": "Used only when the car is 'Chevrolet Bolt EUV/EV 2022-23 - ACC w Pedal' with a comma pedal; on other cars the saved value changes nothing.\n1: Hybrid (default) - normal acceleration and braking use the car's stock ACC commands (the Bolt EUV's camera longitudinal control) with carrot's longitudinal controller and Carrot Web settings; the comma pedal is pressed lightly only to start from a stop. Braking does not depend on One Pedal Driving.\n2: StarPilot - all acceleration through the comma pedal, braking through the regen paddle signal and the friction brake, with StarPilot's own longitudinal controller and tuning for this car. One Pedal Driving must be on to brake properly, Carrot Web longitudinal settings do not apply, and only the SET/RES buttons engage.\nRead when the car settings start, so reboot after changing it. The panda firmware is the same for both. Both are still being checked in a real car.",
+      "cgroup": "启动设置",
+      "ctitle": "Bolt ACC w Pedal 纵向控制方式",
+      "cdescr": "仅在车型为“Chevrolet Bolt EUV/EV 2022-23 - ACC w Pedal”且装有 comma 踏板时使用；其他车型保存后不改变任何内容。\n1：混合（默认）- 平时加减速使用车辆原厂 ACC 指令（Bolt EUV 摄像头纵向控制）以及 carrot 纵向控制器和 Carrot Web 纵向设置，comma 踏板仅在停车后起步时轻踩。减速与单踏板设置无关。\n2：StarPilot - 加速全部通过 comma 踏板，减速通过能量回收拨片信号和摩擦制动，使用 StarPilot 针对该车的纵向控制器和调校。需开启单踏板驾驶才能正常减速，Carrot Web 纵向设置不生效，只能用 SET/RES 按钮开启。\n在车辆设置启动时读取，修改后需重启生效。两种方式的 panda 固件相同。两种方式仍在实车验证中。",
+      "min": 1,
+      "max": 2,
+      "default": 1,
+      "unit": 1,
+      "control": "select",
+      "options": {"ko": ["1 혼합(차 ACC + 출발 페달)", "2 StarPilot(전체 페달)"], "en": ["1 Hybrid (car ACC + start pedal)", "2 StarPilot (full pedal)"], "zh": ["1 混合（车辆 ACC + 起步踏板）", "2 StarPilot（全踏板）"]}
     },
     {
       "group": "시작",

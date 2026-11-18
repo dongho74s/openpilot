@@ -286,6 +286,47 @@ def test_car_params_without_pedal_are_the_bolt_euvs_camera_paths(runtime):
   assert bolt_cp(runtime, BOLT, False, False).safetyConfigs[0].safetyParam == int(GMSafetyFlags.HW_CAM)
 
 
+STARPILOT_SAFETY = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.NO_ACC | GMSafetyFlags.PEDAL_LONG |
+                       GMSafetyFlags.GAS_INTERCEPTOR | GMSafetyFlags.BOLT_ACC_PEDAL)
+
+
+@pytest.mark.parametrize("mode,starpilot", [(0, False), (1, False), (2, True), (3, False), (-1, False)])
+def test_bolt_pedal_long_mode_picks_the_path(runtime, monkeypatch, mode, starpilot):
+  """BoltPedalLongMode 2 is StarPilot's pedal long (test_bolt_acc_pedal_starpilot.py); anything else, including a
+  missing Param (0), is camera long. Read while CarParams are built."""
+  monkeypatch.setattr(runtime.interface, "Params", memory_params(BoltPedalLongMode=mode))
+  for alpha in (False, True):
+    cp = bolt_cp(runtime, BOLT, True, alpha)
+    assert cp.safetyConfigs[0].safetyParam == (STARPILOT_SAFETY if starpilot else HYBRID_SAFETY)
+    assert bool(cp.flags & GMFlags.PEDAL_LONG.value) == starpilot
+    assert cp.longitudinalActuatorDelay == pytest.approx(0.6 if starpilot else 0.5)  # MemoryParams LongActuatorDelay 50
+    assert cp.alphaLongitudinalAvailable == (not starpilot)
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+def test_mode_does_nothing_without_a_pedal_or_on_other_cars(runtime, monkeypatch, mode):
+  monkeypatch.setattr(runtime.interface, "Params", memory_params(BoltPedalLongMode=mode))
+  for alpha in (False, True):
+    assert long_view(bolt_cp(runtime, BOLT, False, alpha)) == long_view(bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, alpha))
+  for key in LONGCONTROL_BASELINE_CASES:
+    monkeypatch.setattr(runtime.interface, "Params", memory_params(BoltPedalLongMode=mode))
+    with_mode = bolt_cp(runtime, *key)
+    monkeypatch.setattr(runtime.interface, "Params", MemoryParams)
+    assert long_view(with_mode) == long_view(bolt_cp(runtime, *key)), key
+
+
+def test_mode_param_is_registered_with_default_1():
+  from pathlib import Path
+  import json
+  root = Path(__file__).resolve().parents[5]
+  keys = (root / "openpilot/common/params_keys.h").read_text()
+  assert '{"BoltPedalLongMode", {PERSISTENT, INT, "1"}}' in keys
+  catalog = json.loads((root / "openpilot/selfdrive/carrot_settings.json").read_text())
+  entry = next(p for p in catalog["params"] if p["name"] == "BoltPedalLongMode")
+  assert (entry["min"], entry["max"], entry["default"], entry["control"]) == (1, 2, 1, "select")
+  assert '"BoltPedalLongMode"' in json.dumps(catalog["menu"])  # listed in a settings menu
+
+
 @pytest.mark.parametrize("speed", [0.0, 5.0, 15.0, 30.0])
 def test_pid_accel_limits_are_carrots(runtime, speed):
   cp = bolt_cp(runtime, BOLT, True, False)
