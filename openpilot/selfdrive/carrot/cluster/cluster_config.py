@@ -523,6 +523,7 @@ ROAD_EDGE = LIGHT_CLUSTER_THEME.road_edge
 WHITE = (255, 255, 255)
 BLUE = (38, 132, 255)
 BLUE_SOFT = (168, 207, 255)
+SKY_BLUE = (135, 206, 235)  # Web skyblue; Bluetooth connected icon (2026-11-19).
 YELLOW = (218, 202, 37)
 GREEN = (20, 188, 104)
 AMBER = (244, 172, 54)

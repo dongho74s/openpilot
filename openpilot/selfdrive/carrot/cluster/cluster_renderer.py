@@ -65,6 +65,7 @@ from cluster_config import (
     MAX_SPEED_KPH,
     RADAR_TO_CAMERA_M,
     RED,
+    SKY_BLUE,
     TEXT,
     VEHICLE_NAVI,
     VEHICLE_LENGTH_M,
@@ -278,7 +279,8 @@ WIFI_STATUS_ICON_SIZE = 48.0
 # WIFI_STATUS_CENTER_X now only anchors NAV_STATUS_CENTER_X (the navigation
 # label drawn under the clock).
 TOP_RIGHT_STATUS_MARGIN = 28.0
-TOP_RIGHT_BT_ICON_H = 40.0
+# Bluetooth icon height matches the Wi-Fi icon height (2026-11-19).
+TOP_RIGHT_BT_ICON_H = WIFI_STATUS_ICON_SIZE
 TOP_RIGHT_BT_GAP = 16.0
 # Keep the badge to the right of the clock, clear of its text and stroke.
 EGPU_STATUS_CENTER_X = 474.0
@@ -1996,9 +1998,9 @@ class ClusterUiRenderer:
     @staticmethod
     def _draw_bluetooth_icon(x: float, y: float, height: float, connected: bool, theme: ClusterTheme) -> None:
         # Bluetooth rune (vertical spine + X, Feather-icons geometry) in a
-        # height x width box of 2:1. Green when connected, muted when
+        # height x width box of 2:1. Sky blue when connected, muted when
         # disconnected so the connection state is visible at a glance.
-        color = rl_color(GREEN if connected else theme.muted)
+        color = rl_color(SKY_BLUE if connected else theme.muted)
         w = max(4.0, height * 0.5)
         thick = max(2.0, height / 12.0)
         cx = x + w * 0.5
