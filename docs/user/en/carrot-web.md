@@ -277,6 +277,8 @@ Use `Allow all` or an unlimited session only if you understand the risk and will
 5. Refresh the page. If needed, reboot the device and wait for its services to start.
 6. Include device type, vehicle, branch, commit, occurrence time, and exact error text in a support request.
 
+A device with a SIM (cellular data) parked at the edge of a saved Wi-Fi keeps joining and dropping that Wi-Fi, which breaks its Tailscale connection. So while cellular data works and the saved Wi-Fi's signal is below 30, the device rests Wi-Fi autoconnect (the saved networks and passwords stay). It reconnects automatically once the signal holds at 45 or more for 10 s, or once no saved Wi-Fi has been in sight for 30 s. After 3 failed attempts within 5 minutes, even at a usable signal, it rests 5 minutes and then tries again. When cellular data is not working (nothing received over it for 2 minutes) it never rests, and a Wi-Fi you pick on the device screen still connects. A reboot turns autoconnect back on.
+
 If only video is missing, check whether another browser owns the stream, whether the device is ready to provide camera/driving data, and whether the browser supports the required video codec and WebRTC.
 
 ## Related guides

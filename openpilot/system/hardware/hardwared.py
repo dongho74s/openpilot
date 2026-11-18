@@ -17,6 +17,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.gpio import gpio_set
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_HW
+from openpilot.system.hardware import weak_wifi_guard
 from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
 from openpilot.system.hardware import HARDWARE, TICI, AGNOS, PC
 from openpilot.system.loggerd.config import get_available_percent
@@ -499,19 +500,26 @@ def main():
     threading.Thread(target=hardware_thread, args=(end_event, hw_queue)),
   ]
 
+  wifi_guard = None
   if TICI:
     threads.append(threading.Thread(target=touch_thread, args=(end_event,)))
+    # stop retrying a barely heard saved Wi-Fi while cellular data works (weak_wifi_guard.py)
+    wifi_guard = threading.Thread(target=weak_wifi_guard.guard_thread, args=(end_event,), daemon=True)
 
-  for t in threads:
+  for t in threads + ([wifi_guard] if wifi_guard else []):
     t.start()
 
   try:
     while True:
       time.sleep(1)
-      if not all(t.is_alive() for t in threads):
+      if not all(t.is_alive() for t in threads) or (wifi_guard and not wifi_guard.is_alive()):
         break
   finally:
     end_event.set()
+    # here, not below: manager stops hardwared with SIGINT, which skips the joins below, and the guard has to turn
+    # Wi-Fi autoconnect back on before the process exits; bounded, as the thread is a daemon
+    if wifi_guard is not None:
+      wifi_guard.join(weak_wifi_guard.STOP_JOIN_S)
 
   for t in threads:
     t.join()
