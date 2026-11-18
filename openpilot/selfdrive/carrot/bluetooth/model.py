@@ -11,7 +11,8 @@ CONFIG_PATH = Path('/data/carrot/bluetooth.json')
 RUNTIME = Path('/dev/shm/carrot-bluetooth')
 REMOTE_BUTTONS = ('accelCruise', 'decelCruise', 'gapAdjustCruise', 'lfaButton', 'cancel')
 ACTIONS = ('none', *REMOTE_BUTTONS, *(button + 'Long' for button in REMOTE_BUTTONS),
-           'laneLeft', 'laneRight', 'blinkerLeft', 'blinkerRight', 'paddleDecel', 'carrotCruise', 'overtakeToggle')
+           'laneLeft', 'laneRight', 'blinkerLeft', 'blinkerRight', 'paddleDecel', 'carrotCruise', 'overtakeToggle',
+           'overtakeOn', 'overtakeOff')
 DOUBLE_SECONDS = 0.35
 LONG_SECONDS = 0.7
 REPEAT_SECONDS = 0.5

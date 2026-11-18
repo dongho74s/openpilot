@@ -799,6 +799,16 @@ class VCruiseCarrot:
       # must only flip once, so repeats are ignored.
       if not getattr(self.bluetooth_commands, 'is_repeat', False):
         self.params.put_bool_nonblocking("AutoOvertake", not self.params.get_bool("AutoOvertake"))
+    elif remote == 'overtakeOn':
+      # Bluetooth remote button 1: turn AutoOvertake on. A held button
+      # must only set once, so repeats are ignored.
+      if not getattr(self.bluetooth_commands, 'is_repeat', False):
+        self.params.put_bool_nonblocking("AutoOvertake", True)
+    elif remote == 'overtakeOff':
+      # Bluetooth remote button 2: turn AutoOvertake off. A held button
+      # must only set once, so repeats are ignored.
+      if not getattr(self.bluetooth_commands, 'is_repeat', False):
+        self.params.put_bool_nonblocking("AutoOvertake", False)
     elif self._paddle_mode > 0 and button_type in [ButtonType.paddleLeft, ButtonType.paddleRight]:  # paddle button
       if self._paddle_mode == 3:
         self.carrot_cruise_active = True

@@ -231,6 +231,49 @@ def test_bluetooth_overtake_toggle_ignores_hold_repeat():
   assert values['AutoOvertake'] is True
 
 
+def test_bluetooth_overtake_on_sets_param_true():
+  helper, CS, CC = make_cruise_helper(80, 0, False, True)
+  helper.button_cnt = 0
+  helper._prepare_buttons = lambda *args: (80, 0, False)
+  helper.bluetooth_commands = SimpleNamespace(read=lambda allowed: 'overtakeOn' if allowed else None, is_repeat=False)
+  CS.canValid = CS.cruiseState.available = True
+  CS.gearShifter = 'drive'
+  values = {'AutoOvertake': False}
+  helper.params = SimpleNamespace(get_bool=values.__getitem__, put_bool_nonblocking=values.__setitem__)
+  helper._update_cruise_buttons(CS, CC, 80)
+  assert values['AutoOvertake'] is True
+
+
+def test_bluetooth_overtake_off_sets_param_false():
+  helper, CS, CC = make_cruise_helper(80, 0, False, True)
+  helper.button_cnt = 0
+  helper._prepare_buttons = lambda *args: (80, 0, False)
+  helper.bluetooth_commands = SimpleNamespace(read=lambda allowed: 'overtakeOff' if allowed else None, is_repeat=False)
+  CS.canValid = CS.cruiseState.available = True
+  CS.gearShifter = 'drive'
+  values = {'AutoOvertake': True}
+  helper.params = SimpleNamespace(get_bool=values.__getitem__, put_bool_nonblocking=values.__setitem__)
+  helper._update_cruise_buttons(CS, CC, 80)
+  assert values['AutoOvertake'] is False
+
+
+def test_bluetooth_overtake_on_off_ignore_hold_repeat():
+  helper, CS, CC = make_cruise_helper(80, 0, False, True)
+  helper.button_cnt = 0
+  helper._prepare_buttons = lambda *args: (80, 0, False)
+  helper.bluetooth_commands = SimpleNamespace(read=lambda allowed: 'overtakeOn' if allowed else None, is_repeat=True)
+  CS.canValid = CS.cruiseState.available = True
+  CS.gearShifter = 'drive'
+  values = {'AutoOvertake': False}
+  helper.params = SimpleNamespace(get_bool=values.__getitem__, put_bool_nonblocking=values.__setitem__)
+  helper._update_cruise_buttons(CS, CC, 80)
+  assert values['AutoOvertake'] is False
+  helper.bluetooth_commands = SimpleNamespace(read=lambda allowed: 'overtakeOff' if allowed else None, is_repeat=True)
+  values['AutoOvertake'] = True
+  helper._update_cruise_buttons(CS, CC, 80)
+  assert values['AutoOvertake'] is True
+
+
 @pytest.mark.parametrize('initial', [False, True])
 def test_bluetooth_carrot_cruise_enters_existing_mode_without_toggling_or_speed_change(initial):
   helper, CS, CC = make_cruise_helper(80, 0, initial, True)

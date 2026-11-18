@@ -7,6 +7,8 @@ test("physical indicators and optional gestures preserve independent mappings", 
   assert.ok(REMOTE_ACTIONS.includes("blinkerRight"));
   assert.ok(REMOTE_ACTIONS.includes("laneLeft"));
   assert.ok(REMOTE_ACTIONS.includes("overtakeToggle"));
+  assert.ok(REMOTE_ACTIONS.includes("overtakeOn"));
+  assert.ok(REMOTE_ACTIONS.includes("overtakeOff"));
   const mapping = { left: "blinkerLeft", "left@long": "blinkerRight" };
   assert.deepEqual(gestureOptions({ mapping }), { double: false, long: true });
   assert.deepEqual(gestureOptions({ mapping, gestures: { double: false, long: false } }), { double: false, long: false });
