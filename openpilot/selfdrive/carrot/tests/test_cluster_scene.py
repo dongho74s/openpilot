@@ -763,7 +763,9 @@ def test_traffic_states_share_the_slot_beside_driving_mode(monkeypatch, traffic_
 
 def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
   # Layout rearranged 2026-11-18: LFA (carrot steering icon) moved to the
-  # top-left end, Wi-Fi + Bluetooth moved to the top-right end.
+  # top-left end, Wi-Fi + Bluetooth moved to the road view's right edge.
+  # In DEBUG_GRAPH_RIGHT mode the right side is the steering graph panel,
+  # so the pair sits just left of the panel instead of the far right.
   lfa_lane_left = (
     cluster_renderer.LFA_STATUS_CENTER_X
     - cluster_renderer.LFA_STATUS_ICON_SIZE * cluster_renderer.LFA_LANE_ICON_WIDTH_SCALE * 0.5
@@ -772,16 +774,34 @@ def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
     cluster_renderer.LFA_STATUS_CENTER_X
     + cluster_renderer.LFA_STATUS_ICON_SIZE * cluster_renderer.LFA_LANE_ICON_WIDTH_SCALE * 0.5
   )
-  wifi_left = cluster_renderer.WIFI_STATUS_TOP_RIGHT_CENTER_X - cluster_renderer.WIFI_STATUS_ICON_SIZE * 0.5
-  wifi_right = cluster_renderer.WIFI_STATUS_TOP_RIGHT_CENTER_X + cluster_renderer.WIFI_STATUS_ICON_SIZE * 0.5
-  bt_right = wifi_left - cluster_renderer.TOP_RIGHT_BT_GAP
-  bt_left = bt_right - cluster_renderer.TOP_RIGHT_BT_ICON_H * 0.5
 
   assert lfa_lane_left >= 12.0
   assert cluster_renderer.TOP_CLOCK_CENTER_X - lfa_lane_right >= 100.0
-  assert cluster_renderer.DESIGN_WIDTH - wifi_right >= 12.0
-  assert wifi_left - bt_right >= 6.0
-  assert bt_left > lfa_lane_right
+
+  for mode, anchor in (
+    (
+      cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT,
+      cluster_renderer.DESIGN_WIDTH,
+    ),
+    (
+      cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
+      cluster_renderer.DEBUG_PLOT_RIGHT_X,
+    ),
+  ):
+    assert ClusterUiRenderer._status_icons_right_x(mode) == anchor
+    wifi_center_x = (
+      anchor
+      - cluster_renderer.TOP_RIGHT_STATUS_MARGIN
+      - cluster_renderer.WIFI_STATUS_ICON_SIZE * 0.5
+    )
+    wifi_left = wifi_center_x - cluster_renderer.WIFI_STATUS_ICON_SIZE * 0.5
+    wifi_right = wifi_center_x + cluster_renderer.WIFI_STATUS_ICON_SIZE * 0.5
+    bt_right = wifi_left - cluster_renderer.TOP_RIGHT_BT_GAP
+    bt_left = bt_right - cluster_renderer.TOP_RIGHT_BT_ICON_H * 0.5
+
+    assert anchor - wifi_right >= 12.0
+    assert wifi_left - bt_right >= 6.0
+    assert bt_left > lfa_lane_right
 
 
 def test_speed_gear_badge_has_transparent_interior() -> None:
