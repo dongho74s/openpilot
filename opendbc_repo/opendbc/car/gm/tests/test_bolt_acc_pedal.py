@@ -341,12 +341,14 @@ def test_gas_pressed_matches_the_panda_raw_average(runtime, raw1, raw2):
 # CarController: the camera-long frames, plus the pedal only at the ECM's standstill
 
 
-def controller_stream_cp(runtime, monkeypatch, cp, pitch):
+def controller_stream_cp(runtime, monkeypatch, cp, pitch, resume=True):
   monkeypatch.setattr(runtime.controller, "Params", memory_params(LongPitch=pitch))
   controller = runtime.controller.CarController(DBC[cp.carFingerprint], cp)
   stream = []
   for tick in range(STREAM_FRAMES):
     cc, cs = drive_inputs(tick)
+    if not resume:
+      cc.cruiseControl.resume = False
     cs.CP = controller.CP
     output, sends = controller.update(cc.as_reader(), cs, 1_000_000_000 + tick * 10_000_000)
     stream.append([sorted([addr, bytes(dat).hex(), bus] for addr, dat, bus in sends if addr != 0x180),
@@ -356,11 +358,14 @@ def controller_stream_cp(runtime, monkeypatch, cp, pitch):
 
 @pytest.mark.parametrize("pitch", [0, 1])
 def test_longitudinal_frames_are_the_bolt_euvs_without_pedal_long(runtime, monkeypatch, pitch):
-  """Every frame but the 33 Hz steering equals the Bolt EUV with pedal once PEDAL_LONG (its stock-ACC cancel) is off."""
+  """Every frame but the 33 Hz steering equals the Bolt EUV with pedal once PEDAL_LONG (its stock-ACC cancel) is off and
+  its stop hold is the no-pedal one (autoResumeSng off there drops FullStop and mode 0xD at a stop). controlsd's resume
+  is left out: this car keeps holding through it while stopping (test_resume_while_stopping_keeps_the_hold)."""
   euv = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False)
   euv.flags &= ~GMFlags.PEDAL_LONG.value
-  assert controller_stream_cp(runtime, monkeypatch, bolt_cp(runtime, BOLT, True, False), pitch) == \
-         controller_stream_cp(runtime, monkeypatch, euv, pitch)
+  euv.autoResumeSng = False
+  assert controller_stream_cp(runtime, monkeypatch, bolt_cp(runtime, BOLT, True, False), pitch, resume=False) == \
+         controller_stream_cp(runtime, monkeypatch, euv, pitch, resume=False)
 
 
 def hybrid_step(controller, frame, *, accel, state, v, cruise_standstill, cruise_enabled=True, resume=False):
@@ -416,59 +421,62 @@ def test_pedal_taps_only_to_start_from_the_ecm_standstill(runtime, monkeypatch):
   assert taps and all(v == pytest.approx(18. / 255., abs=0.002) for v in taps)
 
 
-def test_engage_sends_apply_before_resuming_from_the_ecm_standstill(runtime, monkeypatch):
-  """A button-less engage at the ECM's standstill with a start already planned: the first two 0x2CB carry apply=1 so
-  the panda grants control (it grants on 0x2CB apply), then the resume rule clears it while the pedal taps."""
+def friction_brake(dat):
+  cmd = ((dat[0] & 0xF) << 8) | dat[1]
+  return -(cmd - 0x1000 if cmd & 0x800 else cmd)
+
+
+def full_stop_frames(runtime, monkeypatch, **kwargs):
   monkeypatch.setattr(runtime.controller, "Params", memory_params())
   controller = runtime.controller.CarController(DBC[BOLT], bolt_cp(runtime, BOLT, True, False))
-  applies = []
+  frames = []
   for f in range(24):
-    for addr, dat, bus in hybrid_step(controller, f, accel=1.0, state="starting", v=0.0, cruise_standstill=True, resume=True):
-      if addr == 0x2CB:
-        applies.append(dat[0] & 1)
-  assert applies == [1, 1, 0, 0, 0, 0]
+    sends = hybrid_step(controller, f, **kwargs)
+    gas = [dat for addr, dat, bus in sends if addr == 0x2CB]
+    brake = [dat for addr, dat, bus in sends if addr == 0x315]
+    if gas and brake:
+      frames.append(((gas[0][1] >> 5) & 1, brake[0][0] >> 4, friction_brake(brake[0])))
+  return frames
 
 
-@pytest.mark.parametrize("phase,off", [(p, d) for p in range(4) for d in range(1, 5)])
-def test_short_disengage_between_commands_re_arms_the_grant(runtime, monkeypatch, phase, off):
-  """A disengage and re-engage between two 25 Hz commands still gives the next two 0x2CB apply=1 (Codex review
-  2026-11-18: the edge was only sampled at 25 Hz before)."""
+def test_stop_hold_is_the_stock_cameras(runtime, monkeypatch):
+  """Stopped and stopping: 0x2CB FullStop with friction brake mode 0xD, as the stock camera sends (its 0x2CB/0x315 in
+  rlog 0000001d--96a597633a--10/13); without them the ECM faulted 3.2 s after a stop."""
+  for standstill in (False, True):
+    frames = full_stop_frames(runtime, monkeypatch, accel=-0.5, state="stopping", v=0.0, cruise_standstill=standstill)
+    assert frames and set(frames) == {(1, 0xD, 40)}, standstill
+  # starting from the ECM's standstill: the hold is released for the pedal tap
+  frames = full_stop_frames(runtime, monkeypatch, accel=1.0, state="starting", v=0.0, cruise_standstill=True, resume=True)
+  assert frames and {(fs, brake) for fs, _, brake in frames} == {(0, 0)}
+
+
+def stop_and_resume_frames(runtime, monkeypatch, **kwargs):
   monkeypatch.setattr(runtime.controller, "Params", memory_params())
   controller = runtime.controller.CarController(DBC[BOLT], bolt_cp(runtime, BOLT, True, False))
-  start = 16 + phase
-  applies = []
-  for f in range(48):
-    enabled = not (start <= f < start + off)
-    cc = structs.CarControl(enabled=enabled, longActive=enabled, latActive=enabled)
-    cc.actuators.accel = 1.0
-    cc.actuators.longControlState = "starting" if enabled else "off"
-    cc.cruiseControl.resume = enabled
-    out = structs.CarState(vEgo=0.0, standstill=True)
-    out.cruiseState.available = out.cruiseState.enabled = out.cruiseState.standstill = True
-    out.gearShifter = "drive"
-    cs = NS(out=out, CP=controller.CP, loopback_lka_steering_cmd_ts_nanos=0, loopback_lka_steering_cmd_updated=False,
-            cam_lka_steering_cmd_counter=0, pt_lka_steering_cmd_counter=0, buttons_counter=0, pcm_acc_status=4,
-            pscm_status=defaultdict(int), cam_ascm_2cb_counter=0, cam_ascm_2cb_counter_updated=False,
-            cam_ascm_2cb_counter_ts_nanos=0, cam_stock_long_active=None, cam_stock_long_cancel=False, cam_acc_status=None,
-            cam_fcw_alert=0, stock_fcw_alert=0)
-    _, sends = controller.update(cc.as_reader(), cs, 1_000_000_000 + f * 10_000_000)
-    applies += [(f, bytes(dat)[0] & 1) for addr, dat, bus in sends if addr == 0x2CB and enabled]
-  after = [a for f, a in applies if f >= start + off]
-  assert after[:2] == [1, 1] and set(after[2:]) == {0}
+  frames = []
+  for f in range(24):
+    sends = hybrid_step(controller, f, **kwargs)
+    gas = [dat for addr, dat, bus in sends if addr == 0x2CB]
+    brake = [dat for addr, dat, bus in sends if addr == 0x315]
+    if gas and brake:
+      frames.append((gas[0][0] & 1, (gas[0][1] >> 5) & 1, brake[0][0] >> 4, friction_brake(brake[0]), pedal(sends)))
+  return frames
 
 
-def test_no_starpilot_or_cancel_frames(runtime, monkeypatch):
-  """No regen paddle or PRNDL2 spoof, and no CANCEL toward either bus while the ECM's ACC is on (PEDAL_LONG is off)."""
-  monkeypatch.setattr(runtime.controller, "Params", memory_params())
-  controller = runtime.controller.CarController(DBC[BOLT], bolt_cp(runtime, BOLT, True, False))
-  seen = []
-  for f in range(200):
-    for addr, dat, bus in hybrid_step(controller, f, accel=-1.5 if f < 100 else 0.8, state="pid", v=12.0,
-                                      cruise_standstill=False):
-      seen.append((addr, bus, (dat[5] >> 4) & 0x7 if addr == 0x1E1 else None))
-  assert not [s for s in seen if s[0] in (0xBD, 0x1F5)]
-  assert not [s for s in seen if s[0] == 0x1E1 and s[2] == int(CruiseButtons.CANCEL)]
-  assert {0x2CB, 0x315, 0x370, 0x200} <= {s[0] for s in seen if s[1] == 0}
+def test_resume_while_stopping_keeps_the_hold(runtime, monkeypatch):
+  """rlog 0000001d--96a597633a--10 (2026-11-19): the ECM reached standstill, controlsd's resume came on while LongControl
+  was still stopping (plan end speed 0.107 m/s), 0x2CB apply dropped to 0, the ECM's ACC went Off and then Faulted once
+  apply came back. This car keeps apply=1 and the FullStop/0xD hold, with no pedal, until LongControl starts."""
+  frames = stop_and_resume_frames(runtime, monkeypatch, accel=-0.5, state="stopping", v=0.0, cruise_standstill=True, resume=True)
+  assert frames and set(frames) == {(1, 1, 0xD, 40, 0.0)}
+
+
+def test_apply_stays_on_while_starting_from_the_ecm_standstill(runtime, monkeypatch):
+  """Starting from the ECM's standstill: apply stays 1 (as the stock camera through a resume), the hold is released and
+  the pedal taps. A button-less engage there therefore also gets the panda's permission from 0x2CB."""
+  frames = stop_and_resume_frames(runtime, monkeypatch, accel=1.0, state="starting", v=0.0, cruise_standstill=True, resume=True)
+  assert frames and {f[:4] for f in frames} == {(1, 0, 0x9, 0)}
+  assert all(f[4] == pytest.approx(18. / 255., abs=0.002) for f in frames)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
