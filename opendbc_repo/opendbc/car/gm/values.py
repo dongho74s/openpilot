@@ -111,8 +111,9 @@ class GMSafetyFlags(IntFlag):
   EV = 256
   HW_SDGM = 512  # Camera-side friction brake routing for the Traverse SDGM harness
   MANUAL_AUTO_HOLD = 1024  # Disengaged, driver-armed stationary friction brake only
-  # Bolt with factory ACC + comma pedal (StarPilot's BOLT_2022_PEDAL + PANDA_PADDLE_SCHED in one bit): regen paddle and
-  # PRNDL2 sent by the panda right after the stock frames, friction brake on PT, CANCEL always allowed toward the camera.
+  # StarPilot's Bolt ACC pedal-long mode in the panda (regen paddle and PRNDL2 resent after the stock frames, friction
+  # brake on PT, CANCEL only). No car sets it since the Bolt ACC with pedal moved to camera long (2026-11-18); the panda
+  # path is kept unchanged so the firmware does not change.
   BOLT_ACC_PEDAL = 2048
 
 @dataclass
@@ -237,9 +238,10 @@ class CAR(Platforms):
     ],
     CHEVROLET_BOLT_EUV.specs,
   )
-  # A Bolt with the factory camera ACC that runs openpilot longitudinal through a comma pedal, ported from StarPilot's
-  # CHEVROLET_BOLT_ACC_2022_2023_PEDAL (firestar5683/StarPilot 2589caad): the pedal for gas, the spoofed regen paddle and
-  # the friction brake for deceleration, and the camera's own ACC cancelled from the camera side.
+  # A Bolt with the factory camera ACC and a comma pedal (user request 2026-11-18): openpilot longitudinal runs on the
+  # camera-long path of the Bolt EUV (0x2CB gas/regen, 0x315 friction brake, 0x370, carrot's LongControl and settings),
+  # and the pedal only taps the accelerator to leave the ECM's ACC standstill when openpilot starts from a stop.
+  # Steering is the Bolt No-ACC's (33 Hz, Bolt EUV NNFF donor).
   CHEVROLET_BOLT_ACC_PEDAL = GMPlatformConfig(
     [
       GMCarDocs("Chevrolet Bolt EUV 2022-23 - ACC w Pedal"),
@@ -380,8 +382,8 @@ FW_QUERY_CONFIG = FwQueryConfig(
 
 EV_CAR = {CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_2019, CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC,
           CAR.CHEVROLET_BOLT_ACC_PEDAL}
-CC_ONLY_CAR = {CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_EQUINOX_CC, CAR.CHEVROLET_SUBURBAN_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC}
-CC_REGEN_PADDLE_CAR = {CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL}
+CC_ONLY_CAR = {CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.CHEVROLET_SUBURBAN_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC}
+CC_REGEN_PADDLE_CAR = {CAR.CHEVROLET_BOLT_CC}
 # LKA command timing taken from FrogPilot GM (~33 Hz, +10/-15). Measured on the Traverse; the Trax and
 # Trailblazer use the same timing at the user's request. The Bolt No-ACC joins them (user request 2026-11-17): in a
 # 75 km/h Bolt EUV No-ACC log the +5 ramp (0.42/s) left the sent torque at 0.05 while the controller asked for 1.0 and
@@ -394,8 +396,8 @@ FROGPILOT_STEER_TIMING_CAR = {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER,
 SDGM_CAR = {CAR.CADILLAC_XT4, CAR.CHEVROLET_TRAVERSE, CAR.BUICK_BABYENCLAVE, CAR.CHEVROLET_VOLT_2019}
 
 # We're integrated at the camera with VOACC on these cars (instead of ASCM w/ OBD-II harness)
-CAMERA_ACC_CAR = {CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAX}
-CAMERA_ACC_CAR.update({CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_EQUINOX_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC})
+CAMERA_ACC_CAR = {CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAX}
+CAMERA_ACC_CAR.update({CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC})
 # CAMERA_ACC_CAR.update(CC_ONLY_CAR)
 # Alt ASCMActiveCruiseControlStatus
 ALT_ACCS = {CAR.GMC_YUKON}

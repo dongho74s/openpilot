@@ -24,7 +24,6 @@ from openpilot.common.transformations.model import get_warp_matrix
 from openpilot.selfdrive.car.stock_lane_markings import stock_lane_sample_fresh
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, smooth_value, get_curvature_from_plan
-from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import bolt_acc_pedal_long_actuator_delay
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, POLICY_INPUTS
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
@@ -454,8 +453,6 @@ def main(demo=False):
   # TODO Move smooth seconds to action function
   lat_delay = CP.steerActuatorDelay + .2 + LAT_SMOOTH_SECONDS
   long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
-  # Bolt ACC with pedal keeps StarPilot's CarParams delay above instead of the LongActuatorDelay Param below
-  fixed_long_delay = bolt_acc_pedal_long_actuator_delay(CP) is not None
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
@@ -474,8 +471,7 @@ def main(demo=False):
     if frame % 100 == 0:
       custom_lat_delay = params.get_float("SteerActuatorDelay") * 0.01
       lat_smooth_seconds = params.get_float("LatSmoothSec") * 0.01
-      if not fixed_long_delay:
-        long_delay = params.get_float("LongActuatorDelay")*0.01
+      long_delay = params.get_float("LongActuatorDelay")*0.01
       vEgoStopping = get_stopping_speed(params)
       camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
       # eGPU power follows ignition on the vehicle. Keep UI state current when

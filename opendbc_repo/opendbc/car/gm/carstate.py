@@ -36,7 +36,7 @@ def create_stock_long_cancel_button_events() -> list[structs.CarState.ButtonEven
 
 # GAS_SENSOR scaling in the GM DBC (INTERCEPTOR_GAS 0.125677/-75.909, INTERCEPTOR_GAS2 0.251976/-76.601)
 INTERCEPTOR_GAS_SCALE = ((0.125677, -75.909), (0.251976, -76.601))
-BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD = 595  # safety_gm.h, Bolt ACC with pedal
+GM_PANDA_INTERCEPTOR_GAS_THRESHOLD = 550  # safety_gm.h GM_GAS_INTERCEPTOR_THRESHOLD
 
 
 def interceptor_raw_average(gas, gas2):
@@ -65,9 +65,8 @@ class CarState(CarStateBase):
     self.cam_acc_status = None
     self.stock_fcw = StockFcw() if stock_fcw_supported(CP) else None
     self.cam_fcw_alert = 0
-    # Bolt ACC with pedal: the camera's own 0x370 FCWAlert level, replayed on openpilot's 0x370 (StarPilot)
-    self.is_bolt_acc_pedal = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL
-    self.stock_fcw_alert = 0
+    # Bolt ACC with pedal: camera long, the pedal only taps to leave the ECM's ACC standstill
+    self.is_bolt_acc_pedal = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED
     self.is_metric = False
     self.manual_auto_hold = ManualAutoHold() if manual_hold_supported(CP) else None
     self.manual_hold_controls_active = True  # Wait for an actual CarControl before arming.
@@ -208,18 +207,16 @@ class CarState(CarStateBase):
     if self.CP.transmissionType == TransmissionType.direct:
       ret.regenBraking = pt_cp.vl["EBCMRegenPaddle"]["RegenPaddle"] != 0
       self.single_pedal_mode = ret.gearShifter == GearShifter.low or pt_cp.vl["EVDriveMode"]["SinglePedalModeActive"] == 1
-      if self.is_bolt_acc_pedal and self.CP.enableGasInterceptorDEPRECATED:
-        self.single_pedal_mode = True  # StarPilot sets it for this car with the pedal (informational only)
 
     if self.CP.enableGasInterceptorDEPRECATED:
       ret.gas = (pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"] + pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) / 2.
       threshold = 20 if self.CP.carFingerprint in CAMERA_ACC_CAR else 4
       ret.gasPressed = ret.gas > threshold
       if self.is_bolt_acc_pedal:
-        # The panda's own decision (raw track average > 595, as StarPilot's panda) on the same frame, so both see the
-        # same press and release edges; the scaled 23 StarPilot uses here left a band where only the host saw a press.
+        # The panda's own decision (raw track average > 550) on the same frame, so both see the same press and release
+        # edges; the scaled 20 above sits near raw 574 and would leave a band where only the panda saw a press.
         ret.gasPressed = interceptor_raw_average(pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"],
-                                                 pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) > BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD
+                                                 pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) > GM_PANDA_INTERCEPTOR_GAS_THRESHOLD
     else:
       ret.gas = pt_cp.vl["AcceleratorPedal2"]["AcceleratorPedal2"] / 254.
       ret.gasPressed = ret.gas > 1e-5
@@ -257,21 +254,14 @@ class CarState(CarStateBase):
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL
     # kans: avoid to accFault
-    # The Bolt ACC with pedal keeps the stock standstill like StarPilot: controlsd sets cruiseControl.resume from it,
-    # which releases the pedal stop hold to launch; LongControl does not let it hold off starting for this car.
+    # The Bolt ACC with pedal keeps the ECM's ACC standstill: the controller taps the pedal while it is set to start
+    # from a stop (and controlsd sets cruiseControl.resume from it); LongControl does not let it hold off starting.
     if self.CP.carFingerprint not in CAR.CHEVROLET_VOLT and not self.is_bolt_acc_pedal:
       ret.cruiseState.standstill = False
     if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.CP.flags & GMFlags.NO_CAMERA.value:
       if self.CP.carFingerprint not in CC_ONLY_CAR:
         ret.cruiseState.speed = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCSpeedSetpoint"] * CV.KPH_TO_MS
       ret.stockAeb = False
-      if self.is_bolt_acc_pedal:
-        # StarPilot reads the camera's 0x370 on this CC-only platform: its FCW level is replayed on openpilot's 0x370
-        # (the panda blocks the camera's), and AEBCmd reports the stock AEB. StarPilot also sets stockFcw, whose event
-        # has no alert there; here GM's car_specific turns stockFcw into an audible FCW (meant for the Traverse), so it
-        # stays False. The replayed 0x370 level is the same either way (the level is used first).
-        self.stock_fcw_alert = int(cam_cp.vl["ASCMActiveCruiseControlStatus"]["FCWAlert"])
-        ret.stockAeb = cam_cp.vl["AEBCmd"]["AEBCmdActive"] != 0
       # openpilot controls nonAdaptive when not pcmCruise
       if self.CP.pcmCruise and self.CP.carFingerprint not in CC_ONLY_CAR:
         ret.cruiseState.nonAdaptive = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCruiseState"] not in (2, 3)
@@ -290,10 +280,6 @@ class CarState(CarStateBase):
       ret.accFaulted = False
       ret.cruiseState.speed = pt_cp.vl["ECMCruiseControl"]["CruiseSetSpeed"] * CV.KPH_TO_MS
       ret.cruiseState.enabled = pt_cp.vl["ECMCruiseControl"]["CruiseActive"] != 0
-      if self.is_bolt_acc_pedal and not self.CP.flags & GMFlags.NO_CAMERA.value:
-        # The factory camera runs this car's ACC and 0x3D1 stays 0: stock ACC is on when the camera's 0x370 says so.
-        # openpilot's controller cancels it from the camera side while this is set (StarPilot carstate.py:428-433).
-        ret.cruiseState.enabled = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCmdActive"] != 0
     prev_lkas_enabled = self.lkas_enabled
     self.lkas_enabled = pt_cp.vl["ASCMSteeringButton"]["LKAButton"]
 

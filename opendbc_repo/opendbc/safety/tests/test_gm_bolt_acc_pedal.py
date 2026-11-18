@@ -1,6 +1,7 @@
-"""Panda path of the Bolt with factory ACC + comma pedal (CHEVROLET_BOLT_ACC_PEDAL), ported from StarPilot's
-BOLT_2022_PEDAL + PANDA_PADDLE_SCHED (firestar5683/StarPilot 2589caad gm.h). Compiles the production C hooks; no USB,
-CAN device or vehicle I/O."""
+"""Panda paths of the Bolt with factory ACC + comma pedal (CHEVROLET_BOLT_ACC_PEDAL). Since 2026-11-18 the car runs the
+Bolt EUV's camera long with the pedal only for leaving the ECM's standstill (HYBRID below). StarPilot's pedal-long path
+(BOLT_2022_PEDAL + PANDA_PADDLE_SCHED, firestar5683/StarPilot 2589caad gm.h, bit 2048) stays in the panda unchanged but no
+car sets it now; its tests are kept. Compiles the production C hooks; no USB, CAN device or vehicle I/O."""
 import ctypes
 import os
 from pathlib import Path
@@ -15,6 +16,9 @@ GM = structs.CarParams.SafetyModel.gm
 # What carrot gives the Bolt No-ACC with a pedal today, and the same plus the new bit
 PEDAL_CC = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.NO_ACC | GMSafetyFlags.PEDAL_LONG | GMSafetyFlags.GAS_INTERCEPTOR)
 BOLT_ACC_PEDAL = PEDAL_CC | int(GMSafetyFlags.BOLT_ACC_PEDAL)
+# What the host gives the Bolt ACC with pedal since 2026-11-18: the Bolt EUV's camera long plus the interceptor
+HYBRID = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.GAS_INTERCEPTOR)
+RES = 2
 CANCEL = 6
 
 
@@ -271,7 +275,7 @@ def interceptor(average):
   return bytes([average >> 8, average & 0xff, average >> 8, average & 0xff, 0, 0])
 
 
-@pytest.mark.parametrize('param,threshold', [(BOLT_ACC_PEDAL, 595), (PEDAL_CC, 550)])
+@pytest.mark.parametrize('param,threshold', [(BOLT_ACC_PEDAL, 595), (PEDAL_CC, 550), (HYBRID, 550)])
 def test_gas_interceptor_threshold(native, param, threshold):
   """StarPilot's 595 for this car (its carstate threshold 23 sits just below); the Bolt No-ACC keeps carrot's 550."""
   lib = use(native, param)
@@ -341,3 +345,45 @@ def test_driver_paddle_is_never_covered(safety):
   tx(safety, 0xBD, PADDLE_RELEASE)
   rx(safety, 0xBD, STOCK_PADDLE)
   assert sent(safety) == [(0xBD, 0, PADDLE_RELEASE)]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# HYBRID: camera long + interceptor (the host's param for this car since 2026-11-18). The test board header defines
+# ALLOW_DEBUG like the device-built panda, which camera long needs.
+
+
+@pytest.fixture
+def hybrid(native):
+  return use(native, HYBRID)
+
+
+def test_hybrid_is_not_the_starpilot_path(hybrid):
+  # 0x315 is allowed on camera long too, so path_active() cannot tell; the StarPilot path blocks 0x3D1 to the camera
+  assert fwd(hybrid, 0x3D1, 0) == 2
+
+
+@pytest.mark.parametrize('address,bus,destination', [(0x2CB, 2, -1), (0x315, 2, -1), (0x370, 2, -1), (0x180, 2, -1),
+                                                     (0x320, 2, 0), (0x1E1, 2, 0), (0x1C4, 0, 2), (0x184, 0, -1)])
+def test_hybrid_forwarding_is_camera_long(hybrid, address, bus, destination):
+  assert fwd(hybrid, address, bus) == destination
+
+
+def test_hybrid_allowlist(hybrid):
+  hybrid.set_controls_allowed(True)
+  assert tx(hybrid, 0x200, interceptor(0))
+  assert tx(hybrid, 0x315, brake(100))
+  assert tx(hybrid, 0x370, bytes(6))
+  assert tx(hybrid, 0x1E1, button(RES))  # carrot's resume spamming toward the ECM
+  assert not tx(hybrid, 0xBD, PADDLE_PRESS)  # no regen paddle or PRNDL2 spoof on this path
+  assert not tx(hybrid, 0x1F5, prndl2(6))
+  assert not tx(hybrid, 0x1E1, button(RES), bus=2)
+
+
+def test_hybrid_pedal_needs_controls(hybrid):
+  tap = interceptor(700)
+  hybrid.set_controls_allowed(False)
+  assert not tx(hybrid, 0x200, tap)
+  assert tx(hybrid, 0x200, interceptor(0))
+  hybrid.set_controls_allowed(True)
+  assert tx(hybrid, 0x200, tap)
+

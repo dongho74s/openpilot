@@ -6,7 +6,6 @@ import numpy as np
 from opendbc.can.packer import CANPacker
 from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, structs, create_gas_interceptor_command
 from opendbc.car.gm import gmcan
-from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.torque_rt_guard import PandaRtGuard
 from opendbc.car.gm.auto_resume import GMAutoResume
 from opendbc.car.gm.auto_stop_off import AutoStopOff, BUTTON_MAX_AGE_NS, LATCH_MAX_AGE_NS, feature_now_ns, fresh
@@ -81,10 +80,6 @@ class CarController(CarControllerBase):
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint][Bus.pt])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
     self.packer_ch = CANPacker(DBC[self.CP.carFingerprint][Bus.chassis])
-    # Bolt ACC with pedal: StarPilot's whole longitudinal flow replaces the carrot one below (none of carrot's SET/RES
-    # button features, 0x2CB, 0x2CD or 0x3D1), and stock ACC is cancelled toward the camera.
-    self.bolt_acc_pedal = BoltAccPedalLongController(CP, self.packer_pt, self.packer_ch) \
-      if supports_bolt_acc_pedal_friction_experiment(CP) else None
 
     self.long_pitch = False
     self.use_ev_tables = False
@@ -99,6 +94,10 @@ class CarController(CarControllerBase):
     # 트래버스 오픈파일럿 롱컨: 오토리쥼/오토크루즈 모듈 사용
     self.traverse_long = CP.carFingerprint == CAR.CHEVROLET_TRAVERSE and CP.openpilotLongitudinalControl
     self.auto_resume = GMAutoResume(self.CP, self.params) if self.traverse_long else None
+    # Bolt ACC with pedal: camera long, with the pedal only tapped to leave the ECM's ACC standstill (see below)
+    self.bolt_acc_pedal_sng = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED
+    self.bolt_sng_prev_enabled = False
+    self.bolt_sng_grant_commands = 0
     self.btn_rc_pt = -1
     # 오토스톱 자동 끄기(AutoStopOff, 기본 0). 판다는 오파 롱컨(pcmCruise=False)에서만 0x1E1 UNPRESS 송신을 허용
     self.auto_stop_off = AutoStopOff() if self.traverse_long and not CP.pcmCruise else None
@@ -128,6 +127,11 @@ class CarController(CarControllerBase):
 
   def update(self, CC, CS, now_nanos):
     test_fcw = self.fcw_warning_test.update(CS.out, CC) if self.fcw_warning_test is not None else False
+    if self.bolt_acc_pedal_sng:
+      # Every 100 Hz frame, so a disengage and re-engage between two 25 Hz commands still re-arms the grant below
+      if CC.enabled and not self.bolt_sng_prev_enabled:
+        self.bolt_sng_grant_commands = 2
+      self.bolt_sng_prev_enabled = CC.enabled
 
     if self.frame % 50 == 0:
       params = Params()
@@ -192,10 +196,7 @@ class CarController(CarControllerBase):
       idx = self.lka_steering_cmd_counter % 4
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_torque, idx, CC.latActive))
 
-    if self.bolt_acc_pedal is not None:
-      # Pitch compensation is always on for this car: StarPilot's LongPitch defaults to on, carrot's to off.
-      self.apply_gas, self.apply_brake = self.bolt_acc_pedal.update(CC, CS, self.frame, True, can_sends)
-    elif self.CP.openpilotLongitudinalControl:
+    if self.CP.openpilotLongitudinalControl:
       hold = getattr(CS, "manual_auto_hold", None)
       manual_brake = hold.command(CS.out, CC.enabled or CC.longActive) if hold is not None and manual_hold_supported(self.CP) else 0
 
@@ -273,7 +274,13 @@ class CarController(CarControllerBase):
             # gas interceptor only used for full long control on cars without ACC
             interceptor_gas_cmd, press_regen_paddle = self.calc_pedal_command(actuators.accel, CC.longActive, CS.out.vEgo)
 
-        if self.CP.enableGasInterceptorDEPRECATED and self.apply_gas > self.params.INACTIVE_REGEN and CS.out.cruiseState.standstill:
+        sng_tap = self.CP.enableGasInterceptorDEPRECATED and self.apply_gas > self.params.INACTIVE_REGEN and CS.out.cruiseState.standstill
+        if self.bolt_acc_pedal_sng:
+          # Only while LongControl is starting and the car has not rolled past vEgoStarting either way (a rollback has
+          # negative vEgo): if the ECM still reports standstill once the car moves, stop tapping instead of holding the
+          # pedal while 0x2CB and the brake are overridden (Codex review 2026-11-18).
+          sng_tap = sng_tap and actuators.longControlState == LongCtrlState.starting and abs(CS.out.vEgo) <= self.CP.vEgoStarting
+        if sng_tap:
           # "Tap" the accelerator pedal to re-engage ACC
           interceptor_gas_cmd = self.params.SNG_INTERCEPTOR_GAS
           self.apply_brake = 0
@@ -304,10 +311,16 @@ class CarController(CarControllerBase):
             resume = actuators.longControlState != LongCtrlState.starting or CC.cruiseControl.resume
             at_full_stop = at_full_stop and not resume
 
-          if CC.cruiseControl.resume and CS.pcm_acc_status == AccState.STANDSTILL:
+          # The first 0x2CB commands after an engage carry apply=1 even when resuming from the ECM's standstill, so the
+          # panda grants control (as on the other GM camera-long cars) before the pedal tap needs it; a button-less
+          # engage at a standstill otherwise left apply=0 and the tap rejected (Codex review 2026-11-18).
+          bolt_sng_grant = self.bolt_acc_pedal_sng and self.bolt_sng_grant_commands > 0
+          if CC.cruiseControl.resume and CS.pcm_acc_status == AccState.STANDSTILL and not bolt_sng_grant:
             acc_engaged = False
           else:
             acc_engaged = CC.enabled
+          if bolt_sng_grant:
+            self.bolt_sng_grant_commands -= 1
 
           self.apply_gas, self.apply_brake, at_full_stop, near_stop = gmcan.apply_driver_gas_override(
             self.CP.carFingerprint, CS.out.gasPressed, self.params.INACTIVE_REGEN,
