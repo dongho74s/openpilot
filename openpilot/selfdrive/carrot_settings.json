@@ -716,6 +716,27 @@
           ]
         }
       ]
+    },
+    {
+      "id": "EJ",
+      "ko": "ej",
+      "en": "ej",
+      "zh": "ej",
+      "groups": [
+        {
+          "id": "EJ_CLAMP",
+          "ko": "최소거리 클램프",
+          "en": "Min-distance clamp",
+          "zh": "最小距离钳制",
+          "params": [
+            "ClampEnable",
+            "ClampMinDistLane",
+            "ClampMinDistEdge",
+            "ClampSteerGain",
+            "ClampSteerAlert"
+          ]
+        }
+      ]
     }
   ],
   "params": [
@@ -5049,6 +5070,90 @@
           "Speed automatic"
         ]
       }
+    },
+    {
+      "group": "ej",
+      "name": "ClampEnable",
+      "title": "최소거리 클램프 사용",
+      "descr": "레인리스에서 경로가 차선·도로경계를 밟지 않도록 최소 거리를 유지합니다. 끄면 클램프가 동작하지 않습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Min-distance clamp",
+      "edescr": "Keeps the path a minimum distance away from lane lines and road edges in laneless mode. Off disables the clamp. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "最小距离钳制",
+      "cdescr": "在无车道线模式下使路径与车道线和路缘保持最小距离。关闭则停用钳制。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "ClampMinDistLane",
+      "title": "차선 최소거리 (135)cm",
+      "descr": "감지된 차선에서 이 거리 안쪽으로 경로가 들어가지 않습니다. 클수록 선에서 멀리 떨어져 주행합니다. 차로가 좁아 양쪽 최소거리 합보다 좁아지면 차선 중앙으로 갑니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Min distance from lane line (135)cm",
+      "edescr": "The path never comes closer than this to a detected lane line. Larger values keep further from the line. If the lane is narrower than the sum of both minimum distances, the path goes to the lane center. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "距车道线最小距离 (135)cm",
+      "cdescr": "路径与检测到的车道线保持至少该距离。数值越大离车道线越远。若车道宽度小于两侧最小距离之和，路径将移至车道中央。保存后立即生效，无需重启。",
+      "min": 60,
+      "max": 200,
+      "default": 135,
+      "unit": 5,
+      "display_unit": "distanceCm"
+    },
+    {
+      "group": "ej",
+      "name": "ClampMinDistEdge",
+      "title": "도로경계 최소거리 (115)cm",
+      "descr": "차선이 안 보일 때 도로경계(연석)에서 유지하는 최소 거리입니다. 클수록 경계에서 멀리 떨어져 주행합니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Min distance from road edge (115)cm",
+      "edescr": "Minimum distance kept from the road edge (curb) when no lane line is visible on that side. Larger values keep further from the edge. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "距路缘最小距离 (115)cm",
+      "cdescr": "该侧看不到车道线时，与路缘（路肩）保持的最小距离。数值越大离路缘越远。保存后立即生效，无需重启。",
+      "min": 40,
+      "max": 180,
+      "default": 115,
+      "unit": 5,
+      "display_unit": "distanceCm"
+    },
+    {
+      "group": "ej",
+      "name": "ClampSteerGain",
+      "title": "클램프 조향 보정 게인(10)",
+      "descr": "레인리스에서 차가 선에 가까울 때 조향을 얼마나 강하게 밀어낼지 정합니다. 10 = 1.0배, 0이면 보정을 끕니다. 높이면 선에서 더 강하게 벗어나지만 과하면 출렁일 수 있습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Clamp steering correction gain(10)",
+      "edescr": "How strongly steering pushes away from the line in laneless mode when the car gets too close. 10 = 1.0x, 0 disables the correction. Higher values push away harder but may oscillate if too high. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "钳制转向修正增益(10)",
+      "cdescr": "在无车道线模式下，车辆靠近车道线时转向推开的强度。10 = 1.0倍，0 关闭修正。数值越大推开越强，但过高可能摆动。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 20,
+      "default": 10,
+      "unit": 1
+    },
+    {
+      "group": "ej",
+      "name": "ClampSteerAlert",
+      "title": "클램프 조향 보정 알림",
+      "descr": "레인리스에서 클램프 조향 보정이 걸릴 때 띵 소리와 함께 화면에 표시합니다. 끄면 보정은 그대로 동작하고 알림만 나지 않습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Clamp steering correction alert",
+      "edescr": "Dings and shows a message when the clamp steering correction kicks in while driving laneless. Off only silences the alert; the correction still works. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "钳制转向修正提醒",
+      "cdescr": "在无车道线模式下钳制转向修正启动时发出提示音并显示消息。关闭后仅静音提醒，修正仍正常工作。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
     }
   ]
 }
