@@ -8541,7 +8541,9 @@ class ClusterUiRenderer:
             alpha,
         )
         bt_connected = self._bluetooth_remote_connected()
-        if bt_connected is not None:
+        # Bluetooth icon shows only while the remote is connected
+        # (2026-11-19: no grey icon when disconnected).
+        if bt_connected:
             bt_h = TOP_RIGHT_BT_ICON_H
             bt_x = (
                 wifi_center_x
