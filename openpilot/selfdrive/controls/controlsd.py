@@ -20,7 +20,9 @@ from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, \
-                                                       lateral_accel_limit, MAX_LATERAL_ACCEL_NO_ROLL
+                                                       lateral_accel_limit, lateral_jerk_limit, MAX_LATERAL_ACCEL_NO_ROLL, \
+                                                       MAX_LATERAL_JERK
+from openpilot.selfdrive.controls.lib.min_distance_clamp import ClampSettings, ClampSteerCorrector, read_clamp_settings
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -43,6 +45,7 @@ from openpilot.selfdrive.monitoring.dm_alerts import driver_monitoring_hud_alert
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
+Desire = log.Desire
 LAT_CURVATURE_SATURATION_ACCEL = 0.1  # infiniteCable2 LatControlCurvature: 곡률 기반 steer_limited 임계 (m/s^2 환산)
 LAT_ACCEL_LIMIT_RATE = 0.5  # m/s^2 per second: a LateralAccelLimit change from 4.5 to 3.0 takes 3 s
 
@@ -108,6 +111,11 @@ class Controls:
     # FrogPilot-parity cars (Traverse/Trailblazer/Trax with NNFF): FrogPilot's curvature limit, lateral delay and pitch
     self.lat_frog_parity = bool(getattr(self.LaC, 'nnff_frogpilot_parity', False))
     self.lat_accel_limit = self.lat_accel_limit_target = self.read_lat_accel_limit()
+    self.lat_jerk_limit = self.read_lat_jerk_limit()
+    # laneless half of the minimum-distance clamp (min_distance_clamp.py); its settings are read at 1 Hz below
+    self.clamp_steer = ClampSteerCorrector()
+    self.clamp_steer_ran = False
+    self.clamp_settings = self.read_clamp_settings()
     self.carrot_controls = CarrotControls(self.CP)
 
   def read_lat_accel_limit(self) -> float:
@@ -117,10 +125,24 @@ class Controls:
     except Exception:  # e.g. the native params registry is not rebuilt yet: keep the stock limit
       return MAX_LATERAL_ACCEL_NO_ROLL
 
+  def read_lat_jerk_limit(self) -> float:
+    try:
+      return lateral_jerk_limit(self.params.get("LatJerkMax"))
+    except Exception:
+      return MAX_LATERAL_JERK
+
+  def read_clamp_settings(self):
+    try:
+      return read_clamp_settings(self.params)
+    except Exception:
+      return ClampSettings()
+
   def update(self):
     self.sm.update(15)
-    if self.sm.frame % 100 == 0:  # 1 Hz: LateralAccelLimit can change while driving
+    if self.sm.frame % 100 == 0:  # 1 Hz: these settings can change while driving (never read per 10 ms cycle)
       self.lat_accel_limit_target = self.read_lat_accel_limit()
+      self.lat_jerk_limit = self.read_lat_jerk_limit()
+      self.clamp_settings = self.read_clamp_settings()
     # a changed setting moves the limit gradually, so lowering it in a curve does not cut the request at once
     step = LAT_ACCEL_LIMIT_RATE * DT_CTRL
     self.lat_accel_limit += float(np.clip(self.lat_accel_limit_target - self.lat_accel_limit, -step, step))
@@ -225,6 +247,7 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    self.clamp_steer_ran = False   # set by the laneless branch below
     if not CC.latActive:
       new_desired_curvature = self.curvature
     elif self.is_vw_meb:
@@ -247,12 +270,21 @@ class Controls:
       # FrogPilot uses the model's curvature unsmoothed, but carrot's model output reaches here in 20 Hz steps (its
       # own action head / modeld timing): replaying 11/13 drives without this filter gave 2-5x the request jumps, so
       # the parity cars keep it (2026-11-14).
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+      # The minimum-distance clamp adds its correction to the model's curvature: zero unless the model's plan comes
+      # too close to a line or the road edge (min_distance_clamp.py). A lane change (from the model, or the turn
+      # signals, which start before the model's desire and end after it) turns it off.
+      meta = model_v2.meta
+      lane_changing = meta.desire != Desire.none or meta.laneChangeState != LaneChangeState.off or \
+                      CS.leftBlinker or CS.rightBlinker
+      clamp_kappa = self.clamp_steer.update(model_v2, CS.vEgo, lane_changing, self.clamp_settings)
+      self.clamp_steer_ran = True
+      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature + clamp_kappa, self.desired_curvature, 0.1)
 
     # FrogPilot keeps the lateral acceleration limit (3.0 m/s^2, LateralAccelLimit) at every speed
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                low_speed_allowance=not self.lat_frog_parity,
-                                                               max_lat_accel_no_roll=self.lat_accel_limit)
+                                                               max_lat_accel_no_roll=self.lat_accel_limit,
+                                                               max_lat_jerk=self.lat_jerk_limit)
 
     actuators.curvature = float(self.desired_curvature)
 
@@ -486,6 +518,8 @@ class Controls:
       cs.lateralControlState.torqueState = lac_log
 
     cs.activeLaneLine = self.lanefull_mode_enabled
+    # the clamp's ding: only while its laneless correction ran this cycle and steering is active (no stale True)
+    cs.clampSteerActive = bool(self.clamp_steer_ran and self.clamp_steer.alert_active and CC.latActive)
     self.pm.send('controlsState', dat)
 
     # carControl

@@ -14,7 +14,8 @@ from openpilot.common.constants import CV
 from openpilot.common.vehicle_dynamics import VehicleDynamics, read_live_vehicle_dynamics
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.interfaces import CarInterfaceBase
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature
+from openpilot.selfdrive.controls.lib.drive_helpers import MAX_LATERAL_JERK, clip_curvature, get_lag_adjusted_curvature
+from openpilot.selfdrive.controls.lib.min_distance_clamp import ClampSettings, ClampSteerCorrector
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
@@ -31,7 +32,7 @@ def control_fixture():
   names = {'lateral_control_allowed', 'state_control'}
   nodes = [n for n in tree.body + cls.body if isinstance(n, ast.FunctionDef) and n.name in names]
   ns = {'math': math, 'np': np, 'Number': Number, 'car': car, 'DT_CTRL': DT_CTRL, 'CV': CV,
-        'MIN_LATERAL_CONTROL_SPEED': MIN_LATERAL_CONTROL_SPEED, 'LaneChangeState': log.LaneChangeState,
+        'MIN_LATERAL_CONTROL_SPEED': MIN_LATERAL_CONTROL_SPEED, 'LaneChangeState': log.LaneChangeState, 'Desire': log.Desire,
         'LaneChangeDirection': log.LaneChangeDirection, 'ACTUATOR_FIELDS': tuple(car.CarControl.Actuators.schema.fields),
         'clip_curvature': clip_curvature, 'get_lag_adjusted_curvature': get_lag_adjusted_curvature,
         'resolve_vehicle_model_steer_ratio': resolve_vehicle_model_steer_ratio,
@@ -69,6 +70,8 @@ def control_fixture():
                steer_limited_by_safety=False)
   control.lat_frog_parity = bool(getattr(control.LaC, 'nnff_frogpilot_parity', False))   # as Controls.__init__
   control.lat_accel_limit = 3.0   # LateralAccelLimit default, as Controls.__init__
+  control.lat_jerk_limit = MAX_LATERAL_JERK   # LatJerkMax default
+  control.clamp_steer, control.clamp_settings, control.clamp_steer_ran = ClampSteerCorrector(), ClampSettings(), False
   return control, lambda: ns['state_control'](control)
 
 

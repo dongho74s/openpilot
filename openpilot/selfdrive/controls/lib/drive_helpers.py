@@ -28,6 +28,18 @@ MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 4.5  # m/s^2
 LATERAL_ACCEL_LIMIT_SETTING_RANGE = (30, 45)
 
 
+LATERAL_JERK_LIMIT_SETTING_RANGE = (20, 100)   # LatJerkMax, x0.1 m/s^3 (stock 50)
+
+
+def lateral_jerk_limit(setting) -> float:
+  # LatJerkMax: how fast the requested curvature may change (x0.1 m/s^3); a missing or bad value keeps the stock 5.0
+  if isinstance(setting, bool) or not isinstance(setting, int):
+    return MAX_LATERAL_JERK
+  if not LATERAL_JERK_LIMIT_SETTING_RANGE[0] <= setting <= LATERAL_JERK_LIMIT_SETTING_RANGE[1]:
+    return MAX_LATERAL_JERK
+  return setting / 10.0
+
+
 def lateral_accel_limit(setting) -> float:
   if isinstance(setting, bool) or not isinstance(setting, int):
     return MAX_LATERAL_ACCEL_NO_ROLL
@@ -95,12 +107,12 @@ def smooth_value(val, prev_val, tau, dt=DT_MDL):
   return alpha * val + (1 - alpha) * prev_val
 
 def clip_curvature(v_ego, prev_curvature, new_curvature, roll, low_speed_allowance=True,
-                   max_lat_accel_no_roll=MAX_LATERAL_ACCEL_NO_ROLL):
+                   max_lat_accel_no_roll=MAX_LATERAL_ACCEL_NO_ROLL, max_lat_jerk=MAX_LATERAL_JERK):
   # This function respects ISO lateral jerk and acceleration limits + a max curvature.
   # max_lat_accel_no_roll is the limit without roll (LateralAccelLimit, stock 3.0); carrot's low-speed allowance below
-  # 80 km/h never drops under it.
+  # 80 km/h never drops under it. max_lat_jerk is LatJerkMax (stock 5.0).
   v_ego = max(v_ego, MIN_SPEED)
-  max_curvature_rate = MAX_LATERAL_JERK / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
+  max_curvature_rate = max_lat_jerk / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
   new_curvature = np.clip(new_curvature,
                           prev_curvature - max_curvature_rate * DT_CTRL,
                           prev_curvature + max_curvature_rate * DT_CTRL)

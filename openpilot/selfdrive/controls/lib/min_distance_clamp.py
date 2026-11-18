@@ -1,0 +1,220 @@
+"""Minimum-distance clamp: keeps the car a minimum distance away from the lane lines, or from the road edge on a side
+where no line is seen.
+
+Ported from aabc88/openpilot `ej` (2026-11-17, commits be252819 18c0344b 399efba7 916a79f0 6a06a6ce 2c50e890) and
+replaces carrot's laneless view offsets (LanelessCenterOffset / LanelessEdgeOffset / LanelessLineGap), which moved
+the car by shifting what the model sees.
+
+- Lane mode: LanePlanner.apply_min_distance_clamp (lane_planner_2.py) bounds the final path the lateral planner
+  follows; it only moves the path where it breaks the bound, and only by as much.
+- Laneless: steering follows the model's own curvature, so the planner's path never reaches the wheel. controlsd adds
+  ClampSteerCorrector's curvature to the model's: zero unless the model's plan, one second ahead, comes closer to a
+  line than the bound (beyond a 20 cm deadband), and then a pure-pursuit nudge capped at 1.5 m/s^2 and 0.02 1/m.
+
+Settings are read by the callers once a second (read_clamp_settings), never per control cycle (ej read eight Params
+files every 10 ms in controlsd). Signs (as carrot logs them, checked with GPS heading): model y is + to the right
+(laneLines[1] is the left line, negative), curvature is + for a right turn.
+"""
+from __future__ import annotations
+
+import math
+import time
+from dataclasses import dataclass
+
+import numpy as np
+
+PROB_ON = 0.5           # a lane line counts once its probability goes above this ...
+PROB_OFF = 0.3          # ... and stops counting only below this (no flicker at the boundary)
+EDGE_STD_MAX = 0.5      # the road edge is used only when the model is this sure of it (std, m)
+EDGE_STD_MARGIN = 0.4   # and taken this many of its stds inward (as lane_planner_2 parses the edges)
+FADE_IN_KPH = (5.0, 10.0)   # off below 5 km/h, full from 10 km/h (crosswalks, parking lines)
+
+DEFAULT_MIN_LANE_M = 1.35   # car centre to a lane line (lane_planner_2 KEEP_MIN_DISTANCE_FROM_LANE)
+DEFAULT_MIN_EDGE_M = 1.15   # car centre to the road edge (KEEP_MIN_DISTANCE_FROM_EDGELANE)
+MIN_LANE_RANGE_CM = (60, 200)
+MIN_EDGE_RANGE_CM = (40, 180)
+GAIN_RANGE = (0, 20)        # x0.1
+GAIN_MAX = 2.0
+
+# laneless steering correction
+LOOKAHEAD_TIME = 1.0                     # s: where it looks (speed x 1 s) ...
+LOOKAHEAD_MIN, LOOKAHEAD_MAX = 5.0, 30.0   # ... within these distances, m
+MAX_LAT_ACCEL = 1.5                      # m/s^2 the correction itself may add
+MAX_CURVATURE = 0.02                     # 1/m, so it never oversteers at low speed
+DEADBAND_ON, DEADBAND_OFF = 0.20, 0.10   # m: corrects once the plan is 20 cm past the bound, until it is under 10 cm
+SLEW_RATE = 0.01                         # 1/m/s: from 0 to a full correction in about half a second
+LANE_CHANGE_HOLDOFF_S = 2.0              # no correction for this long after a lane change (the car is still settling)
+GAP_RESET_S = 0.5                        # not called for this long (lane mode, not steering): start again from 0
+ALERT_ON, ALERT_OFF = 0.001, 0.0005      # 1/m: about 0.28 m/s^2 at 60 km/h, a correction the driver feels
+ALERT_COOLDOWN_S = 5.0                   # no new ding for this long after one ends
+
+
+@dataclass(frozen=True)
+class ClampSettings:
+  enabled: bool = True
+  min_lane: float = DEFAULT_MIN_LANE_M
+  min_edge: float = DEFAULT_MIN_EDGE_M
+  gain: float = 1.0
+  alert: bool = True
+
+
+def _int_setting(value, lo: int, hi: int):
+  if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+    return None
+  return value
+
+
+def read_clamp_settings(params) -> ClampSettings:
+  """The clamp settings, read once a second by the caller. Missing, unregistered (an old native registry) or corrupt
+  values fall back to the defaults, so the clamp neither switches itself off nor dies."""
+  def get(key):
+    try:
+      return params.get(key, return_default=True)
+    except Exception:
+      return None
+  enabled, alert = get("ClampEnable"), get("ClampSteerAlert")
+  lane = _int_setting(get("ClampMinDistLane"), *MIN_LANE_RANGE_CM)
+  edge = _int_setting(get("ClampMinDistEdge"), *MIN_EDGE_RANGE_CM)
+  gain = _int_setting(get("ClampSteerGain"), *GAIN_RANGE)
+  return ClampSettings(
+    enabled=enabled if isinstance(enabled, bool) else True,
+    min_lane=DEFAULT_MIN_LANE_M if lane is None else lane / 100.0,
+    min_edge=DEFAULT_MIN_EDGE_M if edge is None else edge / 100.0,
+    gain=1.0 if gain is None else min(gain / 10.0, GAIN_MAX),
+    alert=alert if isinstance(alert, bool) else True,
+  )
+
+
+def fade_in(v_ego: float) -> float:
+  return float(np.interp(v_ego * 3.6, FADE_IN_KPH, [0.0, 1.0]))
+
+
+def bounds(left_line, right_line, left_edge, right_edge, left_on: bool, right_on: bool, left_std: float,
+           right_std: float, settings: ClampSettings):
+  """(lo, hi): the plan must stay right of lo and left of hi (model y, + right). A seen line wins over the road edge
+  on its side; an unsure edge (std above EDGE_STD_MAX) gives no bound. Works on scalars or arrays."""
+  lo = left_line + settings.min_lane if left_on else (
+    left_edge + settings.min_edge if left_std < EDGE_STD_MAX else -np.inf)
+  hi = right_line - settings.min_lane if right_on else (
+    right_edge - settings.min_edge if right_std < EDGE_STD_MAX else np.inf)
+  return lo, hi
+
+
+def clamp_target(path_y, lo, hi):
+  """Where the plan should be: as it is inside the bounds, pushed back by the violation outside them, and halfway
+  between them when the lane is too narrow for both (lo > hi)."""
+  target = np.clip(path_y, lo, hi)
+  return np.where(lo > hi, (lo + hi) / 2.0, target)
+
+
+class LineHysteresis:
+  def __init__(self):
+    self.left = self.right = False
+
+  def update(self, l_prob: float, r_prob: float) -> tuple[bool, bool]:
+    self.left = True if l_prob > PROB_ON else False if l_prob < PROB_OFF else self.left
+    self.right = True if r_prob > PROB_ON else False if r_prob < PROB_OFF else self.right
+    return self.left, self.right
+
+  def reset(self):
+    self.left = self.right = False
+
+
+class ClampSteerCorrector:
+  """The laneless half of the clamp: update() returns a curvature (1/m, + right) to add to the model's.
+
+  It is zero while the plan keeps its distance, during a lane change and LANE_CHANGE_HOLDOFF_S after it, below 5 km/h
+  and on missing or bad model data. Its output changes at most SLEW_RATE, so it eases in and out. alert_active is the
+  ding (controlsState.clampSteerActive): on above ALERT_ON, off below ALERT_OFF, then quiet for ALERT_COOLDOWN_S."""
+
+  def __init__(self):
+    self.lines = LineHysteresis()
+    self.correcting = False      # past the deadband
+    self.correction = 0.0        # the last output, after the slew limit
+    self.alert_active = False
+    self._alert_quiet_until = 0.0
+    self._holdoff_until = 0.0
+    self._last_t: float | None = None
+
+  def update(self, md, v_ego: float, lane_changing: bool, settings: ClampSettings, now: float | None = None) -> float:
+    now = time.monotonic() if now is None else now
+    target = self._target(md, v_ego, lane_changing, settings, now)
+    if self._last_t is None or now - self._last_t > GAP_RESET_S:
+      self.correction = 0.0                      # it was not running: start from zero
+    else:
+      step = SLEW_RATE * min(max(now - self._last_t, 0.0), 0.1)
+      self.correction += float(np.clip(target - self.correction, -step, step))
+    self._last_t = now
+    self._update_alert(settings, now)
+    return self.correction
+
+  def _target(self, md, v_ego, lane_changing, settings, now) -> float:
+    if not settings.enabled or settings.gain <= 0.0:
+      self.lines.reset()
+      self.correcting = False
+      return 0.0
+    if lane_changing:                            # crossing the line is the point; hold off a while after it too
+      self.lines.reset()
+      self.correcting = False
+      self._holdoff_until = now + LANE_CHANGE_HOLDOFF_S
+      return 0.0
+    strength = fade_in(v_ego)
+    if now < self._holdoff_until or strength <= 0.0:
+      self.correcting = False
+      return 0.0
+    try:
+      return self._compute(md, v_ego, settings, strength)
+    except (IndexError, ValueError, TypeError, AttributeError):
+      self.correcting = False
+      return 0.0
+
+  def _compute(self, md, v_ego, settings, strength) -> float:
+    lines, edges = md.laneLines, md.roadEdges
+    lines_ok = len(lines) >= 3 and len(lines[1].y) >= 2 and len(lines[2].y) >= 2 and len(md.laneLineProbs) >= 3
+    edges_ok = len(edges) >= 2 and len(edges[0].y) >= 2 and len(edges[1].y) >= 2 and len(md.roadEdgeStds) >= 2
+    if len(md.position.x) < 2 or (not lines_ok and not edges_ok):
+      self.correcting = False
+      return 0.0
+    if lines_ok:
+      left_on, right_on = self.lines.update(float(md.laneLineProbs[1]), float(md.laneLineProbs[2]))
+    else:
+      self.lines.reset()
+      left_on = right_on = False
+
+    ahead = float(np.clip(v_ego * LOOKAHEAD_TIME, LOOKAHEAD_MIN, LOOKAHEAD_MAX))
+    path_y = float(np.interp(ahead, md.position.x, md.position.y))
+    at = lambda line: float(np.interp(ahead, line.x, line.y))  # noqa: E731
+    left_line = at(lines[1]) if left_on else 0.0
+    right_line = at(lines[2]) if right_on else 0.0
+    left_std = float(md.roadEdgeStds[0]) if edges_ok else math.inf
+    right_std = float(md.roadEdgeStds[1]) if edges_ok else math.inf
+    left_edge = at(edges[0]) + left_std * EDGE_STD_MARGIN if edges_ok else 0.0
+    right_edge = at(edges[1]) - right_std * EDGE_STD_MARGIN if edges_ok else 0.0
+    lo, hi = bounds(left_line, right_line, left_edge, right_edge, left_on, right_on, left_std, right_std, settings)
+    if not (math.isfinite(path_y) and (math.isfinite(lo) or math.isfinite(hi))):
+      self.correcting = False
+      return 0.0
+    if math.isnan(lo) or math.isnan(hi):
+      self.correcting = False
+      return 0.0
+    target_y = float(clamp_target(path_y, lo, hi))
+    violation = abs(target_y - path_y)
+    self.correcting = violation >= DEADBAND_OFF if self.correcting else violation > DEADBAND_ON
+    if not self.correcting:
+      return 0.0
+    # pure pursuit: the curvature that reaches target_y at `ahead` metres (+ y right -> + curvature right)
+    kappa = 2.0 * (target_y - path_y) * strength / ahead ** 2 * settings.gain
+    cap = min(MAX_LAT_ACCEL / max(v_ego, 1.0) ** 2, MAX_CURVATURE)
+    return float(np.clip(kappa, -cap, cap))
+
+  def _update_alert(self, settings, now) -> None:
+    if not settings.alert:
+      self.alert_active = False
+      return
+    size = abs(self.correction)
+    if self.alert_active:
+      if size < ALERT_OFF:
+        self.alert_active = False
+        self._alert_quiet_until = now + ALERT_COOLDOWN_S
+    elif size >= ALERT_ON and now >= self._alert_quiet_until:
+      self.alert_active = True

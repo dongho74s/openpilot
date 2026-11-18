@@ -167,9 +167,10 @@ struct OnroadEvent @0xc4fa6047f024e718 {
 
     soundsUnavailableDEPRECATED @47;
     phoneLeadClosing @130;
-    lanelessEdgeOffset @131;  # carrot: LanelessEdgeOffset turned on (or switched side)
-    lanelessLineGap @132;     # carrot: LanelessLineGap turned on (or switched side)
-    lanelessOffsetSound @133; # carrot: the prompt sound of the two above, a separate short alert so it replays
+    lanelessEdgeOffsetDEPRECATED @131;  # carrot: the retired laneless view offsets (replaced by the min-distance clamp)
+    lanelessLineGapDEPRECATED @132;
+    lanelessOffsetSoundDEPRECATED @133;
+    clampSteerActive @134;    # carrot: the minimum-distance clamp's laneless steering correction is on (a ding)
   }
 }
 
@@ -864,6 +865,7 @@ struct ControlsState @0x97ff69c53601abf1 {
   forceDecel @51 :Bool;
 
   activeLaneLine @67 : Bool;
+  clampSteerActive @68 :Bool;  # carrot: the laneless min-distance clamp correction is meaningfully on (selfdrived dings)
 
   lateralControlState :union {
     pidState @53 :LateralPIDState;
@@ -1104,11 +1106,11 @@ struct ModelDataV2 {
     laneChangeAvailableRight @19 :Bool;
     laneChangeBlinkerHold @20 :LaneChangeDirection;  # carrot: hold this turn signal while a lever-requested change waits or is queued
     leverTurn @21 :Bool;  # carrot: the turn desire comes from a latched lever (BlinkerLatchedTurn)
-    lanelessEdgeSide @22 :Int8;       # carrot: LanelessEdgeOffset decision, +1 toward the right edge, -1 left, 0 off
-    lanelessGapSide @23 :Int8;        # carrot: LanelessLineGap decision, +1 moves right (left line seen), -1 left, 0 off
-    lanelessViewOffset @24 :Float32;  # carrot: applied laneless view offset in metres (+ moves the car right)
-    lanelessEdgeTarget @25 :Float32;  # carrot: LanelessEdgeOffset target in metres (+ right)
-    lanelessGapTarget @26 :Float32;   # carrot: LanelessLineGap target in metres (+ right)
+    lanelessEdgeSideDEPRECATED @22 :Int8;       # carrot: the retired laneless view offsets (old logs only)
+    lanelessGapSideDEPRECATED @23 :Int8;
+    lanelessViewOffsetDEPRECATED @24 :Float32;
+    lanelessEdgeTargetDEPRECATED @25 :Float32;
+    lanelessGapTargetDEPRECATED @26 :Float32;
 
     deprecated :group {
       brakeDisengageProb @2 :Float32;

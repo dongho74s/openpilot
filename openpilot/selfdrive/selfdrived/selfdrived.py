@@ -22,7 +22,6 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.selfdrived.camera_config import get_camera_packets
 from openpilot.selfdrive.selfdrived.events import Events, ET, EmptyAlert
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
-from openpilot.selfdrive.selfdrived.laneless_notice import LanelessOffsetNotice
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.impact_detector import ImpactDetector
 from openpilot.selfdrive.controls.lib.radar_only_warning import RadarOnlyWarning
@@ -78,8 +77,6 @@ class SelfdriveD:
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
     self.excessive_actuation_check = ExcessiveActuationCheck()
-    self.laneless_notice = LanelessOffsetNotice()
-    self.laneless_sound_due = False
     self.excessive_actuation = self.params.get("Offroad_ExcessiveActuation") is not None
 
     # Setup sockets
@@ -415,17 +412,9 @@ class SelfdriveD:
                                                     LaneChangeState.laneChangeFinishing):
       self.events.add(EventName.laneChange)
 
-    # laneless road offsets starting to move the car (modeld's decisions and targets in modelV2.meta)
-    meta = self.sm['modelV2'].meta
-    edge_notice, gap_notice = self.laneless_notice.update(meta.lanelessEdgeSide, meta.lanelessEdgeTarget,
-                                                          meta.lanelessGapSide, meta.lanelessGapTarget)
-    if edge_notice:
-      self.events.add(EventName.lanelessEdgeOffset)
-    if gap_notice:
-      self.events.add(EventName.lanelessLineGap)
-    if self.laneless_sound_due:   # a frame after the text alert: its newer start wins the lowest-priority tie
-      self.events.add(EventName.lanelessOffsetSound)
-    self.laneless_sound_due = edge_notice or gap_notice
+    # the minimum-distance clamp's laneless correction is on (controlsd decides, with its own cooldown)
+    if self.sm['controlsState'].clampSteerActive:
+      self.events.add(EventName.clampSteerActive)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):
       # All pandas must match the list of safetyConfigs, and if outside this list, must be silent or noOutput

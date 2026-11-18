@@ -318,32 +318,6 @@ def audio_feedback_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
     priority=Priority.LOW)
 
 
-LANELESS_NOTICE_S = 3.0   # selfdrived/laneless_notice.py NOTICE_S: the event is added on one frame, text shown this long
-LANELESS_SOUND_S = 0.2    # the sound-only alert (lanelessOffsetSound) is shown first, so the text alert lasts this longer
-
-
-def laneless_side_text(side: int) -> str:
-  return "오른쪽" if side > 0 else "왼쪽"
-
-
-def laneless_edge_offset_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
-  side = laneless_side_text(sm['modelV2'].meta.lanelessEdgeSide)
-  return Alert(
-    f"도로끝 보정 작동: {side}으로",
-    "",
-    AlertStatus.normal, AlertSize.small,
-    Priority.LOWEST, VisualAlert.none, AudibleAlert.none, LANELESS_NOTICE_S + LANELESS_SOUND_S)
-
-
-def laneless_line_gap_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
-  side = laneless_side_text(sm['modelV2'].meta.lanelessGapSide)
-  return Alert(
-    f"한쪽 차선 간격 보정 작동: {side}으로",
-    "",
-    AlertStatus.normal, AlertSize.small,
-    Priority.LOWEST, VisualAlert.none, AudibleAlert.none, LANELESS_NOTICE_S + LANELESS_SOUND_S)
-
-
 def torque_nn_load_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   model_name = Params().get("NNFFModelName")
   if model_name == "":
@@ -1272,24 +1246,14 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   EventName.torqueNNLoad: {
     ET.PERMANENT: torque_nn_load_alert,
   },
-  # laneless road offsets (modeld lateral_view_offset) starting to move the car; added on one frame (laneless_notice),
-  # shown for LANELESS_NOTICE_S
-  EventName.lanelessEdgeOffset: {
-    ET.PERMANENT: laneless_edge_offset_alert,
-  },
-  EventName.lanelessLineGap: {
-    ET.PERMANENT: laneless_line_gap_alert,
-  },
-  # their sound: soundd restarts a sound only when the alert sound changes, so a prompt kept by a 3 s alert would not
-  # play again for an announcement inside those 3 s; this short alert (no text) goes back to none after 0.2 s. At the
-  # lowest priority it never hides another warning; selfdrived adds it one frame after the text alert so that its
-  # newer start frame wins the tie with that text alert (AlertManager sorts by priority, then start frame).
-  EventName.lanelessOffsetSound: {
+  # the minimum-distance clamp's laneless correction pushing the car off a line (controlsState.clampSteerActive): a
+  # short ding once when it starts (soundd plays a sound when the alert's sound changes), shown while it lasts
+  EventName.clampSteerActive: {
     ET.PERMANENT: Alert(
+      "클램프 조향 보정 작동",
       "",
-      "",
-      AlertStatus.normal, AlertSize.none,
-      Priority.LOWEST, VisualAlert.none, AudibleAlert.prompt, LANELESS_SOUND_S),
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOWEST, VisualAlert.none, AudibleAlert.prompt, 0.2),
   },
   EventName.updateRebootRequired: {
     ET.PERMANENT: Alert(
