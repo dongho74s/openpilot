@@ -269,6 +269,15 @@ TOP_CRUISE_FONT_SIZE = 27.0 * DRIVE_STATUS_SCALE
 TOP_CRUISE_UNIT_FONT_SIZE = TOP_CRUISE_FONT_SIZE
 WIFI_STATUS_CENTER_X = 70
 WIFI_STATUS_ICON_SIZE = 48.0
+# Top-right connectivity pair (layout rearranged 2026-11-18): Wi-Fi moved
+# here from the top-left, Bluetooth moved up from the bottom status line.
+# Wi-Fi sits at the far right; Bluetooth sits to its left.
+# WIFI_STATUS_CENTER_X now only anchors NAV_STATUS_CENTER_X (the navigation
+# label drawn under the clock).
+TOP_RIGHT_STATUS_MARGIN = 28.0
+TOP_RIGHT_BT_ICON_H = 40.0
+TOP_RIGHT_BT_GAP = 16.0
+WIFI_STATUS_TOP_RIGHT_CENTER_X = DESIGN_WIDTH - TOP_RIGHT_STATUS_MARGIN - WIFI_STATUS_ICON_SIZE * 0.5
 # Keep the badge to the right of the clock, clear of its text and stroke.
 EGPU_STATUS_CENTER_X = 474.0
 EGPU_STATUS_W = 76.0
@@ -277,7 +286,7 @@ EGPU_STATUS_FONT_SIZE = 19.0
 NAV_STATUS_CENTER_X = WIFI_STATUS_CENTER_X - 22.0
 NAV_STATUS_CENTER_Y = 99.0
 NAV_STATUS_FONT_SIZE = 22.0
-LFA_STATUS_CENTER_X = 1000
+LFA_STATUS_CENTER_X = 70  # Top-left end (moved from the top-right, 2026-11-18).
 LFA_STATUS_ICON_SIZE = 34.0 * DRIVE_STATUS_SCALE
 LFA_LANE_ICON_WIDTH_SCALE = 2.0
 LFA_LANE_ICON_TOP_OFFSET = 3.0
@@ -8308,8 +8317,7 @@ class ClusterUiRenderer:
         cellular_data_text: str | None = None,
     ) -> None:
         overtake = self._auto_overtake_enabled()
-        bt_connected = self._bluetooth_remote_connected()
-        if status is None and network_address is None and not cellular_data_text and overtake is None and bt_connected is None:
+        if status is None and network_address is None and not cellular_data_text and overtake is None:
             return
 
         theme = self._current_theme()
@@ -8336,15 +8344,23 @@ class ClusterUiRenderer:
             data_width, _ = self._measure_text(data_text, text_size, spacing)
             data_x += data_width + CELLULAR_DATA_GAP
         if overtake is not None:
+            # Bottom-right end of the status line (layout rearranged
+            # 2026-11-18; Bluetooth moved to the top-right with Wi-Fi).
             overtake_text = "자동 추월 ON" if overtake else "자동 추월 OFF"
             overtake_color = GREEN if overtake else theme.muted
             max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
-            overtake_text = self._ellipsize_text(overtake_text, text_size, max_w)
-            self._draw_text_with_stroke(overtake_text, data_x, center_y, text_size, overtake_color, (5, 9, 12), 2)
-            overtake_width, _ = self._measure_text(overtake_text, text_size, spacing)
-            data_x += overtake_width + CELLULAR_DATA_GAP
-        if bt_connected is not None:
-            self._draw_bluetooth_icon(data_x, center_y - row_h * 0.5, row_h, bt_connected, theme)
+            if max_w > 0:
+                overtake_text = self._ellipsize_text(overtake_text, text_size, max_w)
+                self._draw_text_with_stroke(
+                    overtake_text,
+                    DESIGN_WIDTH - GIT_STATUS_MARGIN,
+                    center_y,
+                    text_size,
+                    overtake_color,
+                    (5, 9, 12),
+                    2,
+                    anchor="right",
+                )
         if network_address:
             network_text = self._ellipsize_text(network_address, text_size, GIT_STATUS_MAX_TEXT_W)
             network_y = center_y - row_h - 4.0
@@ -8483,18 +8499,32 @@ class ClusterUiRenderer:
         self._draw_follow_vehicle_icon(icon_x, icon_y)
 
     def _draw_network_status(self, state: ClusterUiState, bottom_y: float) -> None:
+        # Top-right connectivity pair: Wi-Fi at the far right, Bluetooth to
+        # its left. (Layout rearranged 2026-11-18: Wi-Fi moved from the
+        # top-left, Bluetooth moved up from the bottom status line.)
         theme = self._current_theme()
         tint = WHITE if state.network_connected else theme.muted
         alpha = 255 if state.network_connected else 130
         self._draw_outlined_bottom_aligned_texture_icon(
             self._wifi_texture,
-            WIFI_STATUS_CENTER_X,
+            WIFI_STATUS_TOP_RIGHT_CENTER_X,
             bottom_y,
             WIFI_STATUS_ICON_SIZE,
             WIFI_STATUS_ICON_SIZE,
             tint,
             alpha,
         )
+        bt_connected = self._bluetooth_remote_connected()
+        if bt_connected is not None:
+            bt_h = TOP_RIGHT_BT_ICON_H
+            bt_x = (
+                WIFI_STATUS_TOP_RIGHT_CENTER_X
+                - WIFI_STATUS_ICON_SIZE * 0.5
+                - TOP_RIGHT_BT_GAP
+                - bt_h * 0.5
+            )
+            bt_y = TOP_STATUS_CENTER_Y - bt_h * 0.5
+            self._draw_bluetooth_icon(bt_x, bt_y, bt_h, bt_connected, theme)
 
     def _draw_follow_vehicle_icon(self, x: float, y: float) -> None:
         texture = self._follow_vehicle_texture
