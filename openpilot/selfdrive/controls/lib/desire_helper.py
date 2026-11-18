@@ -48,6 +48,47 @@ OVERTAKE_ARMED_TIMEOUT_S = 3.0
 OVERTAKE_MIN_SPEED_KPH = 60.0
 OVERTAKE_MAX_LEAD_DIST_M = 150.0
 
+# ── Auto overtake return (return to the original lane after an overtake) ───
+# After an automatic left-lane overtake, return to the original (right) lane
+# once the overtaken car is confirmed passed. The pass is an ESTIMATE, not a
+# measurement: this car has no rear-side sensor — no stock BSM 0x142 on the
+# high-speed bus, no radar side leads, and the model only sees forward — so
+# "passed" is judged by three overlapping signals (A: no slow lead ahead,
+# B: the model right zone has been clear, C: dead-reckoned relative advance
+# past the latched lead position) and the return is conservative by default:
+# any doubt keeps the car in the left lane.
+#
+# Rear-side check (user request: keep the code in place even though the
+# signal is empty today): the return checks carstate.rightBlindspot, the
+# right SideState BSD hold and side-object flag every frame. Today all three
+# are always clear on this car, so they only bite when the model/radar sees
+# something on the right. When the low-speed CAN sniffer feeds 0x142 into
+# carstate.rightBlindspot, the same code starts working with no change here
+# (carstate is the single funnel: opendbc/car/gm/carstate.py reads
+# BCMBlindSpotMonitor into left/rightBlindspot).
+#
+# Estimation speed (user request: return at a reasonable time, not too
+# late): the dead reckoning uses the measured relative speed, but with a
+# floor of OVERTAKE_RETURN_MIN_VREL_MS, and the clearance is one car length
+# plus a 3.5 m margin. The trigger already guarantees the lead is at least
+# 20 km/h (~5.6 m/s) slower than the set speed and ego drives near the set
+# speed, so the true relative speed during a pass is normally above the
+# floor — the floor only fills in when the model under-reports the speed
+# difference. If the measured relative speed is <= 0 (the lead is not being
+# closed on at all) nothing is accumulated, so a lead that speeds up to
+# match ego stalls the pass instead of faking it.
+OVERTAKE_RETURN_ANNOUNCE_S = 2.0
+OVERTAKE_RETURN_ARMED_TIMEOUT_S = 3.0
+OVERTAKE_RETURN_MIN_LEFT_LANE_S = 3.0
+OVERTAKE_RETURN_TIMEOUT_S = 30.0
+OVERTAKE_RETURN_COOLDOWN_S = 15.0
+OVERTAKE_RETURN_ZONE_CLEAR_S = 1.0
+OVERTAKE_RETURN_ZONE_MAX_M = 50.0
+OVERTAKE_RETURN_ZONE_MIN_PROB = 0.5
+OVERTAKE_RETURN_CLEARANCE_M = 8.0
+OVERTAKE_RETURN_MIN_VREL_MS = 5.0
+OVERTAKE_RETURN_LEAD_FAST_MARGIN_MS = 2.0
+
 
 class DesireHelper:
   def __init__(self, tesla_auto_signals=False, boundary_indicator_supported=False, *, fingerprint='', native_voice_signal=False,
@@ -116,6 +157,32 @@ class DesireHelper:
     self._overtake_state = "off"
     self._overtake_timer = 0.0
     self.auto_overtake_enabled = True
+    # Overtaken lead latched at the overtake trigger (the anchor for the
+    # return pass estimate; re-latched at the lane-change handoff when the
+    # lead is clearly the same car).
+    self._overtake_lead_d0 = 0.0
+    self._overtake_lead_v0 = 0.0
+
+    # auto overtake return (return to the original lane after an overtake).
+    # States: "off" -> "overtaking" (left lane, watching the pass) -> "delay"
+    # (wait LaneChangeDelay after the pass is confirmed) -> "announcing_right"
+    # (right blinker, 2 s) -> "armed_right" (auto-lane-change path armed, up
+    # to 3 s) -> "off" once the FSM starts the right lane change. Same
+    # AutoOvertake toggle as the overtake; no separate setting. One return
+    # per overtake; after a return the overtake is paused for
+    # OVERTAKE_RETURN_COOLDOWN_S so it does not immediately re-overtake the
+    # same slow lead.
+    self._return_state = "off"
+    self._return_timer = 0.0
+    self._return_pending = False
+    self._return_change_started = False
+    self._return_rel_advance = 0.0
+    self._return_zone_clear_timer = 0.0
+    self._return_left_lane_timer = 0.0
+    self._return_lead_d0 = 0.0
+    self._return_lead_v0 = 0.0
+    self._return_delay_timer = 0.0
+    self._return_cooldown_timer = 0.0
 
     # turn-signal lever presses (carState.*BlinkerStalkCount): an explicit request for the next lane change
     self.stalk_counts = None
@@ -462,6 +529,11 @@ class DesireHelper:
     lane_change_busy = self.lane_change_state not in (LaneChangeState.off, LaneChangeState.preLaneChange)
     driver_blinker = carstate.leftBlinker or carstate.rightBlinker
     if (not lateral_active) or lane_change_busy or driver_blinker:
+      # If the FSM just took over the overtake's own left lane change, arm
+      # the return monitor (and latch the overtaken lead for the pass
+      # estimate). A driver's own change (physical blinker on) never arms it.
+      if lane_change_busy and lateral_active and not driver_blinker:
+        self._overtake_latch_return_start(radarState)
       self._overtake_state = "off"
       self._overtake_timer = 0.0
       return
@@ -490,9 +562,18 @@ class DesireHelper:
     )
 
     if self._overtake_state == "off":
-      if trigger:
+      # No new overtake while a return is being watched/announced/armed, or
+      # during the cooldown after a return: otherwise the car would
+      # immediately re-overtake the same slow lead it just returned behind.
+      if trigger and self._return_state == "off" and self._return_cooldown_timer <= 0.0:
         self._overtake_state = "announcing"
         self._overtake_timer = 0.0
+        # Latch the overtaken lead at the trigger: leadOne IS the slow car
+        # here (the trigger guarantees it), so its distance/speed are the
+        # anchor for the return pass estimate.
+        self._overtake_lead_d0 = lead_dist
+        self._overtake_lead_v0 = float(getattr(lead, "vLead", 0.0) or 0.0)
+        self._return_rel_advance = 0.0
         # Announce with the existing lane-change notification: left blinker.
         # Refresh the count every frame while announcing so it stays on.
         self.carrot_blinker_state = BLINKER_LEFT
@@ -544,6 +625,347 @@ class DesireHelper:
         self._overtake_state = "off"
         self._overtake_timer = 0.0
         self.carrot_lane_change_count = 0
+
+  # ─────────────────────────────────────────────
+  # auto overtake return
+  # ─────────────────────────────────────────────
+  def _overtake_latch_return_start(self, radarState):
+    """Arm the return monitor when the FSM takes over the overtake's own left lane change.
+
+    Called from _update_auto_overtake when the overtake is dropped because
+    the FSM started a lane change. Only arms when that change is the
+    overtake's own left change (direction left + the overtake's left
+    announcement still on the notification). A driver's own change (physical
+    blinker on) never reaches here, and an ATC navigation change is excluded
+    so a return is never armed behind a route maneuver.
+
+    The pass anchor: prefer the lead at the handoff when it is clearly the
+    same car the overtake triggered on (speed within
+    OVERTAKE_RETURN_LEAD_FAST_MARGIN_MS and closer than at the trigger) —
+    the anchor is then nearer and the return comes sooner. Otherwise keep
+    the trigger anchor (and the advance accumulated since the trigger).
+    """
+    if self._overtake_state not in ("announcing", "armed"):
+      return
+    if self.lane_change_direction != LaneChangeDirection.left:
+      return
+    if self.carrot_blinker_state != BLINKER_LEFT:
+      return
+    # An ATC lane-change request owns this change, not the overtake: never
+    # arm a return behind a navigation maneuver.
+    if self.atc_type in ("fork left", "fork right", "atc left", "atc right"):
+      return
+    lead = getattr(radarState, "leadOne", None)
+    if (lead is not None and getattr(lead, "status", False) and
+        abs(float(getattr(lead, "vLead", 0.0) or 0.0) - self._overtake_lead_v0) <=
+        OVERTAKE_RETURN_LEAD_FAST_MARGIN_MS and
+        float(getattr(lead, "dRel", 0.0) or 0.0) <= self._overtake_lead_d0):
+      self._return_lead_d0 = float(getattr(lead, "dRel", 0.0) or 0.0)
+      self._return_lead_v0 = float(getattr(lead, "vLead", 0.0) or 0.0)
+      # Anchor moved to the handoff: restart the advance count there too.
+      self._return_rel_advance = 0.0
+    else:
+      self._return_lead_d0 = self._overtake_lead_d0
+      self._return_lead_v0 = self._overtake_lead_v0
+    self._return_pending = True
+    self._return_change_started = True
+    self._return_zone_clear_timer = 0.0
+    self._return_left_lane_timer = 0.0
+    self._return_delay_timer = 0.0
+    self.desireLog = "OVERTAKE_RETURN:armed"
+
+  def _overtake_return_handover(self):
+    """The FSM took over the return's right lane change: hand over and start
+    the re-overtake cooldown so the car does not immediately re-overtake the
+    same slow lead it just returned behind."""
+    self._return_state = "off"
+    self._return_timer = 0.0
+    self._return_pending = False
+    self._return_change_started = False
+    self._return_cooldown_timer = OVERTAKE_RETURN_COOLDOWN_S
+    self.desireLog = "OVERTAKE_RETURN:started"
+
+  def _overtake_return_reset(self):
+    """Drop the return state machine (no return for this overtake)."""
+    was_announcing = self._return_state in ("announcing_right", "armed_right")
+    self._return_state = "off"
+    self._return_timer = 0.0
+    self._return_pending = False
+    self._return_change_started = False
+    self._return_rel_advance = 0.0
+    self._return_zone_clear_timer = 0.0
+    self._return_left_lane_timer = 0.0
+    self._return_lead_d0 = 0.0
+    self._return_lead_v0 = 0.0
+    self._return_delay_timer = 0.0
+    if was_announcing and self.carrot_blinker_state == BLINKER_RIGHT:
+      # The right-blinker notification was ours: take it down.
+      self.carrot_lane_change_count = 0
+
+  def _return_vrel_eff(self, carstate, radarState):
+    """Relative closing speed (m/s) used for the pass dead reckoning.
+
+    Measured from the current lead, floored at OVERTAKE_RETURN_MIN_VREL_MS
+    while actually closing (the model often under-reports the speed gap), and
+    zero when not closing at all (a lead that caught up stalls the pass
+    instead of faking it). With no lead the road ahead is clear and the
+    floor lets the estimate finish once the zone check is also clear.
+    """
+    lead = getattr(radarState, "leadOne", None)
+    if lead is None or not getattr(lead, "status", False):
+      return OVERTAKE_RETURN_MIN_VREL_MS
+    v_rel = float(carstate.vEgo) - float(getattr(lead, "vLead", 0.0) or 0.0)
+    if v_rel <= 0.0:
+      return 0.0
+    return max(v_rel, OVERTAKE_RETURN_MIN_VREL_MS)
+
+  def _return_right_zone_edges(self, modeldata):
+    """Lateral bounds (model y, +left) of the right lane at the ego position."""
+    lines = getattr(modeldata, "laneLines", None) or ()
+    if len(lines) >= 4:
+      try:
+        y_cur = float(lines[2].y[0])
+        y_out = float(lines[3].y[0])
+        if y_out < y_cur < 0.0:
+          return y_cur, y_out
+      except (TypeError, ValueError, IndexError, AttributeError):
+        pass
+    # Fallback when the lane lines are missing: one lane width to the right.
+    return -1.6, -5.6
+
+  def _return_right_zone_occupied(self, modeldata):
+    """True if the model sees a car in the right (original) lane ahead.
+
+    Same observation as the cluster's model BSD zone (cluster_route_replay
+    _update_model_bsd_zone), but a live decision here rather than a display.
+    """
+    leads = getattr(modeldata, "leadsV3", None) or ()
+    y_cur, y_out = self._return_right_zone_edges(modeldata)
+    for lead in leads:
+      try:
+        prob = float(getattr(lead, "prob", 0.0) or 0.0)
+        xs = getattr(lead, "x", None)
+        ys = getattr(lead, "y", None)
+        if not xs or not ys:
+          continue
+        x = float(xs[0])
+        y = float(ys[0])
+      except (TypeError, ValueError, IndexError, AttributeError):
+        continue
+      if prob < OVERTAKE_RETURN_ZONE_MIN_PROB:
+        continue
+      if not 0.2 < x < OVERTAKE_RETURN_ZONE_MAX_M:
+        continue
+      if y_out - 0.5 <= y <= y_cur + 0.5:
+        return True
+    return False
+
+  def _return_right_rear_clear(self, carstate):
+    """Rear-side (blind-spot) check for the return. All three inputs must be clear.
+
+    Today on this car they are always clear (no stock BSM 0x142 on the
+    high-speed bus, no radar side leads), so they only bite when the
+    model/radar sees something on the right — but the check is live: when
+    the low-speed CAN sniffer feeds 0x142 into carstate.rightBlindspot, the
+    same code starts working with no change here. carstate is the single
+    funnel (opendbc/car/gm/carstate.py reads BCMBlindSpotMonitor into
+    left/rightBlindspot; SideState folds the same bit into
+    bsd_hold_counter / side_object_detected via _process_sides). The raw
+    carstate bit is checked directly, even when LaneChangeBsd is set to
+    ignore BSD for manual lane changes: the return is a new automatic
+    maneuver, so it stays conservative.
+    """
+    return (not bool(getattr(carstate, "rightBlindspot", False)) and
+            self.right.bsd_hold_counter == 0 and
+            not self.right.side_object_detected)
+
+  def _return_pass_confirmed(self, carstate, radarState):
+    """Three overlapping signals that the overtaken car has been passed.
+
+    A. The lead ahead is no longer the overtaken car (it is gone, or a
+       faster lead than the latched one — it outran the overtaken car).
+    B. The model right zone has been clear for OVERTAKE_RETURN_ZONE_CLEAR_S.
+    C. Dead-reckoned relative advance past the latched lead position by
+       OVERTAKE_RETURN_CLEARANCE_M (one car length + margin).
+    D. At least OVERTAKE_RETURN_MIN_LEFT_LANE_S spent in the left lane.
+    All four must hold; any doubt keeps the car in the left lane.
+    """
+    lead = getattr(radarState, "leadOne", None)
+    lead_ok = bool(lead is not None and getattr(lead, "status", False))
+    if lead_ok:
+      v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)
+      a_ok = v_lead >= self._return_lead_v0 + OVERTAKE_RETURN_LEAD_FAST_MARGIN_MS
+    else:
+      a_ok = True
+    b_ok = self._return_zone_clear_timer >= OVERTAKE_RETURN_ZONE_CLEAR_S
+    c_ok = self._return_rel_advance >= self._return_lead_d0 + OVERTAKE_RETURN_CLEARANCE_M
+    d_ok = self._return_left_lane_timer >= OVERTAKE_RETURN_MIN_LEFT_LANE_S
+    return a_ok and b_ok and c_ok and d_ok
+
+  def _update_overtake_return(self, carstate, modeldata, radarState, lateral_active, carrotMan):
+    """Return to the original (right) lane after an automatic overtake.
+
+    States: "off" -> "overtaking" (left lane, watching the pass) -> "delay"
+    (wait LaneChangeDelay after the pass is confirmed) -> "announcing_right"
+    (right blinker, 2 s) -> "armed_right" (auto-lane-change path armed, up
+    to 3 s) -> "off" once the FSM starts the right lane change. The right
+    lane change itself runs through the existing FSM gates — no bypass.
+
+    Same AutoOvertake toggle as the overtake; no separate setting. One
+    return per overtake; after a return the overtake is paused for
+    OVERTAKE_RETURN_COOLDOWN_S. Called unconditionally from update() so it
+    can cancel itself (trailer, disengage, AutoOvertake off) instead of
+    freezing.
+    """
+    # Cooldown after a return always ticks down.
+    if self._return_cooldown_timer > 0.0:
+      self._return_cooldown_timer = max(0.0, self._return_cooldown_timer - DT_MDL)
+
+    # The return is part of the overtake: same AutoOvertake toggle, no
+    # separate setting. Off cancels any return in progress.
+    if not self.auto_overtake_enabled:
+      if self._return_state != "off" or self._return_pending:
+        self._overtake_return_reset()
+      return
+
+    # Dead reckoning: relative advance since the overtake triggered (or since
+    # the lane change started, when the anchor was re-latched at handoff).
+    if self._overtake_state in ("announcing", "armed") or self._return_pending or \
+        self._return_state in ("overtaking", "delay"):
+      self._return_rel_advance += self._return_vrel_eff(carstate, radarState) * DT_MDL
+
+    # Model right-zone clear time (B) and left-lane time (D).
+    if self._return_state in ("overtaking", "delay", "announcing_right", "armed_right"):
+      if self._return_right_zone_occupied(modeldata):
+        self._return_zone_clear_timer = 0.0
+      else:
+        self._return_zone_clear_timer += DT_MDL
+      self._return_left_lane_timer += DT_MDL
+
+    if self._return_state == "off":
+      if self._return_pending:
+        if self.lane_change_state == LaneChangeState.off:
+          # The change ended without a detected crossing (no lane lines, or
+          # it was cancelled): drop the pending return.
+          self._overtake_return_reset()
+        elif self.lane_change_state in (LaneChangeState.laneChangeStarting,
+                                        LaneChangeState.laneChangeFinishing) and \
+            self.lane_change_direction == LaneChangeDirection.left and \
+            self.crossing.since >= 0.0:
+          # Centre crossed into the left lane: start watching the pass.
+          self._return_pending = False
+          self._return_state = "overtaking"
+          self._return_timer = 0.0
+          self._return_left_lane_timer = 0.0
+          self.desireLog = "OVERTAKE_RETURN:overtaking"
+      return
+
+    # --- active states: common cancels --------------------------------------
+    lane_change_busy = self.lane_change_state in (LaneChangeState.laneChangeStarting,
+                                                  LaneChangeState.laneChangeFinishing)
+    driver_blinker = bool(carstate.leftBlinker or carstate.rightBlinker)
+    # Steering against the return (right): torque > 0 is leftward.
+    driver_oppose = bool(carstate.steeringPressed and carstate.steeringTorque > 0)
+    atc_live = getattr(carrotMan, "atcType", "") not in ("", "none", "none prepare", "straight", "straight prepare")
+    if (not lateral_active) or driver_blinker or driver_oppose or atc_live or \
+        carstate.vEgo < LANE_CHANGE_SPEED_MIN or carstate.trailerConnected:
+      self._overtake_return_reset()
+      return
+
+    # The FSM took over the return's own right lane change. It can start
+    # during "announcing_right": the announcement refreshes
+    # carrot_lane_change_count (which forces the FSM trigger) and the FSM's
+    # own lane_change_delay gate opens first, so the 2 s announcement does
+    # not gate the start — exactly like the overtake's left change, which
+    # can also start during its announcement. Hand over (do not cancel:
+    # cancelling here would skip the re-overtake cooldown and the car would
+    # immediately re-overtake the same slow lead).
+    if self._return_state in ("announcing_right", "armed_right") and lane_change_busy and \
+        self.lane_change_direction == LaneChangeDirection.right:
+      self._overtake_return_handover()
+      return
+
+    # A new lane change that is not the entry change (and not the return's own
+    # change, handled above) cancels the return.
+    if self._return_state in ("overtaking", "delay", "announcing_right"):
+      if lane_change_busy and not self._return_change_started:
+        self._overtake_return_reset()
+        return
+      if self.lane_change_state in (LaneChangeState.off, LaneChangeState.preLaneChange):
+        self._return_change_started = False
+
+    if self._return_state == "overtaking":
+      # Give up if the pass cannot be confirmed within the timeout: stay left.
+      if self._return_left_lane_timer >= OVERTAKE_RETURN_TIMEOUT_S:
+        self._overtake_return_reset()
+        return
+      if self._return_pass_confirmed(carstate, radarState):
+        # Pass confirmed: wait LaneChangeDelay before announcing the return
+        # (user request: do not go right right after the lead check).
+        self._return_state = "delay"
+        self._return_delay_timer = self.laneChangeDelay
+        self._return_timer = 0.0
+        self.desireLog = "OVERTAKE_RETURN:passed->delay"
+      return
+
+    if self._return_state == "delay":
+      if self._return_left_lane_timer >= OVERTAKE_RETURN_TIMEOUT_S:
+        self._overtake_return_reset()
+        return
+      if not self._return_pass_confirmed(carstate, radarState):
+        # Conditions broke while waiting: back to watching the pass.
+        self._return_state = "overtaking"
+        self._return_timer = 0.0
+        return
+      self._return_delay_timer -= DT_MDL
+      if self._return_delay_timer <= 0.0:
+        self._return_state = "announcing_right"
+        self._return_timer = 0.0
+        self.carrot_blinker_state = BLINKER_RIGHT
+        self.carrot_lane_change_count = int(OVERTAKE_RETURN_ANNOUNCE_S / DT_MDL) + 2
+        self.desireLog = "OVERTAKE_RETURN:delay->announcing_right"
+      return
+
+    if self._return_state == "announcing_right":
+      # Right lane must stay available (solid line / obstacle / BSD blocks).
+      if not self.right.lane_change_available or not self._return_right_rear_clear(carstate):
+        self._overtake_return_reset()
+        return
+      if not self._return_pass_confirmed(carstate, radarState):
+        # Pass no longer confirmed (e.g. a car reappeared on the right):
+        # back to watching instead of announcing.
+        self._return_state = "overtaking"
+        self._return_timer = 0.0
+        self.carrot_lane_change_count = 0
+        return
+      self.carrot_blinker_state = BLINKER_RIGHT
+      self.carrot_lane_change_count = int(OVERTAKE_RETURN_ANNOUNCE_S / DT_MDL) + 2
+      self._return_timer += DT_MDL
+      if self._return_timer >= OVERTAKE_RETURN_ANNOUNCE_S:
+        self.auto_lane_change_enable = True
+        self._return_state = "armed_right"
+        self._return_timer = 0.0
+        self.desireLog = "OVERTAKE_RETURN:announcing_right->armed_right"
+      return
+
+    if self._return_state == "armed_right":
+      if not self.right.lane_change_available or not self._return_right_rear_clear(carstate):
+        self.auto_lane_change_enable = False
+        self._overtake_return_reset()
+        return
+      if not self._return_pass_confirmed(carstate, radarState):
+        self.auto_lane_change_enable = False
+        self._return_state = "overtaking"
+        self._return_timer = 0.0
+        self.carrot_lane_change_count = 0
+        return
+      self.carrot_blinker_state = BLINKER_RIGHT
+      self.carrot_lane_change_count = int(OVERTAKE_RETURN_ANNOUNCE_S / DT_MDL) + 2
+      self._return_timer += DT_MDL
+      if self._return_timer >= OVERTAKE_RETURN_ARMED_TIMEOUT_S:
+        self.auto_lane_change_enable = False
+        self._overtake_return_reset()
+      return
 
   # ─────────────────────────────────────────────
   # main update
@@ -607,6 +1029,9 @@ class DesireHelper:
     # announcement (left blinker) is picked up in this same frame.
     if not trailer_maneuver_blocked:
       self._update_auto_overtake(carstate, radarState, lateral_active)
+    # The return is called unconditionally: it must cancel itself when the
+    # trailer connects (or lateral control drops) instead of freezing.
+    self._update_overtake_return(carstate, modeldata, radarState, lateral_active, carrotMan)
 
     # desire state from model
     self._check_desire_state(modeldata, carstate, self.maneuver_type)
