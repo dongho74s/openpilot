@@ -193,6 +193,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TimezoneSource", {PERSISTENT, STRING, ""}},              // 타임존 출처 우선순위 추적 ("app" > "wifi" > "gps")
     {"CarrotTireTrajectory", {PERSISTENT, INT, "0"}},
     {"OnroadMinimalMode", {PERSISTENT, INT, "0"}},  // 기기 화면 최소 모드 (속도·차선·패스선만 표시)
+    {"OnroadMochiMode", {PERSISTENT, INT, "0"}},  // 모찌 화면보호기 (주행 화면 대체, 기본 꺼짐)
     {"CarrotPhoneWarningOff", {PERSISTENT, BOOL, "0"}},  // 실험용: 실내 카메라 폰 사용 경고 끄기 (폰 감지 무시)
     {"CarrotSleepWarningOff", {PERSISTENT, BOOL, "0"}},  // 실험용: 실내 카메라 졸음 경고 끄기 (졸음 감지 무시)
     {"CarrotEyeWarningOff", {PERSISTENT, BOOL, "0"}},  // 실험용: 실내 카메라 눈 감김 경고 끄기 (깜빡임 감지 무시)
