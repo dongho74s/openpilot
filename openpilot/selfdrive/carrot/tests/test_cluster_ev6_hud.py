@@ -287,3 +287,22 @@ def test_park_preview_switches_to_fallback_without_a_retry_delay(monkeypatch, tm
   assert freed == ["ioniq5-texture"]
   assert renderer._park_model_texture == "ev6-texture"
   assert renderer._park_model_key == "ev6"
+
+
+def test_auto_overtake_param_is_read_at_most_once_per_second(monkeypatch):
+  calls = []
+
+  class FakeParams:
+    def __init__(self, *args):
+      pass
+
+    def get_bool(self, key):
+      calls.append(key)
+      return False
+
+  monkeypatch.setitem(sys.modules, "openpilot.common.params", SimpleNamespace(Params=FakeParams))
+  renderer = ClusterUiRenderer()
+  assert renderer._auto_overtake_enabled() is False
+  assert calls == ["AutoOvertake"]
+  assert renderer._auto_overtake_enabled() is False
+  assert calls == ["AutoOvertake"]  # Cached: no second read within the same second.

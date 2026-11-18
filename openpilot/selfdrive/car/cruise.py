@@ -793,6 +793,12 @@ class VCruiseCarrot:
     elif remote == 'paddleDecel':
       self._cruise_control(-2, -1, "Cruise off & Ready (Bluetooth paddle)")
       self._paddle_decel_active = True
+    elif remote == 'overtakeToggle':
+      # Bluetooth remote button 2: flip AutoOvertake (auto overtake and the
+      # return to the original lane share this one toggle). A held button
+      # must only flip once, so repeats are ignored.
+      if not getattr(self.bluetooth_commands, 'is_repeat', False):
+        self.params.put_bool_nonblocking("AutoOvertake", not self.params.get_bool("AutoOvertake"))
     elif self._paddle_mode > 0 and button_type in [ButtonType.paddleLeft, ButtonType.paddleRight]:  # paddle button
       if self._paddle_mode == 3:
         self.carrot_cruise_active = True

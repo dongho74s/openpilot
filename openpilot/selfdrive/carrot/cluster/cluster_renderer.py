@@ -1296,6 +1296,8 @@ class ClusterUiRenderer:
         self._nav_model_fresh = False
         self._nav_map_style = 0
         self._nav_map_style_checked = 0.
+        self._auto_overtake = None
+        self._auto_overtake_checked = 0.
         self._window_open = False
         self._font = None
         self._owns_font = False
@@ -1947,6 +1949,23 @@ class ClusterUiRenderer:
             except (OSError, ValueError):
                 pass
         return self._nav_map_style == 2
+
+    def _auto_overtake_enabled(self) -> bool | None:
+        # AutoOvertake param, read at most once a second. None = unreadable.
+        now = time.monotonic()
+        if now >= self._auto_overtake_checked:
+            self._auto_overtake_checked = now + 1.0
+            try:
+                from openpilot.common.params import Params
+                for params in (Params("/dev/shm/params"), Params()):
+                    try:
+                        self._auto_overtake = bool(params.get_bool("AutoOvertake"))
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        return self._auto_overtake
 
     def _draw_nav_model_map(self):
         from openpilot.selfdrive.navigation.preview import PREVIEW_PATH, preview_fresh
@@ -8260,7 +8279,8 @@ class ClusterUiRenderer:
         actual_fps: float | None = None,
         cellular_data_text: str | None = None,
     ) -> None:
-        if status is None and network_address is None and not cellular_data_text:
+        overtake = self._auto_overtake_enabled()
+        if status is None and network_address is None and not cellular_data_text and overtake is None:
             return
 
         theme = self._current_theme()
@@ -8284,6 +8304,14 @@ class ClusterUiRenderer:
             max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
             data_text = self._ellipsize_text(cellular_data_text, text_size, max_w)
             self._draw_text_with_stroke(data_text, data_x, center_y, text_size, WHITE, (5, 9, 12), 2)
+            data_width, _ = self._measure_text(data_text, text_size, spacing)
+            data_x += data_width + CELLULAR_DATA_GAP
+        if overtake is not None:
+            overtake_text = "자동 추월 ON" if overtake else "자동 추월 OFF"
+            overtake_color = GREEN if overtake else theme.muted
+            max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
+            overtake_text = self._ellipsize_text(overtake_text, text_size, max_w)
+            self._draw_text_with_stroke(overtake_text, data_x, center_y, text_size, overtake_color, (5, 9, 12), 2)
         if network_address:
             network_text = self._ellipsize_text(network_address, text_size, GIT_STATUS_MAX_TEXT_W)
             network_y = center_y - row_h - 4.0
