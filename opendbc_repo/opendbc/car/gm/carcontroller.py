@@ -193,7 +193,8 @@ class CarController(CarControllerBase):
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_torque, idx, CC.latActive))
 
     if self.bolt_acc_pedal is not None:
-      self.apply_gas, self.apply_brake = self.bolt_acc_pedal.update(CC, CS, self.frame, self.long_pitch, can_sends)
+      # Pitch compensation is always on for this car: StarPilot's LongPitch defaults to on, carrot's to off.
+      self.apply_gas, self.apply_brake = self.bolt_acc_pedal.update(CC, CS, self.frame, True, can_sends)
     elif self.CP.openpilotLongitudinalControl:
       hold = getattr(CS, "manual_auto_hold", None)
       manual_brake = hold.command(CS.out, CC.enabled or CC.longActive) if hold is not None and manual_hold_supported(self.CP) else 0

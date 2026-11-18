@@ -9,6 +9,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import bolt_acc_pedal_long_actuator_delay
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, N
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, is_volkswagen_meb
@@ -56,6 +57,8 @@ class LongitudinalPlanner:
     self.fcw = False
     # VW MEB(ID.4/ID.5)에서만 True. 가속 오버라이드 중 출발 FCW 오탐을 끄기 위한 게이트.
     self.is_vw_meb = is_volkswagen_meb(CP)
+    # Bolt ACC with pedal: StarPilot's 0.6 s from CarParams, not the LongActuatorDelay Param (None for other cars)
+    self.fixed_long_actuator_delay = bolt_acc_pedal_long_actuator_delay(CP)
     self.dt = dt
     self.allow_throttle = True
 
@@ -286,7 +289,9 @@ class LongitudinalPlanner:
     self.a_desired = float(np.interp(self.dt, CONTROL_N_T_IDX, self.a_desired_trajectory))
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.a_desired + a_prev) / 2.0
 
-    longitudinalActuatorDelay = self.params.get_float("LongActuatorDelay")*0.01
+    longitudinalActuatorDelay = self.fixed_long_actuator_delay
+    if longitudinalActuatorDelay is None:
+      longitudinalActuatorDelay = self.params.get_float("LongActuatorDelay")*0.01
     vEgoStopping = get_stopping_speed(self.params)
     action_t =  longitudinalActuatorDelay + DT_MDL
 

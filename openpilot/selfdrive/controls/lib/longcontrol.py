@@ -9,6 +9,7 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.cruise_coasting import (
   CruiseCoastingControl, MAX_PLAN_AGE, coasting_relief, no_coasting_lead,
 )
+from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import BoltAccPedalLongControl, is_bolt_acc_pedal_long
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
@@ -88,10 +89,10 @@ class LongControl:
     if CP.brand == "toyota":
       self.use_accel_pid = True
 
-    # The Bolt ACC with pedal passes the stock ACC's standstill on (controlsd's resume launches it through the pedal),
-    # so it must not hold off starting here, as in StarPilot's LongControl for that car.
-    self.ignore_cruise_standstill = (getattr(CP, "carFingerprint", "") == "CHEVROLET_BOLT_ACC_PEDAL" and
-                                     bool(getattr(CP, "enableGasInterceptorDEPRECATED", False)))
+    # Bolt ACC with a comma pedal runs StarPilot's LongControl for that car instead of the code below.
+    self.bolt_acc_pedal = BoltAccPedalLongControl(CP) if is_bolt_acc_pedal_long(CP) else None
+    if self.bolt_acc_pedal is not None:
+      self.pid = self.bolt_acc_pedal.pid  # controlsd logs pid.p/i/f
 
   def _refresh_stopping_accel(self):
     try:
@@ -132,6 +133,8 @@ class LongControl:
     self.pid.k_f = 1.0
 
   def reset(self):
+    if self.bolt_acc_pedal is not None:
+      self.bolt_acc_pedal.reset()
     self.pid.reset()
     self.coasting.reset()
 
@@ -142,6 +145,13 @@ class LongControl:
     v_target_now = long_plan.vTargetNow
     j_target_now = long_plan.jTargetNow
     should_stop = long_plan.shouldStop
+
+    if self.bolt_acc_pedal is not None:
+      output_accel = self.bolt_acc_pedal.update(active, CS, a_target_ff, should_stop, accel_limits,
+                                                has_lead=long_plan.hasLead, soft_hold_active=soft_hold_active)
+      self.long_control_state = self.bolt_acc_pedal.long_control_state
+      self.last_output_accel = output_accel
+      return self.last_output_accel, a_target_ff, j_target_now
 
     self.readParamCount += 1
     if self.readParamCount >= 100:
@@ -157,8 +167,7 @@ class LongControl:
 
     self.long_control_state = long_control_state_trans(self.CP, active, self.long_control_state, CS.vEgo,
                                                        should_stop, CS.brakePressed,
-                                                       CS.cruiseState.standstill and not self.ignore_cruise_standstill,
-                                                       CS.aEgo, self.stopping_accel, radarState)
+                                                       CS.cruiseState.standstill, CS.aEgo, self.stopping_accel, radarState)
     if active and soft_hold_active:
       self.long_control_state = LongCtrlState.stopping
 

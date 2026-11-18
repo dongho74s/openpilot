@@ -268,10 +268,13 @@ def test_car_params_with_pedal_match_starpilot(runtime, alpha):
   assert cp.transmissionType == structs.CarParams.TransmissionType.direct
   assert cp.autoResumeSng and cp.minEnableSpeed == -1
   assert cp.mass == pytest.approx(1669 + 136) and cp.wheelbase == pytest.approx(2.63779)
-  # carrot's single-breakpoint GM tuning at the LongTuning* defaults, and the LongActuatorDelay Param like the other GM cars
   lt = cp.longitudinalTuning
-  assert (list(lt.kpBP), list(lt.kpV), list(lt.kiBP), list(lt.kiV), lt.kf) == ([0.0], [1.0], [0.0], [0.0], 1.0)
-  assert cp.longitudinalActuatorDelay == pytest.approx(bolt_cp(runtime, CAR.CHEVROLET_BOLT_CC, True, alpha).longitudinalActuatorDelay)
+  assert list(lt.kpBP) == [0.0, 5.0, 15.0, 35.0]
+  assert list(lt.kpV) == pytest.approx([0.095, 0.085, 0.065, 0.050])
+  assert list(lt.kiBP) == [0.0, 3.0, 6.0, 35.0]
+  assert list(lt.kiV) == pytest.approx([0.07, 0.10, 0.15, 0.24])
+  assert lt.kf == pytest.approx(0.20)
+  assert cp.longitudinalActuatorDelay == pytest.approx(0.6)
   assert cp.startingState
   assert (cp.startAccel, cp.vEgoStarting, cp.vEgoStopping, cp.stopAccel, cp.stoppingDecelRate) == \
          pytest.approx((0.55, 0.35, 0.25, -0.25, 0.8))
@@ -585,7 +588,7 @@ def test_prndl2_and_paddle_bytes_are_starpilots(runtime, press, prndl2, paddle):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# LongControl: carrot's, with the Carrot Web settings (user request 2026-11-17)
+# LongControl (StarPilot's for this car only)
 
 
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -607,45 +610,68 @@ def lc_step(runtime, loc, cp, a_target, v, a_ego, stop=False, lead=False, stands
   return float(loc.update(True, cs, plan, limits, 0.0, log.RadarState.new_message())[0])
 
 
-def test_longcontrol_takes_the_long_tuning_settings(runtime, monkeypatch):
-  params = memory_params(LongTuningKpV=50, LongTuningKiV=200, LongTuningKf=80)
+def test_longcontrol_uses_kf_as_feedforward_gain(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch)
+  assert lc_step(runtime, loc, cp, 1.0, 10.0, 1.0) == pytest.approx(0.55)  # off -> starting: startAccel
+  assert lc_step(runtime, loc, cp, 1.0, 10.0, 1.0) == pytest.approx(0.20)  # pid, zero error: 0.20 x a_target
+  assert loc.long_control_state == LongCtrlState.pid
+
+
+def test_longcontrol_restores_feedforward_and_biases_braking(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch)
+  lc_step(runtime, loc, cp, -2.0, 10.0, -2.0)
+  # gain 0.2 restored to 0.64 (target 0.45 / gap 1.0 restore x speed 0.55), then friction bias 0.1188
+  assert lc_step(runtime, loc, cp, -2.0, 10.0, -2.0) == pytest.approx(-1.3988)
+
+
+def test_longcontrol_start_handoff_floor(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch)
+  assert lc_step(runtime, loc, cp, 0.3, 0.5, 0.6, lead=True) == pytest.approx(0.55)  # starting
+  # pid 0.0316 raised to min(last 0.55, min(0.18, 0.4 x 0.3)) = 0.12 for up to 0.75 s with a lead
+  assert lc_step(runtime, loc, cp, 0.3, 0.5, 0.6, lead=True) == pytest.approx(0.12)
+  assert lc_step(runtime, loc, cp, 0.3, 0.5, 0.6, lead=False) < 0.12
+
+
+def test_longcontrol_ignores_cruise_standstill_and_waits_for_release_hysteresis(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch)
+  lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
+  states = [None]
+  for _ in range(40):
+    lc_step(runtime, loc, cp, 0.3, 0.0, 0.0, standstill=True)
+    states.append(loc.long_control_state)
+  assert states.index(LongCtrlState.starting) == 35  # 0.35 s of a 0.3 m/s^2 request; the camera's standstill bit is ignored
+
+
+def test_longcontrol_stop_ramps_to_starpilot_stop_accel(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch, memory_params(StoppingAccel=-100))
+  out = [lc_step(runtime, loc, cp, -0.4, 0.0, 0.0, stop=True) for _ in range(60)]
+  # -0.8 m/s^3 until past CP.stopAccel (-0.25), not carrot's StoppingAccel Param (-1.0 here)
+  assert out[30] == pytest.approx(-0.248) and out[-1] == pytest.approx(-0.256)
+
+
+def test_longcontrol_ignores_long_tuning_params(runtime, monkeypatch):
+  params = memory_params(LongTuningKpV=500, LongTuningKiV=900, LongTuningKf=300)
   loc, cp = bolt_longcontrol(runtime, monkeypatch, params)
-  for _ in range(15):
+  for _ in range(30):
     lc_step(runtime, loc, cp, 0.5, 10.0, 0.4)
-  assert [list(x) for x in loc.pid._k_p] == [[0.0], [0.5]]
-  assert [list(x) for x in loc.pid._k_i] == [[0.0], [0.2]]
-  assert loc.pid.k_f == pytest.approx(0.8)
+  assert [list(x) for x in loc.pid._k_p] == [list(cp.longitudinalTuning.kpBP), list(cp.longitudinalTuning.kpV)]
+  assert [list(x) for x in loc.pid._k_i] == [list(cp.longitudinalTuning.kiBP), list(cp.longitudinalTuning.kiV)]
+  assert loc.bolt_acc_pedal.feedforward_gain == pytest.approx(0.2)
 
 
-@pytest.mark.parametrize('stopping_accel,floor', [(-50, -0.5), (-100, -1.0)])
-def test_longcontrol_stop_ramps_to_the_stopping_accel_setting(runtime, monkeypatch, stopping_accel, floor):
-  loc, cp = bolt_longcontrol(runtime, monkeypatch, memory_params(StoppingAccel=stopping_accel))
-  out = [lc_step(runtime, loc, cp, -0.4, 0.0, 0.0, stop=True) for _ in range(250)]
-  assert loc.long_control_state == LongCtrlState.stopping
-  # stoppingDecelRate 0.8 m/s^3 until just past the setting, then held
-  assert out[30] == pytest.approx(-0.008 * 31)
-  assert floor - 0.008 < out[-1] <= floor and out[-1] == out[-2]
+def test_other_cars_keep_carrot_longcontrol(runtime, monkeypatch):
+  from openpilot.selfdrive.controls.lib import longcontrol
+  for key in LONGCONTROL_BASELINE_CASES:
+    assert longcontrol.LongControl(bolt_cp(runtime, *key)).bolt_acc_pedal is None
 
 
-def test_pitch_compensation_follows_long_pitch(runtime, monkeypatch):
-  """15 m/s, accel -1.0, pitch -0.05 rad: StarPilot (LongPitch on by default there) sends 0x315 af9f506100 (Codex review
-  2026-11-17); carrot's LongPitch setting decides it here, off by default."""
-  sent = {}
+def test_pitch_compensation_is_on_regardless_of_long_pitch(runtime, monkeypatch):
+  """StarPilot's LongPitch defaults to on and carrot's to off, so this car always compensates pitch (Codex review 2026-11-17:
+  15 m/s, accel -1.0, pitch -0.05 rad gave StarPilot apply_brake 97 / 0x315 af9f506100, and 0 here with LongPitch off)."""
   for long_pitch in (0, 1):
     drive = Drive(runtime, monkeypatch, pitch=long_pitch)
     _, sends = drive.step(accel=-1.0, v=15.0, pitch=-0.05)
-    sent[long_pitch] = bytes(by_addr(sends, 0x315)[0][0])
-  assert sent[1].hex() == "af9f506100"
-  assert friction(sent[0])["brake"] == 0
-
-
-def test_longcontrol_starts_despite_the_stock_standstill(runtime, monkeypatch):
-  """The stock standstill stays set for this car, so carrot's LongControl must still leave stopping to start."""
-  loc, cp = bolt_longcontrol(runtime, monkeypatch)
-  lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
-  assert loc.long_control_state == LongCtrlState.stopping
-  assert lc_step(runtime, loc, cp, 0.5, 0.0, 0.0, standstill=True) == pytest.approx(0.54)  # startAccel 0.55 under the 0.54 ceiling at 0 m/s
-  assert loc.long_control_state == LongCtrlState.starting
+    assert bytes(by_addr(sends, 0x315)[0][0]).hex() == "af9f506100", long_pitch
 
 
 def test_other_cars_still_wait_on_cruise_standstill(runtime, monkeypatch):
@@ -657,6 +683,15 @@ def test_other_cars_still_wait_on_cruise_standstill(runtime, monkeypatch):
     lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
     lc_step(runtime, loc, cp, 0.5, 0.0, 0.0, standstill=True)
     assert loc.long_control_state == LongCtrlState.stopping, key
+
+
+def test_planner_and_modeld_use_starpilots_delay(runtime):
+  """StarPilot plans this car with CarParams' 0.6 s (planner action_t, modeld long_delay); carrot's LongActuatorDelay Param
+  must not replace it here, and every other car keeps the Param (helper returns None)."""
+  from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import bolt_acc_pedal_long_actuator_delay
+  assert bolt_acc_pedal_long_actuator_delay(bolt_cp(runtime, BOLT, True, False)) == pytest.approx(0.6)
+  for key in LONGCONTROL_BASELINE_CASES + [(BOLT, False, False)]:
+    assert bolt_acc_pedal_long_actuator_delay(bolt_cp(runtime, *key)) is None, key
 
 
 # ---------------------------------------------------------------------------------------------------------------------
