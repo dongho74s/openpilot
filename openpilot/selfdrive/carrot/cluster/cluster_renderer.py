@@ -269,15 +269,17 @@ TOP_CRUISE_FONT_SIZE = 27.0 * DRIVE_STATUS_SCALE
 TOP_CRUISE_UNIT_FONT_SIZE = TOP_CRUISE_FONT_SIZE
 WIFI_STATUS_CENTER_X = 70
 WIFI_STATUS_ICON_SIZE = 48.0
-# Top-right connectivity pair (layout rearranged 2026-11-18): Wi-Fi moved
+# Connectivity pair anchor (layout rearranged 2026-11-18): Wi-Fi moved
 # here from the top-left, Bluetooth moved up from the bottom status line.
-# Wi-Fi sits at the far right; Bluetooth sits to its left.
+# Wi-Fi sits at the road view's right edge; Bluetooth sits to its left.
+# The anchor is the screen's far right in most modes, and the steering
+# graph panel's left edge in DEBUG_GRAPH_RIGHT mode (see
+# _status_icons_right_x).
 # WIFI_STATUS_CENTER_X now only anchors NAV_STATUS_CENTER_X (the navigation
 # label drawn under the clock).
 TOP_RIGHT_STATUS_MARGIN = 28.0
 TOP_RIGHT_BT_ICON_H = 40.0
 TOP_RIGHT_BT_GAP = 16.0
-WIFI_STATUS_TOP_RIGHT_CENTER_X = DESIGN_WIDTH - TOP_RIGHT_STATUS_MARGIN - WIFI_STATUS_ICON_SIZE * 0.5
 # Keep the badge to the right of the clock, clear of its text and stroke.
 EGPU_STATUS_CENTER_X = 474.0
 EGPU_STATUS_W = 76.0
@@ -5441,10 +5443,11 @@ class ClusterUiRenderer:
                 )
                 self._profile_add("hud.debug_plot_right", profile_stage)
                 # 2026-10-31: the right debug panel (x 1124-1916, full
-                # height) is drawn after the driving HUD, so it covered
-                # the far-right clock (1770) and wifi (1600) moved there
-                # in 3b02d2ed1. Re-draw them on top of the panel so they
-                # stay at the far right AND visible in this mode.
+                # height) is drawn after the driving HUD. Re-draw the
+                # clock and the Wi-Fi/Bluetooth pair on top so they stay
+                # visible in this mode. (The pair now sits at the road
+                # view's right edge, just left of the panel, so it is
+                # not covered; the re-draw is kept for the clock.)
                 self._draw_center_clock(state, center_x=TOP_CLOCK_CENTER_X)
                 self._draw_network_status(state, TOP_STATUS_CENTER_Y + WIFI_STATUS_ICON_SIZE * 0.5)
             if screen_mode == CLUSTER_SCREEN_MODE_TRIP_REPORT:
@@ -5661,15 +5664,16 @@ class ClusterUiRenderer:
         profile_stage = self._profile_start()
         screen_mode = self._effective_screen_mode(state)
         offset_x = self._driving_hud_offset_design_x(screen_mode)
+        status_right_x = self._status_icons_right_x(screen_mode)
         if abs(offset_x) > 0.001:
             rl.rl_push_matrix()
             try:
                 rl.rl_translatef(offset_x, 0.0, 0.0)
-                self._draw_git_status(state.git_status, state.network_address, state.actual_fps, state.cellular_data_text)
+                self._draw_git_status(state.git_status, state.network_address, state.actual_fps, state.cellular_data_text, status_right_x)
             finally:
                 rl.rl_pop_matrix()
         else:
-            self._draw_git_status(state.git_status, state.network_address, state.actual_fps, state.cellular_data_text)
+            self._draw_git_status(state.git_status, state.network_address, state.actual_fps, state.cellular_data_text, status_right_x)
         self._profile_add("hud.git_status", profile_stage)
         if include_core_usage:
             profile_stage = self._profile_start()
@@ -8309,12 +8313,28 @@ class ClusterUiRenderer:
         for index, line in enumerate(overlay.data_lines[:6]):
             self._draw_text(line, x, y + 61 + index * 13, 11, theme.text)
 
+    @staticmethod
+    def _status_icons_right_x(screen_mode: int) -> float:
+        """Right edge for the top status icons (Wi-Fi/Bluetooth) and the
+        bottom auto-overtake text (design coordinates).
+
+        In DEBUG_GRAPH_RIGHT mode the right side is the steering graph
+        panel (x 1124-1916), so the icons sit at the road view's right
+        edge, just left of the panel. In other modes they sit at the
+        screen's far right. The coordinate is in design space, so the
+        caller's panel-offset translation moves it with the road view.
+        """
+        if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT:
+            return DEBUG_PLOT_RIGHT_X
+        return DESIGN_WIDTH
+
     def _draw_git_status(
         self,
         status: GitBranchStatus | None,
         network_address: str | None = None,
         actual_fps: float | None = None,
         cellular_data_text: str | None = None,
+        right_x: float = DESIGN_WIDTH,
     ) -> None:
         overtake = self._auto_overtake_enabled()
         if status is None and network_address is None and not cellular_data_text and overtake is None:
@@ -8344,16 +8364,17 @@ class ClusterUiRenderer:
             data_width, _ = self._measure_text(data_text, text_size, spacing)
             data_x += data_width + CELLULAR_DATA_GAP
         if overtake is not None:
-            # Bottom-right end of the status line (layout rearranged
-            # 2026-11-18; Bluetooth moved to the top-right with Wi-Fi).
+            # Bottom end of the status line, right-aligned to the road
+            # view's right edge (the screen's far right, or just left of
+            # the steering graph panel in DEBUG_GRAPH_RIGHT mode).
             overtake_text = "자동 추월 ON" if overtake else "자동 추월 OFF"
             overtake_color = GREEN if overtake else theme.muted
-            max_w = DESIGN_WIDTH - data_x - GIT_STATUS_MARGIN
+            max_w = right_x - data_x - GIT_STATUS_MARGIN
             if max_w > 0:
                 overtake_text = self._ellipsize_text(overtake_text, text_size, max_w)
                 self._draw_text_with_stroke(
                     overtake_text,
-                    DESIGN_WIDTH - GIT_STATUS_MARGIN,
+                    right_x - GIT_STATUS_MARGIN,
                     center_y,
                     text_size,
                     overtake_color,
@@ -8499,15 +8520,18 @@ class ClusterUiRenderer:
         self._draw_follow_vehicle_icon(icon_x, icon_y)
 
     def _draw_network_status(self, state: ClusterUiState, bottom_y: float) -> None:
-        # Top-right connectivity pair: Wi-Fi at the far right, Bluetooth to
-        # its left. (Layout rearranged 2026-11-18: Wi-Fi moved from the
-        # top-left, Bluetooth moved up from the bottom status line.)
+        # Connectivity pair (Wi-Fi + Bluetooth), right-aligned to the road
+        # view's right edge: the screen's far right, except in
+        # DEBUG_GRAPH_RIGHT mode where the right side is the steering
+        # graph panel, so they sit just left of the panel.
         theme = self._current_theme()
+        right_x = self._status_icons_right_x(self._effective_screen_mode(state))
+        wifi_center_x = right_x - TOP_RIGHT_STATUS_MARGIN - WIFI_STATUS_ICON_SIZE * 0.5
         tint = WHITE if state.network_connected else theme.muted
         alpha = 255 if state.network_connected else 130
         self._draw_outlined_bottom_aligned_texture_icon(
             self._wifi_texture,
-            WIFI_STATUS_TOP_RIGHT_CENTER_X,
+            wifi_center_x,
             bottom_y,
             WIFI_STATUS_ICON_SIZE,
             WIFI_STATUS_ICON_SIZE,
@@ -8518,7 +8542,7 @@ class ClusterUiRenderer:
         if bt_connected is not None:
             bt_h = TOP_RIGHT_BT_ICON_H
             bt_x = (
-                WIFI_STATUS_TOP_RIGHT_CENTER_X
+                wifi_center_x
                 - WIFI_STATUS_ICON_SIZE * 0.5
                 - TOP_RIGHT_BT_GAP
                 - bt_h * 0.5
