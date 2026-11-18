@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from openpilot.selfdrive.carrot.bluetooth.model import ACTIONS, Clicks, CommandReader, CommandWriter, Decoder, DEFAULT_MAPPING, atomic_json, validate_config
+from openpilot.selfdrive.carrot.bluetooth.model import ACTIONS, Clicks, CommandReader, CommandWriter, Decoder, DEFAULT_MAPPING, atomic_json, bluetooth_remote_connected, validate_config
 from openpilot.selfdrive.carrot.bluetooth.bluez import Bluez
 
 
@@ -296,6 +296,25 @@ def test_overtake_on_off_route_to_cruise_channel(tmp_path):
   writer.send('A', 'overtakeOff', 11.1)
   assert reader.read(now=11.15) == 'overtakeOff'
   assert lane.read(now=11.18) is None
+
+
+def _make_input_node(root, name, bustype):
+  node = root / name / 'device' / 'id'
+  node.mkdir(parents=True)
+  (node / 'bustype').write_text(bustype)
+
+
+def test_bluetooth_remote_connected_detects_bustype_0005(tmp_path):
+  root = tmp_path / 'input'
+  _make_input_node(root, 'event0', '0003')  # USB keyboard, not Bluetooth.
+  assert bluetooth_remote_connected(root) is False
+  _make_input_node(root, 'event3', '0005')  # Bluetooth HID remote.
+  assert bluetooth_remote_connected(root) is True
+
+
+def test_bluetooth_remote_connected_without_bluetooth_nodes(tmp_path):
+  assert bluetooth_remote_connected(tmp_path / 'missing') is False
+  assert bluetooth_remote_connected(tmp_path / 'empty') is False
 
 
 def test_device_disconnect_and_test_only_cancel_its_queued_commands(tmp_path):

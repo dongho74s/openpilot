@@ -306,3 +306,19 @@ def test_auto_overtake_param_is_read_at_most_once_per_second(monkeypatch):
   assert calls == ["AutoOvertake"]
   assert renderer._auto_overtake_enabled() is False
   assert calls == ["AutoOvertake"]  # Cached: no second read within the same second.
+
+
+def test_bluetooth_remote_connected_is_read_at_most_once_per_second(monkeypatch):
+  calls = []
+
+  def fake_connected():
+    calls.append("check")
+    return True
+
+  monkeypatch.setitem(sys.modules, "openpilot.selfdrive.carrot.bluetooth.model",
+                      SimpleNamespace(bluetooth_remote_connected=fake_connected))
+  renderer = ClusterUiRenderer()
+  assert renderer._bluetooth_remote_connected() is True
+  assert calls == ["check"]
+  assert renderer._bluetooth_remote_connected() is True
+  assert calls == ["check"]  # Cached: no second scan within the same second.

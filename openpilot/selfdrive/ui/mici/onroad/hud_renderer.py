@@ -225,6 +225,10 @@ class HudRenderer(Widget):
     self._cruise_speed_animation_text = ""
     self._cruise_speed_animation_time = -1
 
+    # Bluetooth remote connection state, cached (see _get_bluetooth_connected).
+    self._bt_connected: bool | None = None
+    self._bt_checked: float = 0.0
+
   def set_wheel_critical_icon(self, critical: bool):
     """Set the wheel icon to critical or normal state."""
     self._show_wheel_critical = critical
@@ -768,6 +772,33 @@ class HudRenderer(Widget):
     except Exception:
       return True
 
+  def _get_bluetooth_connected(self) -> bool | None:
+    # Bluetooth HID remote present, checked at most once a second.
+    # None = unreadable (e.g. /sys/class/input missing).
+    now = time.monotonic()
+    if now < self._bt_checked:
+      return self._bt_connected
+    self._bt_checked = now + 1.0
+    try:
+      from openpilot.selfdrive.carrot.bluetooth.model import bluetooth_remote_connected
+      self._bt_connected = bool(bluetooth_remote_connected())
+    except Exception:
+      self._bt_connected = None
+    return self._bt_connected
+
+  @staticmethod
+  def _draw_bluetooth_icon(x: int, y: int, height: int, connected: bool) -> None:
+    # Bluetooth rune (vertical spine + X, Feather-icons geometry) in a
+    # height x width box of 2:1. Bright green when connected, dim grey when
+    # disconnected so the connection state is visible at a glance.
+    color = rl.Color(0, 255, 0, 230) if connected else rl.Color(160, 160, 160, 110)
+    w = max(4, height // 2)
+    thick = max(2.0, height / 12.0)
+    cx = x + w * 0.5
+    rl.draw_line_ex(rl.Vector2(cx, y + height * 0.167), rl.Vector2(cx, y + height * 0.833), thick, color)
+    rl.draw_line_ex(rl.Vector2(x + w * 0.29, y + height * 0.333), rl.Vector2(x + w * 0.71, y + height * 0.667), thick, color)
+    rl.draw_line_ex(rl.Vector2(x + w * 0.71, y + height * 0.333), rl.Vector2(x + w * 0.29, y + height * 0.667), thick, color)
+
   def _draw_set_speed(self, rect: rl.Rectangle) -> None:
     """
     Bottom-left speed panel (like your 3rd image)
@@ -843,6 +874,13 @@ class HudRenderer(Widget):
       overtake_x = panel_x + 5
     overtake_y = int(panel_y + panel_h * 0.05 - overtake_size.y * 0.5 - 15)
     draw_text_ui_style(overtake_text, overtake_x, overtake_y, overtake_font, overtake_color, font=self._font_display, border_width=1.0, shadow_offset=3.0, align="left_top", y_offset=0.0)
+
+    # ----- bluetooth remote indicator (top row, after the overtake text) -----
+    bt_connected = self._get_bluetooth_connected()
+    if bt_connected is not None:
+      bt_height = int(overtake_size.y)
+      bt_x = overtake_x + int(overtake_size.x) + 16
+      self._draw_bluetooth_icon(bt_x, overtake_y, bt_height, bt_connected)
 
     # ----- set speed (center, smaller) -----
     show_set = self._engaged and self.is_cruise_set
