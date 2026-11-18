@@ -2,6 +2,7 @@
 import ast
 import importlib.util
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -70,6 +71,27 @@ def test_c4_navigation_lamp_replaces_counter_with_pause(display):
   assert renderer._traffic_light_info == dict(lamp='paused', remain=0)
   assert ns['_draw_traffic_light_info'](renderer, 100, 200)
   assert rl.draw_circle.call_args.args[:3] == (124, 200, 24)
+
+
+def test_c4_bluetooth_icon_caches_connection_and_draws_rune(display, monkeypatch):
+  _, rl, ui = display
+  calls = []
+  monkeypatch.setitem(sys.modules, "openpilot.selfdrive.carrot.bluetooth.model",
+                      NS(bluetooth_remote_connected=lambda: calls.append("check") or True))
+  ns = methods(ROOT/'mici/onroad/hud_renderer.py', {'_get_bluetooth_connected', '_draw_bluetooth_icon'},
+               dict(time=time, rl=rl))
+  renderer = NS(_bt_connected=None, _bt_checked=0.0)
+  assert ns['_get_bluetooth_connected'](renderer) is True
+  assert calls == ["check"]
+  assert ns['_get_bluetooth_connected'](renderer) is True
+  assert calls == ["check"]  # Cached: no second scan within the same second.
+  ns['_draw_bluetooth_icon'](100, 200, 26, True)
+  assert rl.draw_line_ex.call_count == 3  # Spine + two diagonals.
+  connected_color = rl.draw_line_ex.call_args.args[-1]
+  assert connected_color == (0, 255, 0, 230)
+  ns['_draw_bluetooth_icon'](100, 200, 26, False)
+  assert rl.draw_line_ex.call_count == 6
+  assert rl.draw_line_ex.call_args.args[-1] == (160, 160, 160, 110)  # Disconnected: dimmed.
 
 
 def test_c4_model_lamp_switches_immediately_and_does_not_fade_green(display):
