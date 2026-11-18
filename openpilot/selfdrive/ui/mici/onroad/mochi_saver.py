@@ -10,9 +10,9 @@
 
 표정 트리거 (우선순위 순):
   긴급제동(aEgo <= -4) > 급감속(aEgo <= -2.5) > 급가속(aEgo >= 2)
-  > 후진(R) > 신호대기(빨간불 + 정지) > 오토홀드
+  > 후진(R) > 주차(P) > 신호대기(빨간불 + 정지) > 오토홀드
   > 인게이지 / 인게이지 해제 / 정지 중 출발 (전환 직후 잠깐)
-  > 차선변경(desire) > 깜빡이 > 주행중(기본)
+  > 깜빡이 > 주행중(기본)
 
 주의 — 오토홀드 감지는 근사치:
   실제 홀드 상태(CS.manual_auto_hold.active)는 UI로 전달되는 메시지에
@@ -27,7 +27,7 @@ import time
 
 import pyray as rl
 
-from openpilot.cereal import car, log
+from openpilot.cereal import car
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, MouseEvent, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -48,15 +48,14 @@ EXPR_DRIVING = "driving"  # 주행중
 EXPR_DECEL = "decel"  # 급감속
 EXPR_EMERGENCY = "emergency"  # 긴급제동
 EXPR_ACCEL = "accel"  # 급가속
-EXPR_LANE_LEFT = "lane_left"  # 좌측 차선변경
-EXPR_LANE_RIGHT = "lane_right"  # 우측 차선변경
+EXPR_REVERSE = "reverse"  # 후진
+EXPR_PARK = "park"  # 주차
+EXPR_TRAFFIC = "traffic"  # 신호대기
 EXPR_BLINK_LEFT = "blink_left"  # 좌측 깜빡이
 EXPR_BLINK_RIGHT = "blink_right"  # 우측 깜빡이
 EXPR_START = "start"  # 정지 중 출발
 EXPR_ENGAGE = "engage"  # 인게이지
 EXPR_DISENGAGE = "disengage"  # 인게이지 해제
-EXPR_REVERSE = "reverse"  # 후진
-EXPR_TRAFFIC = "traffic"  # 신호대기
 EXPR_AUTOHOLD = "autohold"  # 오토홀드
 
 EYE_WHITE = rl.Color(255, 255, 255, 255)
@@ -169,7 +168,6 @@ class MochiSaver:
   def _select_expression(self, now: float) -> None:
     sm = ui_state.sm
     cs = sm["carState"]
-    lp = sm["lateralPlan"]
     lon = sm["longitudinalPlan"]
     try:
       v_ego = float(cs.vEgo)
@@ -213,10 +211,6 @@ class MochiSaver:
     self._prev_brake = brake
 
     try:
-      desire = lp.desire
-    except Exception:
-      desire = log.Desire.none
-    try:
       traffic_red = int(lon.trafficState) == 1
     except Exception:
       traffic_red = False
@@ -235,16 +229,14 @@ class MochiSaver:
       expr = EXPR_ACCEL
     elif gear == car.CarState.GearShifter.reverse:
       expr = EXPR_REVERSE
+    elif gear == car.CarState.GearShifter.park:
+      expr = EXPR_PARK
     elif traffic_red and v_ego < STOP_SPEED:
       expr = EXPR_TRAFFIC
     elif now < self._hold_until:
       expr = EXPR_AUTOHOLD
     elif self._transient[0] and now < self._transient[1]:
       expr = self._transient[0]
-    elif desire == log.Desire.laneChangeLeft:
-      expr = EXPR_LANE_LEFT
-    elif desire == log.Desire.laneChangeRight:
-      expr = EXPR_LANE_RIGHT
     elif left_blinker:
       expr = EXPR_BLINK_LEFT
     elif right_blinker:
@@ -308,10 +300,10 @@ class MochiSaver:
     pupil_dx = pupil_dy = 0.0
     lid = 1.0  # 1=활짝, 0.45=반쯤 감음
     mouth = "smile"
-    if expr == EXPR_LANE_LEFT or expr == EXPR_BLINK_LEFT:
-      pupil_dx = -70.0 * s if expr == EXPR_LANE_LEFT else -45.0 * s
-    elif expr == EXPR_LANE_RIGHT or expr == EXPR_BLINK_RIGHT:
-      pupil_dx = 70.0 * s if expr == EXPR_LANE_RIGHT else 45.0 * s
+    if expr == EXPR_BLINK_LEFT:
+      pupil_dx = -45.0 * s
+    elif expr == EXPR_BLINK_RIGHT:
+      pupil_dx = 45.0 * s
     elif expr == EXPR_REVERSE:
       pupil_dx, pupil_dy = 30.0 * s, -50.0 * s
     elif expr == EXPR_TRAFFIC:
@@ -322,7 +314,7 @@ class MochiSaver:
       pupil_dy = 35.0 * s
       lid = 0.55
       mouth = "flat"
-    elif expr == EXPR_AUTOHOLD:
+    elif expr == EXPR_AUTOHOLD or expr == EXPR_PARK:
       pupil_dy = 40.0 * s
       lid = 0.8
       mouth = "calm"
@@ -360,7 +352,9 @@ class MochiSaver:
     elif expr == EXPR_START:
       self._draw_badge_text("GO~~", cx, face_cy - 430.0 * s, 130, C_YELLOW, s)
     elif expr == EXPR_REVERSE:
-      self._draw_r_badge(cx + 640.0 * s, face_cy - 400.0 * s, s)
+      self._draw_gear_badge(cx + 640.0 * s, face_cy - 400.0 * s, s, "R")
+    elif expr == EXPR_PARK:
+      self._draw_gear_badge(cx + 640.0 * s, face_cy - 400.0 * s, s, "P")
     elif expr == EXPR_TRAFFIC:
       self._draw_traffic_light(cx + 700.0 * s, face_cy - 260.0 * s, s)
     elif expr == EXPR_AUTOHOLD:
@@ -425,14 +419,14 @@ class MochiSaver:
     pos = rl.Vector2(cx - size_vec.x / 2.0, y)
     rl.draw_text_ex(font, text, pos, font_size, 0, color)
 
-  def _draw_r_badge(self, x: float, y: float, s: float) -> None:
-    """후진: 커다란 노란 R 배지."""
+  def _draw_gear_badge(self, x: float, y: float, s: float, letter: str) -> None:
+    """기어 배지: 커다란 노란 글자 배지 (후진 R / 주차 P)."""
     font, _ = self._fonts()
     w, h = 200.0 * s, 200.0 * s
     rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, h), 0.25, 12, C_YELLOW)
-    size_vec = measure_text_cached(font, "R", int(150 * s))
+    size_vec = measure_text_cached(font, letter, int(150 * s))
     pos = rl.Vector2(x + (w - size_vec.x) / 2.0, y + (h - size_vec.y) / 2.0 - 8 * s)
-    rl.draw_text_ex(font, "R", pos, int(150 * s), 0, rl.BLACK)
+    rl.draw_text_ex(font, letter, pos, int(150 * s), 0, rl.BLACK)
 
   def _draw_traffic_light(self, x: float, y: float, s: float) -> None:
     """신호대기: 커다란 신호등 (빨간불 켜짐)."""

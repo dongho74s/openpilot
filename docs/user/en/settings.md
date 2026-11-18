@@ -405,7 +405,7 @@ An APN label remaining in the `ShowRouteInfo` description refers to route-input 
 
 `OnroadMinimalMode` (Minimal Onroad Screen) applies to the comma device screen only (the external HUD monitor is unchanged). When `1`, only the current speed, lane lines and driving path (with tire tracks) are shown; set speed, date/time, TPMS, device state, lead vehicle, speed limit and all other info are hidden. In minimal mode the tire tracks are always shown regardless of `CarrotTireTrajectory`.
 
-`OnroadMochiMode` (Mochi Screensaver) replaces the comma device onroad screen with a mochi character screensaver (the external HUD monitor is unchanged). When `1`, a mochi face with big eyes on a dark screen shows expressions matching the driving situation (sudden deceleration, emergency braking, acceleration, lane change, blinker, departure, engage, reverse, traffic light, auto hold, and more). Long-press the driving screen for 650ms to switch to the mochi screen; touch the mochi screen to return. A short tap does nothing.
+`OnroadMochiMode` (Mochi Screensaver) replaces the comma device onroad screen with a mochi character screensaver (the external HUD monitor is unchanged). When `1`, a mochi face with big eyes on a dark screen shows expressions matching the driving situation (sudden deceleration, emergency braking, acceleration, blinker, departure, engage, reverse, parking, traffic light, auto hold, and more). Long-press the driving screen for 650ms to switch to the mochi screen; touch the mochi screen to return. A short tap does nothing.
 
 `ShowCameraWithCluster=0` keeps the existing default: while the external HUD is connected, the on-device camera is hidden. Set it to `1` to show the on-device camera video.
 
