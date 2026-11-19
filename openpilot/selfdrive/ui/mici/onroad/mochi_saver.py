@@ -8,6 +8,11 @@
 - 주행 화면을 650ms 길게 누르면 모찌 화면으로 전환 (게이지 표시).
 - 주행 화면 짧은 터치는 아무 동작 없음 (주행 중 오동작 방지).
 
+홈 화면용 (MochiSaver(offroad=True), 부팅·주차):
+- 켜지자마자 바로 모찌가 보인다 (주차 표정).
+- 모찌 화면을 터치하면 홈 화면으로 복귀.
+- 홈 화면을 650ms 길게 누르면 모찌 화면으로 전환.
+
 표정 트리거 (우선순위 순):
   긴급제동(aEgo <= -4) > 급감속(aEgo <= -2.5) > 급가속(aEgo >= 2)
   > 후진(R) > 주차(P) > 신호대기(빨간불 + 정지) > 오토홀드
@@ -73,8 +78,11 @@ C_GAUGE_FG = rl.Color(0, 220, 180, 255)
 
 
 class MochiSaver:
-  def __init__(self):
-    self.active = False  # 모찌 화면 표시 중
+  def __init__(self, offroad: bool = False):
+    # offroad=True: 홈 화면(부팅·주차)용 — 시동이 꺼진 상태에서만 동작하고
+    # 켜지자마자 바로 보인다. offroad=False: 주행 화면용(기존).
+    self._offroad = offroad
+    self.active = offroad  # 홈 화면용은 부팅 시 바로 표시
     self._pressing = False  # 주행 화면 길게 누르는 중
     self._press_start = 0.0
     self._press_x = 0.0
@@ -100,9 +108,14 @@ class MochiSaver:
   def enabled(self) -> bool:
     return ui_state.onroad_mochi
 
+  @property
+  def _scene_active(self) -> bool:
+    # 주행 화면용은 시동이 켜진 때, 홈 화면용은 시동이 꺼진 때만 동작.
+    return (not ui_state.started) if self._offroad else ui_state.started
+
   def handle_mouse_event(self, ev: MouseEvent) -> None:
     """주행 화면 터치 처리. 짧은 터치는 무시, 길게 누르기만 인식."""
-    if not self.enabled or not ui_state.started:
+    if not self.enabled or not self._scene_active:
       self._cancel_press()
       return
 
@@ -125,7 +138,7 @@ class MochiSaver:
 
   def update(self) -> None:
     """매 프레임 호출: 길게 누르기 판정 + 표정 선택."""
-    if not self.enabled or not ui_state.started:
+    if not self.enabled or not self._scene_active:
       self.active = False
       self._cancel_press()
       return
@@ -146,7 +159,7 @@ class MochiSaver:
 
   def render(self, rect: rl.Rectangle) -> None:
     """모찌 화면 또는 길게 누르기 게이지 그리기."""
-    if not self.enabled or not ui_state.started:
+    if not self.enabled or not self._scene_active:
       return
 
     if self._pressing and not self.active:

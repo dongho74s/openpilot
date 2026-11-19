@@ -8,7 +8,8 @@ from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.layouts import HBoxLayout
 from openpilot.system.ui.widgets.icon_widget import IconWidget
 from openpilot.system.ui.widgets.label import UnifiedLabel
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
+from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
+from openpilot.selfdrive.ui.mici.onroad.mochi_saver import MochiSaver
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.version import RELEASE_BRANCHES
 
@@ -110,6 +111,10 @@ class MiciHomeLayout(Widget):
       self._mic_icon,
     ], spacing=18)
 
+    # 부팅·주차 모찌 화면보호기 (OnroadMochiMode=1일 때 홈 화면 대신 보임).
+    self._mochi_saver = MochiSaver(offroad=True)
+    self._mochi_consumed_press = False
+
     self._openpilot_label = UnifiedLabel("carrotpilot", font_size=55, font_weight=FontWeight.DISPLAY, max_width=480, wrap_text=False)
     self._version_label = UnifiedLabel("", font_size=30, font_weight=FontWeight.ROMAN, max_width=480, wrap_text=False)
     self._large_version_label = UnifiedLabel("", font_size=64, text_color=rl.GRAY, font_weight=FontWeight.ROMAN, max_width=480, wrap_text=False)
@@ -139,7 +144,9 @@ class MiciHomeLayout(Widget):
     self._is_pressed_prev = self.is_pressed
 
     if self._mouse_down_t is not None:
-      if not self._carrot_web_pressed and time.monotonic() - self._mouse_down_t > 0.5:
+      # 모찌가 켜져 있을 때는 길게 누르기가 모찌 소환이라, 실험 모드 토글
+      # 길게 누르기는 동작하지 않는다 (실험 모드는 설정에서 바꿀 수 있음).
+      if not self._carrot_web_pressed and not self._mochi_saver.enabled and time.monotonic() - self._mouse_down_t > 0.5:
         # long gating for experimental mode - only allow toggle if longitudinal control is available
         if ui_state.has_longitudinal_control:
           self._experimental_mode = not self._experimental_mode
@@ -158,10 +165,23 @@ class MiciHomeLayout(Widget):
     self._on_settings_click = on_settings
     self._on_carrot_web_click = on_carrot_web
 
+  def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
+    # 모찌 화면이 떠 있을 때 누른 터치는 모찌가 가져간다 (아래 홈 버튼이
+    # 같이 눌리지 않게). 길게 누르기로 모찌가 켜진 경우도 마찬가지.
+    if self._mochi_saver.enabled and self._mochi_saver.active and mouse_event.left_pressed:
+      self._mochi_consumed_press = True
+    self._mochi_saver.handle_mouse_event(mouse_event)
+
   def _handle_mouse_press(self, mouse_pos: MousePos):
     self._carrot_web_pressed = rl.check_collision_point_rec(mouse_pos, self._carrot_web_icon.rect)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
+    # 모찌가 떠 있는 동안의 터치, 또는 길게 누르기로 모찌를 켠 터치는
+    # 홈 버튼 클릭으로 처리하지 않는다.
+    if self._mochi_consumed_press or self._mochi_saver.active:
+      self._mochi_consumed_press = False
+      self._carrot_web_pressed = False
+      return
     if self._carrot_web_pressed and rl.check_collision_point_rec(mouse_pos, self._carrot_web_icon.rect):
       if self._on_carrot_web_click:
         self._on_carrot_web_click()
@@ -233,3 +253,7 @@ class MiciHomeLayout(Widget):
 
     footer_rect = rl.Rectangle(self.rect.x + HOME_PADDING, self.rect.y + self.rect.height - 48, self.rect.width - HOME_PADDING, 48)
     self._status_bar_layout.render(footer_rect)
+
+    # 부팅·주차 모찌 화면보호기 — 홈 화면 위에 덮는다.
+    self._mochi_saver.update()
+    self._mochi_saver.render(self.rect)
