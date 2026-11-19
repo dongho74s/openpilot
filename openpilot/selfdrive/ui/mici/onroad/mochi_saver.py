@@ -13,11 +13,18 @@
 - 모찌 화면을 터치하면 홈 화면으로 복귀.
 - 홈 화면을 650ms 길게 누르면 모찌 화면으로 전환.
 
-표정 트리거 (우선순위 순):
+표정 (우선순위 순):
   긴급제동(aEgo <= -4) > 급감속(aEgo <= -2.5) > 급가속(aEgo >= 2)
-  > 후진(R) > 주차(P) > 신호대기(빨간불 + 정지) > 오토홀드
-  > 인게이지 / 인게이지 해제 / 정지 중 출발 (전환 직후 잠깐)
-  > 깜빡이 > 주행중(기본)
+  > 후진(R) > 주차(P, 기어가 진짜 P일 때만) > 오토홀드
+  > 정지 중 출발 (출발 직후 3초) > 주행중(기본)
+
+머리 위 상태 표시줄 (얼굴 표정과 별개, 얼굴을 안 가림):
+  신호등: 빨간불/초록불이 확인될 때만 머리 위에 가로 3등 표시.
+    신호 값이 오래된 것이면 안 보임 — 시동이 꺼진 주차 상태에서는
+    신호가 갱신 안 돼서 안 뜸. (노란불은 이 신호원에 없음)
+  깜빡이: 좌/우 화살표를 신호등 양옆에 표시, 켜져 있을 때 깜빡임.
+    신호대기 중에도 깜빡이가 따로 보임.
+  인게이지/인게이지 해제 표정은 없음 (사용자 결정: 없어도 됨).
 
 주의 — 오토홀드 감지는 근사치:
   실제 홀드 상태(CS.manual_auto_hold.active)는 UI로 전달되는 메시지에
@@ -38,9 +45,9 @@ from openpilot.system.ui.lib.application import FontWeight, MouseEvent, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 LONG_PRESS_S = 0.65  # 주행 화면 길게 누르기 시간 (초)
-TRANSIENT_S = 2.5  # 인게이지/해제 표정 유지 시간 (초)
 START_S = 3.0  # 정지 중 출발 표정 유지 시간 (초)
 HOLD_SHOW_S = 30.0  # 오토홀드 표정 최대 유지 시간 (초)
+TRAFFIC_FRESH_S = 2.0  # 신호등 값 신선도 기준 (초) — 이보다 오래되면 미확인 취급
 
 EMERGENCY_DECEL = -4.0  # m/s^2, 긴급제동
 DECEL = -2.5  # m/s^2, 급감속
@@ -55,13 +62,12 @@ EXPR_EMERGENCY = "emergency"  # 긴급제동
 EXPR_ACCEL = "accel"  # 급가속
 EXPR_REVERSE = "reverse"  # 후진
 EXPR_PARK = "park"  # 주차
-EXPR_TRAFFIC = "traffic"  # 신호대기
-EXPR_BLINK_LEFT = "blink_left"  # 좌측 깜빡이
-EXPR_BLINK_RIGHT = "blink_right"  # 우측 깜빡이
 EXPR_START = "start"  # 정지 중 출발
-EXPR_ENGAGE = "engage"  # 인게이지
-EXPR_DISENGAGE = "disengage"  # 인게이지 해제
 EXPR_AUTOHOLD = "autohold"  # 오토홀드
+
+# 신호등 상태 (longitudinalPlan.trafficState, TrafficState enum):
+# 0=없음, 1=빨간불, 2=초록불
+TRAFFIC_OFF, TRAFFIC_RED, TRAFFIC_GREEN = 0, 1, 2
 
 EYE_WHITE = rl.Color(255, 255, 255, 255)
 PUPIL = rl.Color(35, 35, 45, 255)
@@ -90,10 +96,12 @@ class MochiSaver:
     self._press_fired = False
 
     self._expr = EXPR_DRIVING
-    self._prev_engaged = False
+    self._traffic_state = TRAFFIC_OFF  # 머리 위 신호등 (확인된 값만)
+    self._blink_left = False  # 머리 위 깜빡이 화살표
+    self._blink_right = False
     self._prev_v_ego = 0.0
     self._prev_brake = False
-    self._transient = ("", 0.0)  # (표정, 유지 종료 시각)
+    self._transient = ("", 0.0)  # (표정, 유지 종료 시각) — 출발 전용
     self._brake_held_stop = False
     self._hold_until = 0.0
 
@@ -172,7 +180,9 @@ class MochiSaver:
 
     # 검은 화면 전체를 덮는다 (주행 화면 대체)
     rl.draw_rectangle(int(rect.x), int(rect.y), int(rect.width), int(rect.height), rl.BLACK)
-    self._draw_face(rect, rl.get_time())
+    t = rl.get_time()
+    self._draw_face(rect, t)
+    self._draw_status_strip(rect, t)
 
   # ---------------------------------------------------------------
   # 표정 선택
@@ -190,10 +200,6 @@ class MochiSaver:
 
     engaged = ui_state.engaged
 
-    # 인게이지 / 해제 전환 직후 잠깐 보여주는 표정
-    if engaged != self._prev_engaged:
-      self._transient = ("engage" if engaged else "disengage", now + TRANSIENT_S)
-      self._prev_engaged = engaged
     # 정지에서 출발 직후 잠깐 보여주는 표정
     if self._prev_v_ego < 0.3 and v_ego > STOP_SPEED:
       self._transient = ("start", now + START_S)
@@ -223,17 +229,24 @@ class MochiSaver:
         self._brake_held_stop = False
     self._prev_brake = brake
 
+    # 신호등 (머리 위 표시줄용): 빨간불/초록불이 확인될 때만.
+    # 신호 값이 오래된 것이면 미확인 취급 — 시동이 꺼진 주차 상태에서는
+    # 플래너가 갱신을 안 해서 안 뜸.
     try:
-      traffic_red = int(lon.trafficState) == 1
+      traffic_state = int(lon.trafficState)
     except Exception:
-      traffic_red = False
+      traffic_state = TRAFFIC_OFF
+    stamp = getattr(sm, "logMonoTime", {}).get("longitudinalPlan", 0) * 1e-9
+    traffic_fresh = math.isfinite(stamp) and 0 <= now - stamp <= TRAFFIC_FRESH_S
+    self._traffic_state = traffic_state if (traffic_fresh and traffic_state in (TRAFFIC_RED, TRAFFIC_GREEN)) else TRAFFIC_OFF
     try:
-      left_blinker = bool(cs.leftBlinker)
-      right_blinker = bool(cs.rightBlinker)
+      self._blink_left = bool(cs.leftBlinker)
+      self._blink_right = bool(cs.rightBlinker)
     except Exception:
-      left_blinker, right_blinker = False, False
+      self._blink_left, self._blink_right = False, False
 
-    # 우선순위 순으로 표정 결정
+    # 우선순위 순으로 얼굴 표정 결정 (신호등·깜빡이는 머리 위 표시줄이라
+    # 얼굴 표정에 안 들어감 — 신호대기 중에도 깜빡이가 따로 보임)
     if a_ego <= EMERGENCY_DECEL:
       expr = EXPR_EMERGENCY
     elif a_ego <= DECEL:
@@ -244,16 +257,10 @@ class MochiSaver:
       expr = EXPR_REVERSE
     elif gear == car.CarState.GearShifter.park:
       expr = EXPR_PARK
-    elif traffic_red and v_ego < STOP_SPEED:
-      expr = EXPR_TRAFFIC
     elif now < self._hold_until:
       expr = EXPR_AUTOHOLD
     elif self._transient[0] and now < self._transient[1]:
       expr = self._transient[0]
-    elif left_blinker:
-      expr = EXPR_BLINK_LEFT
-    elif right_blinker:
-      expr = EXPR_BLINK_RIGHT
     else:
       expr = EXPR_DRIVING
     self._expr = expr
@@ -292,8 +299,6 @@ class MochiSaver:
     breathe = 1.0
     if expr == EXPR_START:
       bounce = -26.0 * s * max(0.0, math.sin(t * math.pi * 2.0 / 1.1))
-    elif expr == EXPR_ENGAGE:
-      bounce = -18.0 * s * max(0.0, math.sin(t * math.pi * 2.0 / 0.9))
     elif expr == EXPR_EMERGENCY:
       jx = 8.0 * s * math.sin(t * math.pi * 2.0 * 13.0)
       jy = 6.0 * s * math.sin(t * math.pi * 2.0 * 17.0)
@@ -313,20 +318,8 @@ class MochiSaver:
     pupil_dx = pupil_dy = 0.0
     lid = 1.0  # 1=활짝, 0.45=반쯤 감음
     mouth = "smile"
-    if expr == EXPR_BLINK_LEFT:
-      pupil_dx = -45.0 * s
-    elif expr == EXPR_BLINK_RIGHT:
-      pupil_dx = 45.0 * s
-    elif expr == EXPR_REVERSE:
+    if expr == EXPR_REVERSE:
       pupil_dx, pupil_dy = 30.0 * s, -50.0 * s
-    elif expr == EXPR_TRAFFIC:
-      pupil_dy = -55.0 * s
-      lid = 0.5
-      mouth = "flat"
-    elif expr == EXPR_DISENGAGE:
-      pupil_dy = 35.0 * s
-      lid = 0.55
-      mouth = "flat"
     elif expr == EXPR_AUTOHOLD or expr == EXPR_PARK:
       pupil_dy = 40.0 * s
       lid = 0.8
@@ -341,11 +334,11 @@ class MochiSaver:
     elif expr == EXPR_ACCEL:
       pupil_dy = -40.0 * s
       mouth = "open"
-    elif expr == EXPR_START or expr == EXPR_ENGAGE:
+    elif expr == EXPR_START:
       mouth = "open"
 
     blink = self._blink_scale(t)
-    lid = min(lid, blink) if expr not in (EXPR_TRAFFIC, EXPR_DISENGAGE) else lid
+    lid = min(lid, blink)
 
     # 눈 (좌·우)
     for side in (-1, 1):
@@ -368,8 +361,6 @@ class MochiSaver:
       self._draw_gear_badge(cx + 640.0 * s, face_cy - 400.0 * s, s, "R")
     elif expr == EXPR_PARK:
       self._draw_gear_badge(cx + 640.0 * s, face_cy - 400.0 * s, s, "P")
-    elif expr == EXPR_TRAFFIC:
-      self._draw_traffic_light(cx + 700.0 * s, face_cy - 260.0 * s, s)
     elif expr == EXPR_AUTOHOLD:
       self._draw_hold_badge(cx, face_cy - 460.0 * s, s)
 
@@ -395,11 +386,6 @@ class MochiSaver:
     if lid < 1.0:
       cover_h = 2.0 * r * (1.0 - lid)
       rl.draw_rectangle(int(ex - r), int(ey - r), int(2.0 * r), int(cover_h), rl.BLACK)
-    # 깜빡이 표정: 깜빡이는 쪽 눈을 번갈아 감는다
-    if expr in (EXPR_BLINK_LEFT, EXPR_BLINK_RIGHT):
-      wink_side = -1 if expr == EXPR_BLINK_LEFT else 1
-      if side == wink_side and (int(t * 2.0) % 2 == 0):
-        rl.draw_rectangle(int(ex - r), int(ey - r), int(2.0 * r), int(2.0 * r * 0.55), rl.BLACK)
 
   def _draw_mouth(self, cx: float, cy: float, kind: str, s: float, t: float) -> None:
     w = 90.0 * s
@@ -441,17 +427,43 @@ class MochiSaver:
     pos = rl.Vector2(x + (w - size_vec.x) / 2.0, y + (h - size_vec.y) / 2.0 - 8 * s)
     rl.draw_text_ex(font, letter, pos, int(150 * s), 0, rl.BLACK)
 
-  def _draw_traffic_light(self, x: float, y: float, s: float) -> None:
-    """신호대기: 커다란 신호등 (빨간불 켜짐)."""
-    w, h = 170.0 * s, 420.0 * s
-    rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, h), 0.18, 12, C_DARK)
-    lamp_r = 52.0 * s
-    lamp_cx = x + w / 2.0
-    gap = 130.0 * s
-    top = y + 78.0 * s
-    rl.draw_circle(int(lamp_cx), int(top), int(lamp_r), C_RED)
-    rl.draw_circle(int(lamp_cx), int(top + gap), int(lamp_r), rl.Color(90, 80, 40, 255))
-    rl.draw_circle(int(lamp_cx), int(top + gap * 2), int(lamp_r), rl.Color(40, 90, 50, 255))
+  def _draw_status_strip(self, rect: rl.Rectangle, t: float) -> None:
+    """머리 위 상태 표시줄: 가로 신호등 + 양옆 깜빡이 화살표.
+
+    신호등은 빨간불/초록불이 확인될 때만 보이고, 깜빡이는 켜져 있을 때
+    깜빡인다. 둘 다 얼굴 표정과 별개라 신호대기 중에도 깜빡이가 보임.
+    화면 맨 위 배지 줄(얼굴 중심 -430)과 안 겹치게 맨 위에 둠.
+    """
+    if self._traffic_state == TRAFFIC_OFF and not self._blink_left and not self._blink_right:
+      return
+    s = min(rect.width / 2160.0, rect.height / 1080.0)
+    cx = rect.x + rect.width / 2.0
+    cy = rect.y + 24.0 * s + 42.0 * s  # 표시줄 중심
+
+    lamp_r = 30.0 * s
+    gap = 84.0 * s
+    if self._traffic_state != TRAFFIC_OFF:
+      # 가로 신호등: 검은 함체에 빨·노·초 3등, 켜진 등만 밝게
+      w, h = (gap * 2.0 + lamp_r * 2.0 + 36.0 * s), 84.0 * s
+      rl.draw_rectangle_rounded(rl.Rectangle(cx - w / 2.0, cy - h / 2.0, w, h), 0.3, 12, C_DARK)
+      lamps = ((cx - gap, C_RED, self._traffic_state == TRAFFIC_RED),
+               (cx, rl.Color(230, 180, 40, 255), False),
+               (cx + gap, rl.Color(60, 220, 90, 255), self._traffic_state == TRAFFIC_GREEN))
+      for lx, color, lit in lamps:
+        rl.draw_circle(int(lx), int(cy), int(lamp_r), color if lit else rl.Color(70, 70, 70, 255))
+
+    # 깜빡이 화살표: 신호등 양옆, 켜져 있을 때만 보이고 ~0.7초 간격으로 깜빡임
+    on = int(t * 1.4) % 2 == 0
+    arrow = 46.0 * s
+    strip_half = (gap + lamp_r + 18.0 * s) if self._traffic_state != TRAFFIC_OFF else 0.0
+    for side, active in ((-1, self._blink_left), (1, self._blink_right)):
+      if not active:
+        continue
+      ax = cx + side * (strip_half + 70.0 * s)
+      color = C_YELLOW if on else rl.Color(70, 70, 60, 255)
+      pts = [(ax - side * arrow / 2.0, cy - arrow / 2.0), (ax - side * arrow / 2.0, cy + arrow / 2.0),
+             (ax + side * arrow / 2.0, cy)]
+      rl.draw_triangle(rl.Vector2(*pts[0]), rl.Vector2(*pts[1]), rl.Vector2(*pts[2]), color)
 
   def _draw_hold_badge(self, cx: float, y: float, s: float) -> None:
     """오토홀드: 초록 HOLD 알약 배지."""
