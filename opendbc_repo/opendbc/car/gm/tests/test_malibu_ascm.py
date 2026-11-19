@@ -18,12 +18,16 @@ SASCM = 0x2FF
 ASCM_OUTPUTS = {0x180: 4, 0x2CB: 8, 0x2CD: 5, 0x365: 4, 0x370: 6, 0x409: 7, 0x40A: 7, 0x510: 4, 0x78A: 7}
 
 
-def malibu_fingerprint(radar=False, sascm=True):
+def malibu_fingerprint(radar=False, sascm=True, accel_pos=True, pedal=False):
   """Fingerprinting runs with the relay open, so both sides of the harness see the same bus."""
   fingerprint = gen_empty_fingerprint()
   pt = dict(FINGERPRINTS[CAR.CHEVROLET_MALIBU][0])
   if sascm:
     pt[SASCM] = 8
+  if not accel_pos:
+    del pt[0xBE]
+  if pedal:
+    pt[0x201] = 6
   fingerprint[0] = dict(pt)
   fingerprint[2] = dict(pt)
   if radar:
@@ -67,6 +71,21 @@ def test_car_params_keep_the_stock_acc_and_forward_like_a_camera(runtime, alpha,
   assert cp.lateralTuning.which() == "torque"
 
 
+def test_a_pedal_frame_does_not_turn_on_openpilot_longitudinal(runtime):
+  # The common GM pedal branch would make it a pedal-long car; this one keeps the stock ACC only
+  for alpha in (False, True):
+    cp = malibu_cp(runtime, alpha, pedal=True)
+    assert cp.pcmCruise and not cp.openpilotLongitudinalControl and not cp.enableGasInterceptorDEPRECATED
+    assert cp.safetyConfigs[0].safetyParam == int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT)
+    assert not cp.flags & GMFlags.PEDAL_LONG.value
+
+
+def test_without_0xbe_the_brake_switch_in_0xc9_is_used(runtime):
+  cp = malibu_cp(runtime, accel_pos=False)
+  assert cp.safetyConfigs[0].safetyParam == int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT | GMSafetyFlags.ASCM_INT_C9_BRAKE)
+  assert cp.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value
+
+
 def test_radar_read_only_when_the_whole_stock_stream_is_on_bus_1(runtime):
   assert not malibu_cp(runtime, radar=True).radarUnavailable
   partial = malibu_fingerprint(radar=True)
@@ -94,13 +113,19 @@ def test_the_other_malibus_are_unchanged(runtime):
   assert not no_acc.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_ASCM_INT
 
 
-def frames(packer, tick, *, brake_pos=0, ecm_brake=0, cruise_state=1, ascm_lkas=True, ascm_counter=None):
+def frames(packer, tick, *, brake_pos=0, ecm_brake=0, cruise_state=1, ascm_lkas=True, ascm_counter=None, accel_pos=True):
   """One 10 ms slice of the car side (bus 0) and the ASCM side (bus 2) with the relay closed."""
   sends = {(addr, 0): (addr, bytes(length), 0) for addr, length in FINGERPRINTS[CAR.CHEVROLET_MALIBU][0].items()
            if addr not in ASCM_OUTPUTS}
   sends[(SASCM, 0)] = (SASCM, bytes(8), 0)
+  if accel_pos:
+    msg = packer.make_can_msg("ECMAcceleratorPos", 0, {"BrakePedalPos": brake_pos})
+    sends[(msg[0], msg[2])] = tuple(msg)
+  else:
+    del sends[(0xBE, 0)]
+    msg = packer.make_can_msg("EBCMBrakePedalPosition", 0, {"BrakePedalPosition": brake_pos})
+    sends[(msg[0], msg[2])] = tuple(msg)
   for msg in (
-    packer.make_can_msg("ECMAcceleratorPos", 0, {"BrakePedalPos": brake_pos}),
     packer.make_can_msg("ECMEngineStatus", 0, {"BrakePressed": ecm_brake, "CruiseMainOn": 1}),
     packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": cruise_state}),
     packer.make_can_msg("EBCMWheelSpdFront", 0, {"FLWheelSpd": 60.0, "FRWheelSpd": 60.0}),
@@ -126,8 +151,8 @@ def malibu_interface(runtime, cp=None):
   return ci
 
 
-def run(runtime, ticks=300, **kwargs):
-  ci = malibu_interface(runtime)
+def run(runtime, ticks=300, cp=None, **kwargs):
+  ci = malibu_interface(runtime, cp)
   packer = runtime.CANPacker(DBC[MALIBU_ASCM][Bus.pt])
   ret = None
   # The parser stamps a message's registration with the real monotonic clock, so CAN times start from it
@@ -149,6 +174,14 @@ def test_car_state_is_valid_with_the_ascm_and_sascm_on_the_bus(runtime):
 @pytest.mark.parametrize("brake_pos,ecm_brake,expected", [(10, 0, True), (9, 1, False), (0, 1, False), (40, 0, True)])
 def test_brake_comes_from_the_pedal_position_like_the_panda(runtime, brake_pos, ecm_brake, expected):
   _, ret = run(runtime, ticks=50, brake_pos=brake_pos, ecm_brake=ecm_brake)
+  assert ret.brakePressed == expected
+
+
+@pytest.mark.parametrize("brake_pos,ecm_brake,expected", [(0, 1, True), (100, 0, False), (0, 0, False)])
+def test_without_0xbe_car_state_reads_the_brake_switch(runtime, brake_pos, ecm_brake, expected):
+  _, ret = run(runtime, ticks=300, cp=malibu_cp(runtime, accel_pos=False), accel_pos=False, brake_pos=brake_pos,
+               ecm_brake=ecm_brake)
+  assert ret.canValid
   assert ret.brakePressed == expected
 
 

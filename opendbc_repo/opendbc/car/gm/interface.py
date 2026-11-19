@@ -145,7 +145,8 @@ class CarInterface(CarInterfaceBase):
 
     useEVTables = Params().get_bool("EVTable")
 
-    if PEDAL_MSG in fingerprint[0]:
+    # The Malibu ASCM harness keeps the stock ACC only; a 0x201 frame on its bus must not switch it to pedal longitudinal
+    if PEDAL_MSG in fingerprint[0] and candidate not in ASCM_INT_CAR:
       ret.enableGasInterceptorDEPRECATED = True
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.GAS_INTERCEPTOR.value
     # Bolt ACC with a comma pedal: BoltPedalLongMode 2 runs StarPilot's pedal long (as a CC-only pedal car, never camera
@@ -213,6 +214,9 @@ class CarInterface(CarInterfaceBase):
       ret.minEnableSpeed = 5 * CV.KPH_TO_MS
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value | GMSafetyFlags.HW_ASCM_INT.value
+      if ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
+        # No 0xBE to read the brake from: the brake switch in 0xC9, as StarPilot does with FORCE_BRAKE_C9
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.ASCM_INT_C9_BRAKE.value
 
     else:  # ASCM, OBD-II harness
       ret.openpilotLongitudinalControl = True

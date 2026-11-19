@@ -118,6 +118,9 @@ class GMSafetyFlags(IntFlag):
   # Comma between the ASCM and the powertrain bus (StarPilot's ASCM_INT, CHEVROLET_MALIBU_ASCM): forwarded like HW_CAM,
   # with the brake taken from ECMAcceleratorPos (0xBE) as on the ASCM path instead of ECMEngineStatus (0xC9).
   HW_ASCM_INT = 4096
+  # HW_ASCM_INT on a car without ECMAcceleratorPos (StarPilot's FORCE_BRAKE_C9 there): brake from 0xC9 and the RX checks
+  # take EBCMBrakePedalPosition (0xF1) instead of 0xBE
+  ASCM_INT_C9_BRAKE = 8192
 
 @dataclass
 class GMCarDocs(CarDocs):

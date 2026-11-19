@@ -14,6 +14,8 @@ from opendbc.car.gm.values import GMSafetyFlags
 
 GM = structs.CarParams.SafetyModel.gm
 ASCM_INT = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT)
+# the same car without ECMAcceleratorPos (0xBE)
+ASCM_INT_C9 = ASCM_INT | int(GMSafetyFlags.ASCM_INT_C9_BRAKE)
 CAMERA = int(GMSafetyFlags.HW_CAM)
 ASCM = 0
 CANCEL = 6
@@ -34,6 +36,7 @@ def native(tmp_path_factory):
   lib.set_controls_allowed.argtypes = [ctypes.c_bool]
   lib.get_controls_allowed.restype = ctypes.c_bool
   lib.get_brake_pressed_prev.restype = ctypes.c_bool
+  lib.safety_config_valid.restype = ctypes.c_bool
   lib.get_cruise_engaged_prev.restype = ctypes.c_bool
   lib.set_cruise_engaged_prev.argtypes = [ctypes.c_bool]
   lib.set_timer.argtypes = [ctypes.c_uint32]
@@ -102,10 +105,32 @@ def test_ascm_intercept_reads_the_brake_from_0xbe_only(native, brake_pos, brake_
   assert brake_state(native, brake_pos, brake_bit) == [(pressed, not pressed)] * 2
 
 
+@pytest.mark.parametrize('param', [CAMERA, ASCM_INT_C9, int(GMSafetyFlags.HW_CAM | GMSafetyFlags.ASCM_INT_C9_BRAKE)])
 @pytest.mark.parametrize('brake_pos,brake_bit,pressed', [(10, 0, False), (0, 1, True), (255, 1, True)])
-def test_camera_harness_still_reads_the_brake_from_0xc9(native, brake_pos, brake_bit, pressed):
-  use(native, CAMERA)
+def test_camera_harness_and_the_no_0xbe_variant_read_the_brake_from_0xc9(native, param, brake_pos, brake_bit, pressed):
+  use(native, param)
   assert brake_state(native, brake_pos, brake_bit) == [(pressed, not pressed)] * 2
+
+
+RX_FRAMES = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8, 0xBE: 6, 0xF1: 6}
+
+
+@pytest.mark.parametrize('param,missing,valid', [
+  (ASCM_INT, None, True),
+  (ASCM_INT, 0xBE, False),     # the brake source is checked for freshness
+  (ASCM_INT, 0xF1, True),
+  (ASCM_INT_C9, 0xBE, True),   # no 0xBE on this car: 0xF1 takes its place
+  (ASCM_INT_C9, 0xF1, False),
+  (ASCM_INT_C9, 0xC9, False),
+  (CAMERA, 0xBE, False),       # the camera harness keeps its RX checks
+  (CAMERA, 0xF1, True),
+])
+def test_rx_checks_follow_the_brake_source(native, param, missing, valid):
+  use(native, param)
+  for address, length in RX_FRAMES.items():
+    if address != missing:
+      rx(native, address, bytes(length))
+  assert native.safety_config_valid() == valid
 
 
 @pytest.mark.parametrize('param', [ASCM, int(GMSafetyFlags.HW_ASCM_INT)])
@@ -144,17 +169,36 @@ def test_engages_on_the_stock_acc_and_drops_on_its_release(native):
   assert not native.get_controls_allowed()
 
 
-def test_transmits_only_steering_pscm_and_cancel(native):
-  use(native, ASCM_INT)
+@pytest.mark.parametrize('param', [ASCM_INT, ASCM_INT_C9])
+def test_transmits_only_steering_pscm_and_cancel(native, param):
+  use(native, param)
   native.set_controls_allowed(True)
   native.set_cruise_engaged_prev(True)
   assert tx(native, 0x180, bytes(4))
   assert tx(native, 0x184, bytes(8), bus=2)
   assert tx(native, 0x1E1, button(CANCEL), bus=2)
-  # stock longitudinal: no resume or set spam, no ASCM replacement frames
+  # stock longitudinal: no resume or set spam, no buttons on the car side, no pedal, no ASCM replacement frames
   assert not tx(native, 0x1E1, button(UNPRESS), bus=2)
+  assert not tx(native, 0x1E1, button(CANCEL), bus=0)
+  assert not tx(native, 0x200, bytes([0x10, 0x10, 0, 0, 0, 0]))
   for address, length, bus in ((0x2CB, 8, 0), (0x315, 5, 0), (0x315, 5, 2), (0x370, 6, 0), (0x409, 7, 0), (0xA1, 7, 1)):
     assert not tx(native, address, bytes(length), bus=bus)
+
+
+@pytest.mark.parametrize('param', [ASCM_INT, ASCM_INT_C9])
+def test_a_rejected_gas_regen_frame_does_not_grant_controls(native, param):
+  use(native, param)
+  native.set_controls_allowed(False)
+  assert not tx(native, 0x2CB, bytes([1, 0, 0, 0, 0, 0, 0, 0]))
+  assert not native.get_controls_allowed()
+
+
+def test_the_camera_harness_keeps_its_transmit_list(native):
+  use(native, CAMERA)
+  native.set_controls_allowed(True)
+  native.set_cruise_engaged_prev(True)
+  assert tx(native, 0x1E1, button(CANCEL), bus=0)
+  assert tx(native, 0x200, bytes(6))
 
 
 def test_stock_lkas_on_the_car_side_is_a_relay_malfunction(native):

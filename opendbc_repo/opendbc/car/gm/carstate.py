@@ -210,7 +210,12 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint in ASCM_INT_CAR:
       # Behind an ASCM the brake comes from the pedal position, as on the ASCM path (StarPilot ASCM_INT). Same byte and
       # threshold as the panda's 0xBE check for this harness (HW_ASCM_INT), which also requires 0xBE in its RX checks.
-      ret.brakePressed = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"] >= 10
+      # Without 0xBE both sides use the brake switch in 0xC9 (ASCM_INT_C9_BRAKE; the panda then RX-checks 0xF1, which
+      # ret.brake above reads).
+      if self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value:
+        ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
+      else:
+        ret.brakePressed = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"] >= 10
     elif self.CP.networkLocation == NetworkLocation.fwdCamera:
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
     else:

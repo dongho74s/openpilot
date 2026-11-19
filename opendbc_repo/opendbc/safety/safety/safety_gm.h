@@ -42,6 +42,8 @@ static bool gm_manual_hold = false;
 // Comma between the ASCM and the powertrain bus (CHEVROLET_MALIBU_ASCM, StarPilot's ASCM_INT): forwarded like a camera
 // harness, but the brake is read from ECMAcceleratorPos (0xBE) as on the ASCM path.
 static bool gm_ascm_int = false;
+// The same car without ECMAcceleratorPos: brake from 0xC9, and 0xF1 instead of 0xBE in the RX checks.
+static bool gm_ascm_int_c9_brake = false;
 
 // Bolt with the factory camera ACC and a comma pedal (CHEVROLET_BOLT_ACC_PEDAL), ported from StarPilot's
 // BOLT_2022_PEDAL + PANDA_PADDLE_SCHED path (firestar5683/StarPilot 2589caad gm.h).
@@ -223,11 +225,11 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
 
     // Reference for brake pressed signals:
     // https://github.com/commaai/openpilot/blob/master/selfdrive/car/gm/carstate.py
-    if ((addr == 0xBE) && ((gm_hw == GM_ASCM) || gm_ascm_int)) {
+    if ((addr == 0xBE) && ((gm_hw == GM_ASCM) || (gm_ascm_int && !gm_ascm_int_c9_brake))) {
       brake_pressed = GET_BYTE(to_push, 1) >= 10U;
     }
     if (addr == 0xC9) {
-      if ((gm_hw == GM_CAM) && !gm_ascm_int) {
+      if ((gm_hw == GM_CAM) && (!gm_ascm_int || gm_ascm_int_c9_brake)) {
         brake_pressed = (GET_BYTE(to_push, 5) & 0x01U) != 0U;
       }
       acc_main_on = (GET_BYTE(to_push, 3) & 0x20U) != 0U;
@@ -353,9 +355,9 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
   // GAS/REGEN: safety check
   if (addr == 0x2CB) {
     bool apply = GET_BIT(to_send, 0U);
-    // SDGM transmit requests must never restore permission after disengagement, nor may the Bolt ACC with pedal's
-    // (which never sends 0x2CB and does not allow it).
-    if (apply && !controls_allowed && !gm_sdgm && !gm_bolt_acc_pedal) {
+    // SDGM transmit requests must never restore permission after disengagement, nor may the Bolt ACC with pedal's or
+    // the Malibu ASCM harness's (neither sends 0x2CB nor allows it).
+    if (apply && !controls_allowed && !gm_sdgm && !gm_bolt_acc_pedal && !gm_ascm_int) {
       controls_allowed = true;        
     }
     // convert float CAN signal to an int for gas checks: 22534 / 0.125 = 180272
@@ -461,6 +463,7 @@ static safety_config gm_init(uint16_t param) {
   const uint16_t GM_PARAM_HW_SDGM = 512;
   const uint16_t GM_PARAM_MANUAL_AUTO_HOLD = 1024;
   const uint16_t GM_PARAM_HW_ASCM_INT = 4096;
+  const uint16_t GM_PARAM_ASCM_INT_C9_BRAKE = 8192;
 
   // common safety checks assume unscaled integer values
   static const int GM_GAS_TO_CAN = 8;  // 1 / 0.125
@@ -514,6 +517,13 @@ static safety_config gm_init(uint16_t param) {
     {.msg = {{0x3D1, 0, 8, .ignore_checksum = true, .ignore_counter = true, .frequency = 10U}, { 0 }, { 0 }}},  // Non-ACC PCM
   };
 
+  // Malibu ASCM harness without ECMAcceleratorPos: the brake comes from 0xC9, so 0xF1 replaces 0xBE (StarPilot's
+  // gm_ascm_int_stock_cam_rx_checks)
+  static RxCheck gm_ascm_int_c9_brake_rx_checks[] = {
+    GM_COMMON_RX_CHECKS
+    {.msg = {{0xF1, 0, 6, .ignore_checksum = true, .ignore_counter = true, .frequency = 10U}, { 0 }, { 0 }}},
+  };
+
   static RxCheck gm_pedal_rx_checks[] = {
     GM_COMMON_RX_CHECKS
     {.msg = {{0xBD, 0, 7, .ignore_checksum = true, .ignore_counter = true, .frequency = 40U}, { 0 }, { 0 }}},
@@ -529,6 +539,10 @@ static safety_config gm_init(uint16_t param) {
                                                          {0x315, 0, 5}, {0xBD, 0, 7}, {0x1F5, 0, 8},  // pt bus
                                                          {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
 
+
+  // Malibu ASCM harness with the stock ACC: openpilot's LKAS, PSCMStatus toward the ASCM and CANCEL toward the ASCM
+  static const CanMsg GM_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4},  // pt bus
+                                               {0x184, 2, 8}, {0x1E1, 2, 7}};  // ASCM side
 
   static const CanMsg GM_CC_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x1E1, 0, 7},  // pt bus
                                               {0x184, 2, 8}, {0x1E1, 2, 7}};  // camera bus
@@ -546,6 +560,7 @@ static safety_config gm_init(uint16_t param) {
   gm_sdgm = GET_FLAG(param, GM_PARAM_HW_SDGM);
   // Only meaningful on the forwarding (camera) layout; the ASCM layout already reads the brake from 0xBE.
   gm_ascm_int = GET_FLAG(param, GM_PARAM_HW_ASCM_INT) && (gm_hw == GM_CAM);
+  gm_ascm_int_c9_brake = gm_ascm_int && GET_FLAG(param, GM_PARAM_ASCM_INT_C9_BRAKE);
   gm_cam_long = false;
 #ifdef ALLOW_DEBUG
   const uint16_t GM_PARAM_HW_CAM_LONG = 2;
@@ -597,6 +612,9 @@ static safety_config gm_init(uint16_t param) {
     } else if (gm_bolt_acc_pedal) {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_BOLT_ACC_PEDAL_TX_MSGS);
       print("GM CAM Bolt ACC pedal\n");
+    } else if (gm_ascm_int) {
+      ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_ASCM_INT_TX_MSGS);
+      print("GM CAM ASCM intercept\n");
     } else {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_TX_MSGS);
       print("GM CAM\n");
@@ -614,6 +632,8 @@ static safety_config gm_init(uint16_t param) {
     SET_RX_CHECKS(gm_no_acc_rx_checks, ret);
   } else if (gm_ev) {
     SET_RX_CHECKS(gm_ev_rx_checks, ret);
+  } else if (gm_ascm_int_c9_brake) {
+    SET_RX_CHECKS(gm_ascm_int_c9_brake_rx_checks, ret);
   } else {}
 
   return ret;
