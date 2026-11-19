@@ -17,9 +17,9 @@ def ramp_commands(params, target, start=0, limit=500):
 
 
 def test_frogpilot_timing_cars_are_traverse_trailblazer_trax_and_bolt_cc():
-  # the Bolt ACC with pedal shares the Bolt No-ACC's steering (values.py)
+  # the Bolt ACC with pedal shares the Bolt No-ACC's steering; the Malibu ASCM harness takes StarPilot's GM timing (values.py)
   assert FROGPILOT_STEER_TIMING_CAR == {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
-                                        CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL}
+                                        CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_MALIBU_ASCM}
 
 
 def test_bolt_euv_with_acc_keeps_existing_timing():

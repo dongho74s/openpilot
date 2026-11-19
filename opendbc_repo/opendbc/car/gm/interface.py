@@ -12,7 +12,8 @@ from opendbc.car.gm import bolt_acc_pedal
 from opendbc.car.gm.carcontroller import CarController
 from opendbc.car.gm.carstate import CarState
 from opendbc.car.gm.radar_interface import RadarInterface, RADAR_HEADER_MSG, LAST_RADAR_MSG
-from opendbc.car.gm.values import CAR, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, CruiseButtons, GMSafetyFlags, BOLT_PEDAL_LONG_MODE_STARPILOT, ALT_ACCS
+from opendbc.car.gm.values import CAR, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, CruiseButtons, GMSafetyFlags, BOLT_PEDAL_LONG_MODE_STARPILOT, ALT_ACCS, \
+  ASCM_INT_CAR
 from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LatControlInputs, NanoFFModel
 
 #ButtonType = structs.CarState.ButtonEvent.Type 이 두 줄도 사용되지 않습니다.
@@ -199,6 +200,20 @@ class CarInterface(CarInterfaceBase):
         ret.openpilotLongitudinalControl = False
         ret.minEnableSpeed = -1.  # engage speed is decided by PCM
 
+    elif candidate in ASCM_INT_CAR:
+      # StarPilot ASCM_INT (interface.py, stable 8589b73f): the comma sits between the ASCM and the powertrain bus. The
+      # ASCM stays alive and keeps the stock ACC and radar; the panda forwards both ways like a camera harness except the
+      # ASCM's LKAS command (0x180), which openpilot replaces. openpilot longitudinal through a SASCM is not ported.
+      ret.alphaLongitudinalAvailable = False
+      ret.networkLocation = NetworkLocation.fwdCamera
+      # The ASCM runs the radar; read it only when the whole stock radar stream is on bus 1.
+      ret.radarUnavailable = not all(fingerprint[CanBus.OBSTACLE].get(msg) == 8
+                                     for msg in range(RADAR_HEADER_MSG, LAST_RADAR_MSG + 1))
+      ret.pcmCruise = True
+      ret.minEnableSpeed = 5 * CV.KPH_TO_MS
+      ret.minSteerSpeed = 7 * CV.MPH_TO_MS
+      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value | GMSafetyFlags.HW_ASCM_INT.value
+
     else:  # ASCM, OBD-II harness
       ret.openpilotLongitudinalControl = True
       ret.networkLocation = NetworkLocation.gateway
@@ -290,7 +305,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate in (CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC):
+    elif candidate in (CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_ASCM):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
@@ -468,9 +483,10 @@ class CarInterface(CarInterfaceBase):
     if cc_only:
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.NO_ACC.value
 
-    # Exception for flashed cars, or cars whose camera was removed
+    # Exception for flashed cars, or cars whose camera was removed. Behind an ASCM the LKAS sender on bus 2 is the ASCM,
+    # which need not send AEBCmd (as in StarPilot, ASCM_INT never takes NO_CAMERA).
     if (ret.networkLocation == NetworkLocation.fwdCamera or cc_only) and CAM_MSG not in fingerprint[
-      CanBus.CAMERA] and not candidate in SDGM_CAR:
+      CanBus.CAMERA] and not candidate in SDGM_CAR and candidate not in ASCM_INT_CAR:
       ret.flags |= GMFlags.NO_CAMERA.value
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.NO_CAMERA.value
 

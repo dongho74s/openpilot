@@ -39,6 +39,9 @@ static bool gm_skip_relay_check = false;
 static bool gm_force_ascm = false;
 static bool gm_sdgm = false;
 static bool gm_manual_hold = false;
+// Comma between the ASCM and the powertrain bus (CHEVROLET_MALIBU_ASCM, StarPilot's ASCM_INT): forwarded like a camera
+// harness, but the brake is read from ECMAcceleratorPos (0xBE) as on the ASCM path.
+static bool gm_ascm_int = false;
 
 // Bolt with the factory camera ACC and a comma pedal (CHEVROLET_BOLT_ACC_PEDAL), ported from StarPilot's
 // BOLT_2022_PEDAL + PANDA_PADDLE_SCHED path (firestar5683/StarPilot 2589caad gm.h).
@@ -220,11 +223,11 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
 
     // Reference for brake pressed signals:
     // https://github.com/commaai/openpilot/blob/master/selfdrive/car/gm/carstate.py
-    if ((addr == 0xBE) && (gm_hw == GM_ASCM)) {
+    if ((addr == 0xBE) && ((gm_hw == GM_ASCM) || gm_ascm_int)) {
       brake_pressed = GET_BYTE(to_push, 1) >= 10U;
     }
     if (addr == 0xC9) {
-      if (gm_hw == GM_CAM) {
+      if ((gm_hw == GM_CAM) && !gm_ascm_int) {
         brake_pressed = (GET_BYTE(to_push, 5) & 0x01U) != 0U;
       }
       acc_main_on = (GET_BYTE(to_push, 3) & 0x20U) != 0U;
@@ -457,6 +460,7 @@ static safety_config gm_init(uint16_t param) {
   const uint16_t GM_PARAM_EV = 256;
   const uint16_t GM_PARAM_HW_SDGM = 512;
   const uint16_t GM_PARAM_MANUAL_AUTO_HOLD = 1024;
+  const uint16_t GM_PARAM_HW_ASCM_INT = 4096;
 
   // common safety checks assume unscaled integer values
   static const int GM_GAS_TO_CAN = 8;  // 1 / 0.125
@@ -540,6 +544,8 @@ static safety_config gm_init(uint16_t param) {
 
   gm_cc_long = GET_FLAG(param, GM_PARAM_CC_LONG);
   gm_sdgm = GET_FLAG(param, GM_PARAM_HW_SDGM);
+  // Only meaningful on the forwarding (camera) layout; the ASCM layout already reads the brake from 0xBE.
+  gm_ascm_int = GET_FLAG(param, GM_PARAM_HW_ASCM_INT) && (gm_hw == GM_CAM);
   gm_cam_long = false;
 #ifdef ALLOW_DEBUG
   const uint16_t GM_PARAM_HW_CAM_LONG = 2;

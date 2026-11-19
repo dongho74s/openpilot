@@ -10,7 +10,7 @@ from opendbc.car.gm.cluster_speed import gm_cluster_cruise_speed_from_raw_ms
 from opendbc.car.gm.manual_auto_hold import ManualAutoHold, manual_hold_supported
 from opendbc.car.gm.stock_fcw import StockFcw, stock_fcw_supported
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CAMERA_ACC_CAR, \
-  is_bolt_acc_pedal_starpilot, is_cc_only
+  ASCM_INT_CAR, is_bolt_acc_pedal_starpilot, is_cc_only
 from opendbc.car.interfaces import CarStateBase
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 
@@ -207,7 +207,11 @@ class CarState(CarStateBase):
     else:
       ret.brake = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"]
     self.brake_pedal_position = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"] if self.manual_auto_hold is not None else 0.
-    if self.CP.networkLocation == NetworkLocation.fwdCamera:
+    if self.CP.carFingerprint in ASCM_INT_CAR:
+      # Behind an ASCM the brake comes from the pedal position, as on the ASCM path (StarPilot ASCM_INT). Same byte and
+      # threshold as the panda's 0xBE check for this harness (HW_ASCM_INT), which also requires 0xBE in its RX checks.
+      ret.brakePressed = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"] >= 10
+    elif self.CP.networkLocation == NetworkLocation.fwdCamera:
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
     else:
       # Some Volt 2016-17 have loose brake pedal push rod retainers which causes the ECM to believe
@@ -295,8 +299,9 @@ class CarState(CarStateBase):
         # stays False. The replayed 0x370 level is the same either way (the level is used first).
         self.stock_fcw_alert = int(cam_cp.vl["ASCMActiveCruiseControlStatus"]["FCWAlert"])
         ret.stockAeb = cam_cp.vl["AEBCmd"]["AEBCmdActive"] != 0
-      # openpilot controls nonAdaptive when not pcmCruise
-      if self.CP.pcmCruise and not self.cc_only:
+      # openpilot controls nonAdaptive when not pcmCruise. The ASCM's 0x370 cruise state is not the camera's, so it is
+      # not read as non-adaptive cruise there (StarPilot skips it for ASCM_INT too).
+      if self.CP.pcmCruise and not self.cc_only and self.CP.carFingerprint not in ASCM_INT_CAR:
         ret.cruiseState.nonAdaptive = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCruiseState"] not in (2, 3)
     if self.stock_fcw is not None:
       # The camera 0x370 is already registered by the set-speed read above; a plain

@@ -115,6 +115,9 @@ class GMSafetyFlags(IntFlag):
   # PANDA_PADDLE_SCHED in one bit): regen paddle and PRNDL2 sent by the panda right after the stock frames, friction brake
   # on PT, CANCEL always allowed toward the camera. Mode 1 (camera long) does not set it.
   BOLT_ACC_PEDAL = 2048
+  # Comma between the ASCM and the powertrain bus (StarPilot's ASCM_INT, CHEVROLET_MALIBU_ASCM): forwarded like HW_CAM,
+  # with the brake taken from ECMAcceleratorPos (0xBE) as on the ASCM path instead of ECMEngineStatus (0xC9).
+  HW_ASCM_INT = 4096
 
 @dataclass
 class GMCarDocs(CarDocs):
@@ -166,6 +169,12 @@ class CAR(Platforms):
   CHEVROLET_MALIBU = GMASCMPlatformConfig(
     [GMCarDocs("Chevrolet Malibu Premier 2017")],
     GMCarSpecs(mass=1496, wheelbase=2.83, steerRatio=15.8, centerToFrontRatio=0.4),
+  )
+  # StarPilot CHEVROLET_MALIBU_ASCM: the ASCM stays in the car and keeps the stock ACC, the comma sits between it and the
+  # powertrain bus and steers. Same CAN as CHEVROLET_MALIBU, so it is chosen from the car list, never fingerprinted.
+  CHEVROLET_MALIBU_ASCM = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Malibu ASCM Harness 2017-19")],
+    CHEVROLET_MALIBU.specs,
   )
   GMC_ACADIA = GMASCMPlatformConfig(
     [GMCarDocs("GMC Acadia 2018", video="https://www.youtube.com/watch?v=0ZN6DdsBUZo")],
@@ -407,8 +416,9 @@ def is_cc_only(CP) -> bool:
 # the car drifted over the outer line of a curve; a replay with the fitted steering response cut the tracking lag
 # from 0.60 to 0.28-0.30 s. Not yet checked in the car; the fingerprint also covers the Bolt EV 2017-23 No-ACC.
 # The Bolt ACC with pedal shares the Bolt No-ACC's steering, so it takes the same timing.
+# The Malibu ASCM harness takes StarPilot's GM timing (all StarPilot GM cars run 3 frames, +10/-15), which steers that car.
 FROGPILOT_STEER_TIMING_CAR = {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
-                              CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL}
+                              CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_MALIBU_ASCM}
 # We're integrated at the Safety Data Gateway Module on these cars
 SDGM_CAR = {CAR.CADILLAC_XT4, CAR.CHEVROLET_TRAVERSE, CAR.BUICK_BABYENCLAVE, CAR.CHEVROLET_VOLT_2019}
 
@@ -416,6 +426,9 @@ SDGM_CAR = {CAR.CADILLAC_XT4, CAR.CHEVROLET_TRAVERSE, CAR.BUICK_BABYENCLAVE, CAR
 CAMERA_ACC_CAR = {CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAX}
 CAMERA_ACC_CAR.update({CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC})
 # CAMERA_ACC_CAR.update(CC_ONLY_CAR)
+# We're integrated between the ASCM and the powertrain bus on these cars (StarPilot ASCM_INT): the ASCM keeps the stock ACC
+# and radar, the panda forwards both ways except the ASCM's LKAS command, which openpilot replaces.
+ASCM_INT_CAR = {CAR.CHEVROLET_MALIBU_ASCM}
 # Alt ASCMActiveCruiseControlStatus
 ALT_ACCS = {CAR.GMC_YUKON}
 
