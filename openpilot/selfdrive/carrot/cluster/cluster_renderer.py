@@ -5666,7 +5666,9 @@ class ClusterUiRenderer:
         profile_stage = self._profile_start()
         screen_mode = self._effective_screen_mode(state)
         offset_x = self._driving_hud_offset_design_x(screen_mode)
-        status_right_x = self._status_icons_right_x(screen_mode)
+        status_right_x = self._status_icons_right_x(
+            screen_mode, self._right_panel_visible(state, screen_mode)
+        )
         if abs(offset_x) > 0.001:
             rl.rl_push_matrix()
             try:
@@ -8315,18 +8317,47 @@ class ClusterUiRenderer:
         for index, line in enumerate(overlay.data_lines[:6]):
             self._draw_text(line, x, y + 61 + index * 13, 11, theme.text)
 
+    def _right_panel_visible(self, state: ClusterUiState, screen_mode: int) -> bool:
+        """True when a right-side panel covers the road view's right edge
+        in this mode (same branches as the main render loop).
+
+        DEBUG_GRAPH_RIGHT always has the steering graph panel and
+        TRIP_REPORT always has the trip panel. On the driving screen
+        (DEFAULT) the navigation live panel covers the same strip
+        whenever it is drawn. The navigation debug panel does not count:
+        it starts lower (y 118) and ends well above the bottom status
+        line, so neither the top icons nor the overtake text collide
+        with it.
+        """
+        if screen_mode in (
+            CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
+            CLUSTER_SCREEN_MODE_TRIP_REPORT,
+        ):
+            return True
+        if screen_mode != CLUSTER_SCREEN_MODE_DEFAULT:
+            return False
+        if state.navi_debug is not None:
+            return False
+        return bool(
+            self._navi_live_panel_visible(state.navi_live)
+            or self._navi_map_frame_present(state.navi_dashboard)
+            or state.navi_dashboard is not None
+        )
+
     @staticmethod
-    def _status_icons_right_x(screen_mode: int) -> float:
+    def _status_icons_right_x(screen_mode: int, right_panel_active: bool = False) -> float:
         """Right edge for the top status icons (Wi-Fi/Bluetooth) and the
         bottom auto-overtake text (design coordinates).
 
-        In DEBUG_GRAPH_RIGHT mode the right side is the steering graph
-        panel (x 1124-1916), so the icons sit at the road view's right
-        edge, just left of the panel. In other modes they sit at the
-        screen's far right. The coordinate is in design space, so the
-        caller's panel-offset translation moves it with the road view.
+        When a right-side panel covers the road view's right edge — the
+        steering graph panel in DEBUG_GRAPH_RIGHT mode, the navigation
+        live panel on the driving screen, or the trip report panel —
+        the icons sit at the road view's right edge, just left of the
+        panel. Otherwise they sit at the screen's far right. The
+        coordinate is in design space, so the caller's panel-offset
+        translation moves it with the road view.
         """
-        if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT:
+        if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT or right_panel_active:
             return DEBUG_PLOT_RIGHT_X
         return DESIGN_WIDTH
 
@@ -8368,7 +8399,7 @@ class ClusterUiRenderer:
         if overtake is not None:
             # Bottom end of the status line, right-aligned to the road
             # view's right edge (the screen's far right, or just left of
-            # the steering graph panel in DEBUG_GRAPH_RIGHT mode).
+            # a right-side panel when one covers it).
             overtake_text = "자동 추월 ON" if overtake else "자동 추월 OFF"
             overtake_color = GREEN if overtake else theme.muted
             max_w = right_x - data_x - GIT_STATUS_MARGIN
@@ -8523,11 +8554,15 @@ class ClusterUiRenderer:
 
     def _draw_network_status(self, state: ClusterUiState, bottom_y: float) -> None:
         # Connectivity pair (Wi-Fi + Bluetooth), right-aligned to the road
-        # view's right edge: the screen's far right, except in
-        # DEBUG_GRAPH_RIGHT mode where the right side is the steering
-        # graph panel, so they sit just left of the panel.
+        # view's right edge: the screen's far right, except when a
+        # right-side panel covers it (steering graph panel in
+        # DEBUG_GRAPH_RIGHT mode, navigation live panel on the driving
+        # screen), so they sit just left of the panel.
         theme = self._current_theme()
-        right_x = self._status_icons_right_x(self._effective_screen_mode(state))
+        screen_mode = self._effective_screen_mode(state)
+        right_x = self._status_icons_right_x(
+            screen_mode, self._right_panel_visible(state, screen_mode)
+        )
         wifi_center_x = right_x - TOP_RIGHT_STATUS_MARGIN - WIFI_STATUS_ICON_SIZE * 0.5
         tint = WHITE if state.network_connected else theme.muted
         alpha = 255 if state.network_connected else 130
