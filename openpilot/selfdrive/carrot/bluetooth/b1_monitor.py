@@ -114,6 +114,7 @@ class Monitor:
     self.client = Bluez()
     self.exchange_lock = asyncio.Lock()
     self.last_signal_at = time.monotonic()
+    self.wifi_last_poll = 0.  # monotonic time of the last /api/b1/intent poll
     self.state = 'idle'
     self.firmware_state = 'waiting'
     self.owned = None
@@ -156,11 +157,89 @@ class Monitor:
                             'last_command':self.last_command})
 
   def stop_source(self):
-    if self.worker:
+    # The WiFi transport (GET /api/b1/intent) shares this worker. Do not
+    # kill it — or release the output lease — while a board is polling,
+    # or the WiFi path would lose its intent source on every BLE flap.
+    wifi_active = 0 <= time.monotonic() - self.wifi_last_poll < 5
+    if self.worker and not wifi_active:
       self.worker.close()
       self.worker = None
     self.source = None
-    self.output_owner.release()
+    if not wifi_active:
+      self.output_owner.release()
+
+  def wifi_intent(self, ack):
+    """One intent for a WiFi-polling B1 board (GET /api/b1/intent?ack=<seq>).
+
+    The board has no BLE session, so there is no board state to read: the
+    synthetic state is 'ready' while the blink_source worker reports a
+    fresh, allowed source, and 'missing' otherwise (Intent.choose then
+    returns op 3, stop — the fail-safe). The worker is the same
+    subprocess the BLE exchange drives; when no BLE board is enrolled the
+    exchange never runs, so this path starts the worker itself and keeps
+    it alive while polls keep coming (see stop_source).
+
+    Seq is the Monitor's one shared counter (board contract, see
+    CarrotB1_Dual.ino): the board only applies a command whose seq is
+    strictly newer than the last one it accepted, so every response mints
+    a fresh seq — including keepalives, or the board would ignore the
+    poll and let the lease lapse. Returns the board JSON dict.
+    """
+    from tools.jetlink.blink_owner import external_output_allowed
+    from tools.jetlink.blink_protocol import Process  # noqa: TID251 -- shared standalone indicator worker
+    if self.params is None:
+      try:
+        from openpilot.common.params import Params
+        self.params = Params()
+      except Exception:
+        self.params = None
+    now = time.monotonic()
+    self.wifi_last_poll = now
+    if self.worker is None or self.worker.process.poll() is not None:
+      if self.worker is not None:
+        self.worker.close(wait=False)
+        self.worker = None
+      try:
+        self.worker = Process('blink_source.py', 'ble')
+      except Exception:
+        self.worker = None
+    if self.worker is not None:
+      # Feed the worker the same receiver feedback the BLE exchange
+      # sends: without it the worker cannot tell an acknowledged hold
+      # from an unacked one. WiFi reports no lamps; the accepted id is
+      # the in-flight command the board's ack refers to, if any.
+      accepted_id = (self.intent.inflight[1] if self.intent.inflight and ack == self.intent.inflight[0]
+                     else None)
+      self.worker.send({'stamp': now, 'state': 'ready', 'lamps': 0, 'accepted_id': accepted_id})
+      latest = self.worker.latest()
+      if latest is not None:
+        self.source = latest
+    # The worker can publish a newer timestamp while latest() drains its
+    # socket (and the imports above cost milliseconds on the first poll),
+    # so re-sample now here — otherwise the source looks "from the
+    # future" and Intent.choose rejects it as stale.
+    now = time.monotonic()
+    allowed = False
+    if self.params is not None:
+      try:
+        allowed = external_output_allowed(self.params)
+      except Exception:
+        allowed = False
+    source_ok = bool(self.source and self.source.get('ok') and
+                     0 <= now - self.source['stamp'] < .20)
+    owned = self.output_owner.acquire(allowed and source_ok)
+    state = 'ready' if owned else 'missing'
+    op, ident, ttl = self.intent.choose(self.source, state, ack, now)
+    # Mint a fresh seq for every response (see docstring).
+    self.intent.seq = (self.intent.seq + 1) % 65536 or 1
+    seq = self.intent.seq
+    if ident:
+      self.intent.inflight = seq, ident, now
+      self.last_command = {'id': ident, 'seq': seq, 'time': now}
+    if op or ident or self.intent.queued or (self.source and (self.source.get('hold') or self.source.get('events'))):
+      self.last_signal_at = now
+    ttl_ms = max(1, min(350, int(ttl * 1000)))
+    return {'op': op, 'seq': seq, 'ttl_ms': ttl_ms, 'stamp': now}
 
   async def release(self):
     self.stop_source()

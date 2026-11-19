@@ -5,6 +5,7 @@ from . import (
   assistant_drive,
   assistant_settings,
   assistant_tools,
+  b1_wifi,
   bluetooth,
   carrot_navi,
   cars,
@@ -41,6 +42,7 @@ def register_all(app: web.Application) -> None:
   assistant_settings.register(app)
   assistant_tools.register(app)
   bluetooth.register(app)
+  b1_wifi.register(app)
   static.register(app)
   intro.register(app)
   carrot_navi.register(app)

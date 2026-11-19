@@ -54,6 +54,34 @@ def atomic_json(path, value, mode=0o600):
     temporary.unlink(missing_ok=True)
 
 
+# Blind-spot state from the Carrot B1 GMLAN sniffer (ESP32 + MIKROE-4225).
+# Written by the web server on POST /api/b1/bsm, read by card.py on every
+# state update and OR-ed into carState left/rightBlindspot. /dev/shm is
+# tmpfs: the file vanishes on reboot, so a stale reading can never survive
+# a restart. The board re-POSTs every 1 s while a side is active, so a
+# 2 s freshness window drops a dead board quickly without flapping.
+B1_BSM_PATH = Path('/dev/shm/carrot-b1-bsm.json')
+B1_BSM_TIMEOUT_S = 2.0
+
+
+def write_b1_bsm(left, right, now=None):
+  """Record a blind-spot reading. `now` is monotonic seconds (test hook)."""
+  atomic_json(B1_BSM_PATH, {'left': bool(left), 'right': bool(right),
+                            'time': time.monotonic() if now is None else now})
+
+
+def read_b1_bsm(now=None):
+  """Return (left, right) if the last reading is fresh, else (False, False)."""
+  now = time.monotonic() if now is None else now
+  state = read_json(B1_BSM_PATH, {})
+  if not isinstance(state, dict):
+    return False, False
+  stamp = state.get('time')
+  if type(stamp) not in (int, float) or not 0 <= now - stamp <= B1_BSM_TIMEOUT_S:
+    return False, False
+  return bool(state.get('left')), bool(state.get('right'))
+
+
 def validate_config(data):
   if not isinstance(data, dict) or not isinstance(data.get('devices', {}), dict):
     raise ValueError('devices must be an object')

@@ -33,6 +33,7 @@ from openpilot.selfdrive.car.hyundai_spas import SpasSignals
 from openpilot.selfdrive.car.hyundai_kick import KickOutput
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate
 from openpilot.selfdrive.controls.lib.desire_lib.tesla_turn import turn_signal_context
+from openpilot.selfdrive.carrot.bluetooth.model import read_b1_bsm
 from openpilot.selfdrive.carrot.xiaoge.xiaoge_vision import (
   XiaogeVisionResult,
   apply_xiaoge_vision_result,
@@ -289,6 +290,14 @@ class Car:
     CS.rightBlindspotOnnx = right_vision
     CS.blindspotSplitSourcesValid = True
     apply_xiaoge_vision_result(CS, self.xiaoge_vision_result, sm_done_ns)
+    # B1 GMLAN sniffer (POST /api/b1/bsm): the low-speed radar blind-spot
+    # bits the high-speed 0x142 never carries on this car. Freshness is
+    # enforced inside read_b1_bsm (2 s; the board re-POSTs every 1 s while
+    # a side is active), and the /dev/shm file vanishes on reboot.
+    left_b1, right_b1 = read_b1_bsm()
+    if left_b1 or right_b1:
+      CS.leftBlindspot = bool(CS.leftBlindspot) or left_b1
+      CS.rightBlindspot = bool(CS.rightBlindspot) or right_b1
     #self.t1 = time.monotonic()
 
     can_rcv_valid = len(can_strs) > 0
