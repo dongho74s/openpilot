@@ -370,8 +370,8 @@ class PlannerParams:
     return 0.0
 
 
-def lane_message(left=-1.75, right=1.75):
-  md = model(left=left, right=right)
+def lane_message(left=-1.75, right=1.75, **kw):
+  md = model(left=left, right=right, **kw)
   md.laneLineStds = [0.1, 0.1, 0.1, 0.1]
   md.meta = NS(desireState=[0.0] * 8)
   return md
@@ -396,6 +396,7 @@ BROKEN_LINES = {
   "short left line y": lambda md: setattr(md.laneLines[1], 'y', [-1.5] * 5),
   "empty right line y": lambda md: setattr(md.laneLines[2], 'y', []),
   "short line x": lambda md: setattr(md.laneLines[1], 'x', list(X[:5])),
+  "empty right line x": lambda md: setattr(md.laneLines[2], 'x', []),
   "short right line t": lambda md: setattr(md.laneLines[2], 't', [0.0] * 5),
   "short probs": lambda md: setattr(md, 'laneLineProbs', [0.5]),
   "no stds": lambda md: setattr(md, 'laneLineStds', []),
@@ -418,7 +419,7 @@ def test_broken_lane_lines_keep_the_last_whole_ones(name):
 
   lp = planner()
   plan_once(lp, lane_message(), now=500.0)
-  md = lane_message(left=-1.5, right=1.5)
+  md = lane_message(left=-1.5, right=1.5, l_prob=0.6, r_prob=0.6)    # every other value differs as well
   BROKEN_LINES[name](md)
   out = plan_once(lp, md, now=501.0)
   assert np.allclose(lp.lll_y, -1.75) and np.allclose(lp.rll_y, 1.75)
@@ -447,3 +448,22 @@ def test_short_desire_state_is_ignored():
   md.meta.desireState = [0.0, 0.0, 0.0, 0.7, 0.2, 0.0, 0.0, 0.0]
   lp.parse_model(md)
   assert lp.l_lane_change_prob == pytest.approx(0.7) and lp.r_lane_change_prob == pytest.approx(0.2)
+
+
+def test_broken_lane_lines_are_held_half_a_second_then_count_as_unseen():
+  lp = planner()
+  hold = sys.modules[type(lp).__module__].LINES_HOLD_FRAMES
+  assert hold == 10                                             # 0.5 s of 20 Hz model messages
+  plan_once(lp, lane_message(), now=500.0)
+  broken = lane_message()
+  broken.laneLines = []
+  now = 500.0
+  for _ in range(hold):                            # held: a dropped message or two changes nothing
+    now += 0.05
+    plan_once(lp, broken, now=now)
+  assert lp.lll_prob == pytest.approx(0.9) and lp.rll_prob == pytest.approx(0.9)
+  out = plan_once(lp, broken, now=now + 0.05)                  # then the stale lines are no longer trusted
+  assert lp.lll_prob == 0.0 and lp.rll_prob == 0.0 and lp.d_prob == 0.0
+  assert np.allclose(lp.lll_y, -1.75) and np.all(np.isfinite(out))   # but stay whole for the arithmetic
+  plan_once(lp, lane_message(), now=now + 0.1)                 # a whole message brings them back at once
+  assert lp.lll_prob == pytest.approx(0.9) and lp.lines_broken_frames == 0

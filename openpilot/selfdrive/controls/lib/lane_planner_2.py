@@ -17,6 +17,8 @@ MAX_LANE_DISTANCE = 3.7
 MAX_LANE_CENTERING_AWAY = 1.85
 KEEP_MIN_DISTANCE_FROM_LANE = 1.35
 KEEP_MIN_DISTANCE_FROM_EDGELANE = 1.15
+# a broken lane line message keeps the last whole lines this long; after it they count as unseen (probability 0)
+LINES_HOLD_FRAMES = int(round(0.5 / DT_MDL))
 
 def clamp(num, min_value, max_value):
   # weird broken case, do something reasonable
@@ -78,6 +80,7 @@ class LanePlanner:
     self.edge_x = np.zeros((TRAJECTORY_SIZE,))
     self.le_std = self.re_std = float('inf')
     self.edges_valid = False
+    self.lines_broken_frames = 0
     self.clamp_max_correction = 0.0
     self.clamp_sides = ""
     self.clamp_holdoff_until = 0.0
@@ -93,11 +96,11 @@ class LanePlanner:
     edges = md.roadEdges
 
     # take the lines and the edges only from a message whose arrays are all whole: get_d_path and the clamp subtract and
-    # interpolate them against each other, so one short array would stop plannerd. A broken lane line message keeps the
-    # last whole one (as a wrong t length always did); broken edges fall back to the lines below.
+    # interpolate them against each other, so one short array would stop plannerd. Broken lane lines keep the last whole
+    # ones for LINES_HOLD_FRAMES, then count as unseen; broken edges fall back to the lines below.
     lines_whole = len(lane_lines) >= 4 and len(md.laneLineProbs) >= 3 and len(md.laneLineStds) >= 3 and \
                   all(len(a) == TRAJECTORY_SIZE for a in (lane_lines[0].t, lane_lines[1].t, lane_lines[2].t,
-                                                          lane_lines[1].x, lane_lines[1].y, lane_lines[2].y))
+                                                          lane_lines[1].x, lane_lines[1].y, lane_lines[2].x, lane_lines[2].y))
     edges_whole = len(edges) >= 2 and len(md.roadEdgeStds) >= 2 and \
                   all(len(a) == TRAJECTORY_SIZE for a in (edges[0].t, edges[0].x, edges[0].y, edges[1].x, edges[1].y))
 
@@ -111,6 +114,11 @@ class LanePlanner:
       self.rll_prob = md.laneLineProbs[2]
       self.lll_std = md.laneLineStds[1]
       self.rll_std = md.laneLineStds[2]
+      self.lines_broken_frames = 0
+    else:
+      self.lines_broken_frames += 1
+      if self.lines_broken_frames > LINES_HOLD_FRAMES:
+        self.lll_prob = self.rll_prob = 0.
 
     if edges_whole:
       self.le_y = np.array(edges[0].y) + md.roadEdgeStds[0] * mdc.EDGE_STD_MARGIN
