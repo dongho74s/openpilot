@@ -5,7 +5,11 @@ from pathlib import Path
 import time
 
 PREVIEW_PATH = Path('/dev/shm/carrot_nav_map.png')
-PREVIEW_MAX_AGE = 2.
+# 2026-11-19: mapsd renders a satellite frame only every 4-5 s (render
+# CPU x10 interval), so a 2 s freshness window made the external-monitor
+# map blink on and off. 6 s covers one render interval; a genuinely
+# stalled mapsd shows a stale frame for at most 6 s (display only).
+PREVIEW_MAX_AGE = 6.
 WEB_DEMAND_PATH = Path('/dev/shm/carrot_nav_web')
 STATUS_PATH = Path('/dev/shm/carrot_nav_status.json')
 
