@@ -63,3 +63,66 @@ def test_stationary_origin_mapping_and_no_http_command_endpoint(tmp_path, monkey
       atomic_json(tmp_path / 'status.json', {'time': time.monotonic() - 3, 'stationary': True})
       assert (await client.post('/api/bluetooth/config', json=payload)).status == 409
   asyncio.run(run())
+
+def test_auto_reconnect_connects_paired_disconnected_device(tmp_path, monkeypatch):
+  spec = importlib.util.spec_from_file_location('bluetooth_feature_reconnect_test', Path(__file__).parents[2] / 'server/features/bluetooth.py')
+  feature = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(feature)
+  monkeypatch.setattr(feature, 'RUNTIME', tmp_path)
+  monkeypatch.setattr(feature, 'CONFIG_PATH', tmp_path / 'config.json')
+  monkeypatch.setattr(feature, 'config', lambda: config(tmp_path / 'config.json'))
+
+  class Client:
+    def __init__(self):
+      self.actions = []
+      self.devices = [{'address': MAC, 'paired': True, 'connected': False}]
+      self.adapters = [{'powered': True}]
+
+    async def snapshot(self):
+      return {'devices': list(self.devices), 'adapters': list(self.adapters)}
+
+    async def device_action(self, mac, operation):
+      self.actions.append((mac, operation))
+
+    async def close(self):
+      pass
+
+  def run_loop(client, seconds=0.12):
+    async def run():
+      task = asyncio.create_task(feature.auto_reconnect({feature.CLIENT: client}, interval_s=0.02))
+      await asyncio.sleep(seconds)
+      task.cancel()
+      await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(run())
+
+  client = Client()
+  atomic_json(tmp_path / 'config.json', {'devices': {MAC: {'profile': 'yiser-j6', 'enabled': True, 'mapping': DEFAULT_MAPPING}}})
+  run_loop(client)
+  assert (MAC, 'connect') in client.actions
+
+  # Already connected: no reconnect attempt.
+  client.actions.clear()
+  client.devices = [{'address': MAC, 'paired': True, 'connected': True}]
+  run_loop(client)
+  assert client.actions == []
+
+  # Disabled in config: no reconnect attempt.
+  client.actions.clear()
+  client.devices = [{'address': MAC, 'paired': True, 'connected': False}]
+  atomic_json(tmp_path / 'config.json', {'devices': {MAC: {'profile': 'yiser-j6', 'enabled': False, 'mapping': DEFAULT_MAPPING}}})
+  run_loop(client)
+  assert client.actions == []
+
+  # Manually disconnected moments ago: suppressed for a while.
+  client.actions.clear()
+  atomic_json(tmp_path / 'config.json', {'devices': {MAC: {'profile': 'yiser-j6', 'enabled': True, 'mapping': DEFAULT_MAPPING}}})
+  atomic_json(tmp_path / 'cancelled.json', {MAC: time.monotonic()})
+  run_loop(client)
+  assert client.actions == []
+
+  # Adapter not powered: no reconnect attempt.
+  client.actions.clear()
+  (tmp_path / 'cancelled.json').unlink(missing_ok=True)
+  client.adapters = [{'powered': False}]
+  run_loop(client)
+  assert client.actions == []

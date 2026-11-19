@@ -13,6 +13,51 @@ CLIENT = web.AppKey('bluetooth', Bluez)
 B1 = web.AppKey('b1_monitor', Monitor)
 LOCK = web.AppKey('bluetooth_lock', asyncio.Lock)
 
+RECONNECT_INTERVAL_S = 15.0
+RECONNECT_SUPPRESS_S = 300.0  # 수동 연결 해제·설정 변경 후 재연결 유예 시간
+
+
+async def auto_reconnect(app, interval_s: float = RECONNECT_INTERVAL_S):
+  """끊긴 설정 기기를 주기적으로 다시 연결한다.
+
+  리모콘이 가만히 있으면 스스로 자고 링크가 끊기는데, 콤마 쪽에서
+  다시 연결을 걸어주는 기능이 없어서 버튼을 누르기 전까지 안 붙는
+  경우가 있다. 설정된(enabled) 기기가 페어링돼 있는데 연결이 끊겼으면
+  주기적으로 Connect를 시도한다. 자고 있는 기기는 광고를 안 해서
+  시도가 실패하는데, 깨어나 광고를 시작하면 다음 시도에서 붙는다.
+  사용자가 직접 연결을 끊었거나 설정을 바꾼 기기는 잠시 건드리지
+  않는다 (cancelled.json 기록 기준).
+  """
+  client = app[CLIENT]
+  while True:
+    await asyncio.sleep(interval_s)
+    try:
+      settings = config()
+      enabled = {mac for mac, device in settings['devices'].items() if device.get('enabled')}
+      if not enabled:
+        continue
+      snapshot = await client.snapshot()
+      if not any(adapter.get('powered') for adapter in snapshot.get('adapters', [])):
+        continue
+      cancelled = read_json(RUNTIME / 'cancelled.json', {})
+      if not isinstance(cancelled, dict):
+        cancelled = {}
+      now = time.monotonic()
+      for device in snapshot.get('devices', []):
+        mac = device['address']
+        if mac not in enabled or not device.get('paired') or device.get('connected'):
+          continue
+        if now - float(cancelled.get(mac, 0) or 0) < RECONNECT_SUPPRESS_S:
+          continue
+        try:
+          await client.device_action(mac, 'connect')
+        except Exception:
+          pass
+    except asyncio.CancelledError:
+      raise
+    except Exception:
+      continue
+
 
 def runtime():
   state = read_json(RUNTIME / 'status.json', {})
@@ -161,7 +206,8 @@ def register(app):
 
   async def monitor_context(app):
     from tools.carrot_b1.auto_update import run as auto_update  # noqa: TID251 -- board release package
-    tasks = [asyncio.create_task(app[B1].run()), asyncio.create_task(auto_update(app[B1]))]
+    tasks = [asyncio.create_task(app[B1].run()), asyncio.create_task(auto_update(app[B1])),
+             asyncio.create_task(auto_reconnect(app))]
     try:
       yield
     finally:
