@@ -92,7 +92,16 @@ class LanePlanner:
     lane_lines = md.laneLines
     edges = md.roadEdges
 
-    if len(lane_lines) >= 4 and len(lane_lines[0].t) == TRAJECTORY_SIZE:
+    # take the lines and the edges only from a message whose arrays are all whole: get_d_path and the clamp subtract and
+    # interpolate them against each other, so one short array would stop plannerd. A broken lane line message keeps the
+    # last whole one (as a wrong t length always did); broken edges fall back to the lines below.
+    lines_whole = len(lane_lines) >= 4 and len(md.laneLineProbs) >= 3 and len(md.laneLineStds) >= 3 and \
+                  all(len(a) == TRAJECTORY_SIZE for a in (lane_lines[0].t, lane_lines[1].t, lane_lines[2].t,
+                                                          lane_lines[1].x, lane_lines[1].y, lane_lines[2].y))
+    edges_whole = len(edges) >= 2 and len(md.roadEdgeStds) >= 2 and \
+                  all(len(a) == TRAJECTORY_SIZE for a in (edges[0].t, edges[0].x, edges[0].y, edges[1].x, edges[1].y))
+
+    if lines_whole:
       self.ll_t = (np.array(lane_lines[1].t) + np.array(lane_lines[2].t))/2
       # left and right ll x is the same
       self.ll_x = lane_lines[1].x
@@ -103,20 +112,19 @@ class LanePlanner:
       self.lll_std = md.laneLineStds[1]
       self.rll_std = md.laneLineStds[2]
 
-    if len(edges[0].t) == TRAJECTORY_SIZE:
+    if edges_whole:
       self.le_y = np.array(edges[0].y) + md.roadEdgeStds[0] * mdc.EDGE_STD_MARGIN
       self.re_y = np.array(edges[1].y) - md.roadEdgeStds[1] * mdc.EDGE_STD_MARGIN
       self.edge_x = np.array(edges[0].x)
       self.le_std, self.re_std = float(md.roadEdgeStds[0]), float(md.roadEdgeStds[1])
-      # the clamp interpolates the edges along edges[0].x: usable only when every array is whole
-      self.edges_valid = all(len(a) == TRAJECTORY_SIZE for a in (edges[0].x, edges[0].y, edges[1].x, edges[1].y))
+      self.edges_valid = True
     else:
       self.le_y = self.lll_y
       self.re_y = self.rll_y
       self.edges_valid = False
 
     desire_state = md.meta.desireState
-    if len(desire_state):
+    if len(desire_state) > max(log.Desire.laneChangeLeft, log.Desire.laneChangeRight):
       self.l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
       self.r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
 

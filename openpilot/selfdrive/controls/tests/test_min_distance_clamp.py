@@ -357,3 +357,93 @@ def test_lane_mode_path_clamp_survives_broken_edge_and_line_arrays():
   lp.edges_valid, lp.edge_x = True, np.zeros(2)            # and edges that still break the interpolation
   out = lp.apply_min_distance_clamp(path.copy(), 25.0, now=502.0)
   assert np.allclose(out[:, 1], path[:, 1])
+
+
+# ---- parse_model takes the lines and the edges only from whole arrays, so neither get_d_path nor the clamp stops
+# plannerd on a broken model message (Codex review of e516320e)
+
+class PlannerParams:
+  def get_int(self, key, block=False, return_default=False):
+    return 0
+
+  def get_float(self, key, block=False, return_default=False):
+    return 0.0
+
+
+def lane_message(left=-1.75, right=1.75):
+  md = model(left=left, right=right)
+  md.laneLineStds = [0.1, 0.1, 0.1, 0.1]
+  md.meta = NS(desireState=[0.0] * 8)
+  return md
+
+
+def planner():
+  lp = lane_planner()
+  lp.params = PlannerParams()
+  return lp
+
+
+def plan_once(lp, md, now):
+  lp.parse_model(md)
+  lp.lanefull_mode, lp.d_prob_count = True, 1000                 # lane mode, past its one second wait
+  path = np.stack([X, np.full(33, -0.95), np.zeros(33)], axis=1)
+  path, _ = lp.get_d_path(NS(), 25.0, np.linspace(0.0, 10.0, 33), path, 0.0)
+  return lp.apply_min_distance_clamp(path, 25.0, now=now)
+
+
+BROKEN_LINES = {
+  "no lane lines": lambda md: setattr(md, 'laneLines', []),
+  "short left line y": lambda md: setattr(md.laneLines[1], 'y', [-1.5] * 5),
+  "empty right line y": lambda md: setattr(md.laneLines[2], 'y', []),
+  "short line x": lambda md: setattr(md.laneLines[1], 'x', list(X[:5])),
+  "short right line t": lambda md: setattr(md.laneLines[2], 't', [0.0] * 5),
+  "short probs": lambda md: setattr(md, 'laneLineProbs', [0.5]),
+  "no stds": lambda md: setattr(md, 'laneLineStds', []),
+}
+
+BROKEN_EDGES = {
+  "no road edges": lambda md: setattr(md, 'roadEdges', []),
+  "one road edge": lambda md: setattr(md, 'roadEdges', md.roadEdges[:1]),
+  "no edge stds": lambda md: setattr(md, 'roadEdgeStds', []),
+  "short right edge y": lambda md: setattr(md.roadEdges[1], 'y', [3.5] * 5),
+  "empty left edge t": lambda md: setattr(md.roadEdges[0], 't', []),
+}
+
+
+@pytest.mark.parametrize("name", BROKEN_LINES)
+def test_broken_lane_lines_keep_the_last_whole_ones(name):
+  first = lane_message()
+  BROKEN_LINES[name](first)
+  assert np.all(np.isfinite(plan_once(planner(), first, now=500.0)))   # broken from the start: the initial arrays
+
+  lp = planner()
+  plan_once(lp, lane_message(), now=500.0)
+  md = lane_message(left=-1.5, right=1.5)
+  BROKEN_LINES[name](md)
+  out = plan_once(lp, md, now=501.0)
+  assert np.allclose(lp.lll_y, -1.75) and np.allclose(lp.rll_y, 1.75)
+  assert len(lp.ll_x) == len(lp.ll_t) == 33 and lp.lll_prob == pytest.approx(0.9)
+  assert np.all(np.isfinite(out))
+
+
+@pytest.mark.parametrize("name", BROKEN_EDGES)
+def test_broken_road_edges_fall_back_to_the_lines(name):
+  lp = planner()
+  plan_once(lp, lane_message(), now=500.0)
+  assert lp.edges_valid
+  md = lane_message()
+  BROKEN_EDGES[name](md)
+  out = plan_once(lp, md, now=501.0)
+  assert not lp.edges_valid and lp.le_y is lp.lll_y and lp.re_y is lp.rll_y
+  assert np.all(np.isfinite(out))
+
+
+def test_short_desire_state_is_ignored():
+  lp = planner()
+  md = lane_message()
+  md.meta.desireState = [0.0, 0.0, 0.0, 0.7]                   # stops before laneChangeRight
+  lp.parse_model(md)
+  assert lp.l_lane_change_prob == 0.0 and lp.r_lane_change_prob == 0.0
+  md.meta.desireState = [0.0, 0.0, 0.0, 0.7, 0.2, 0.0, 0.0, 0.0]
+  lp.parse_model(md)
+  assert lp.l_lane_change_prob == pytest.approx(0.7) and lp.r_lane_change_prob == pytest.approx(0.2)
