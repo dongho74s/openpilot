@@ -89,7 +89,7 @@ class TestNNFFSubstitute(unittest.TestCase):
   def test_substitutes_are_explicit(self):
     self.assertEqual(interfaces.NNFF_MODEL_SUBSTITUTES,
                      {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER", "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_EUV",
-                      "CHEVROLET_BOLT_ACC_PEDAL": "CHEVROLET_BOLT_EUV"})
+                      "CHEVROLET_BOLT_ACC_PEDAL": "CHEVROLET_BOLT_EUV", "CHEVROLET_MALIBU_ASCM": "CHEVROLET_TRAILBLAZER"})
     self.assertIsNone(self.select(car="UNSUPPORTED_CAR", enabled=True))
     self.assertIsNone(self.select(car="CHEVROLET_TRAVERSE_OTHER", enabled=True))
 
@@ -331,6 +331,84 @@ class TestNNFFOverCommaNN(unittest.TestCase):
           controller = latcontrol_torque.LatControlTorque(ci.CP.as_reader(), ci)
           self.assertTrue(controller.use_nnff and controller.nnff_frogpilot_parity)
           self.assertTrue(math.isfinite(controller.torque_from_nn([20.0, 0.0, 0.0, 0.0] + [0.0] * 14)))
+
+
+class TestMalibuAscmNNFF(unittest.TestCase):
+  """User request 2026-11-19: the Malibu ASCM harness has no NNFF model, so with NNFF on it borrows the Trailblazer's,
+  exactly as the Traverse does. The other Malibu choices are unchanged."""
+
+  def setUp(self):
+    self.params = MemoryParams()
+    for module in (interfaces, gm_interface):
+      self.enterContext(patch.object(module, "Params", return_value=self.params))
+    self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+
+  def interface(self, car, nnff=True):
+    self.params.values["NNFF"] = int(nnff)
+    cp = IsolatedGMInterface.get_params(car, gen_empty_fingerprint(), [], False, False, False)
+    return IsolatedGMInterface(cp)
+
+  def test_uses_the_traverse_donor_only_with_nnff_on(self):
+    self.assertIsNone(interfaces.get_nn_model_path(CAR.CHEVROLET_MALIBU_ASCM, ""))
+    for firmware in ("", "unknown EPS firmware"):
+      with self.subTest(firmware=firmware):
+        malibu = interfaces.get_nn_model_path(CAR.CHEVROLET_MALIBU_ASCM, firmware, allow_substitute=True)
+        traverse = interfaces.get_nn_model_path(CAR.CHEVROLET_TRAVERSE, firmware, allow_substitute=True)
+        self.assertEqual(Path(malibu).name, "CHEVROLET_TRAILBLAZER.json")
+        self.assertEqual(malibu, traverse)
+
+    on = self.interface(CAR.CHEVROLET_MALIBU_ASCM)
+    self.assertFalse(on.check_comma_nn_ff_support(CAR.CHEVROLET_MALIBU_ASCM))
+    self.assertTrue(on.use_nnff)
+    self.assertFalse(on.use_nnff_lite)
+    self.assertEqual(self.params.get("NNFFModelName"), "CHEVROLET TRAILBLAZER (substitute)")
+
+    self.params.values.pop("NNFFModelName")
+    off = self.interface(CAR.CHEVROLET_MALIBU_ASCM, nnff=False)
+    self.assertFalse(off.use_nnff)
+    self.assertIsNone(off.lat_torque_nn_model)
+    self.assertIsNone(self.params.get("NNFFModelName"))
+
+  def test_other_malibus_are_unchanged(self):
+    for car in (CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC):
+      with self.subTest(car=car):
+        self.assertIsNone(interfaces.get_nn_model_path(car, "", allow_substitute=True))
+        self.assertFalse(self.interface(car).use_nnff)
+
+  def test_substitute_changes_no_vehicle_parameters(self):
+    off = self.interface(CAR.CHEVROLET_MALIBU_ASCM, nnff=False).CP
+    on = self.interface(CAR.CHEVROLET_MALIBU_ASCM).CP
+    self.assertEqual(on.to_dict(), off.to_dict())
+    self.assertEqual(on.carFingerprint, CAR.CHEVROLET_MALIBU_ASCM)
+    self.assertEqual(on.lateralTuning.which(), "torque")
+
+  def test_real_torque_controller_runs_the_traverse_nnff_path(self):
+    from openpilot.selfdrive.controls.lib import latcontrol_torque
+
+    with patch.object(latcontrol_torque, "Params", return_value=self.params):
+      for enabled in (False, True):
+        with self.subTest(enabled=enabled):
+          malibu_ci = self.interface(CAR.CHEVROLET_MALIBU_ASCM, nnff=enabled)
+          malibu = latcontrol_torque.LatControlTorque(malibu_ci.CP.as_reader(), malibu_ci)
+          traverse_ci = self.interface(CAR.CHEVROLET_TRAVERSE, nnff=enabled)
+          traverse = latcontrol_torque.LatControlTorque(traverse_ci.CP.as_reader(), traverse_ci)
+          self.assertEqual(malibu.use_nnff, enabled)
+          self.assertEqual(malibu.nnff_frogpilot_parity, enabled)
+          self.assertEqual((malibu.use_nnff, malibu.nnff_frogpilot_parity),
+                           (traverse.use_nnff, traverse.nnff_frogpilot_parity))
+          if enabled:
+            # the same model as the Traverse: identical output for identical inputs
+            for speed in (5.0, 20.0, 35.0):
+              for accel in (-2.0, 0.0, 2.0):
+                for roll in (-0.02, 0.0, 0.02):
+                  inputs = [speed, accel, 0.0, roll] + [accel] * 7 + [roll] * 7
+                  value = malibu.torque_from_nn(inputs)
+                  self.assertTrue(math.isfinite(value))
+                  self.assertEqual(value, traverse.torque_from_nn(inputs))
+    # like the Traverse, it keeps the stock error blend (the low-speed cut is the Trailblazer's alone)
+    self.assertNotIn("CHEVROLET_MALIBU_ASCM", latcontrol_torque.NNFF_LOW_SPEED_ERROR_BLEND_CARS)
+    self.assertIn("CHEVROLET_MALIBU_ASCM", latcontrol_torque.NNFF_FROGPILOT_PARITY_CARS)
+
 
 if __name__ == "__main__":
   unittest.main()
