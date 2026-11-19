@@ -8321,19 +8321,28 @@ class ClusterUiRenderer:
         """True when a right-side panel covers the road view's right edge
         in this mode (same branches as the main render loop).
 
-        DEBUG_GRAPH_RIGHT always has the steering graph panel and
-        TRIP_REPORT always has the trip panel. On the driving screen
-        (DEFAULT) the navigation live panel covers the same strip
-        whenever it is drawn. The navigation debug panel does not count:
-        it starts lower (y 118) and ends well above the bottom status
-        line, so neither the top icons nor the overtake text collide
-        with it.
+        DEBUG_GRAPH_RIGHT always has the steering graph panel,
+        TRIP_REPORT always has the trip panel, and NAV_MODEL always
+        has the map panel. DEBUG and DEBUG_SYSTEM have the live debug
+        and system dashboard panels on the same right strip — except
+        when the panel layout is swapped to the left. On the driving
+        screen (DEFAULT) the navigation live panel covers the same
+        strip whenever it is drawn. The navigation debug panel does
+        not count: it starts lower (y 118) and ends well above the
+        bottom status line, so neither the top icons nor the overtake
+        text collide with it.
         """
         if screen_mode in (
             CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
             CLUSTER_SCREEN_MODE_TRIP_REPORT,
+            CLUSTER_SCREEN_MODE_NAV_MODEL,
         ):
             return True
+        if screen_mode in (
+            CLUSTER_SCREEN_MODE_DEBUG,
+            CLUSTER_SCREEN_MODE_DEBUG_SYSTEM,
+        ):
+            return not self._panel_swap_active()
         if screen_mode != CLUSTER_SCREEN_MODE_DEFAULT:
             return False
         if state.navi_debug is not None:
@@ -8350,12 +8359,14 @@ class ClusterUiRenderer:
         bottom auto-overtake text (design coordinates).
 
         When a right-side panel covers the road view's right edge — the
-        steering graph panel in DEBUG_GRAPH_RIGHT mode, the navigation
-        live panel on the driving screen, or the trip report panel —
-        the icons sit at the road view's right edge, just left of the
-        panel. Otherwise they sit at the screen's far right. The
-        coordinate is in design space, so the caller's panel-offset
-        translation moves it with the road view.
+        steering graph panel in DEBUG_GRAPH_RIGHT mode, the live debug
+        and system dashboard panels in DEBUG and DEBUG_SYSTEM, the map
+        panel in NAV_MODEL, the navigation live panel on the driving
+        screen, or the trip report panel — the icons sit at the road
+        view's right edge, just left of the panel. Otherwise they sit
+        at the screen's far right. The coordinate is in design space,
+        so the caller's panel-offset translation moves it with the
+        road view.
         """
         if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT or right_panel_active:
             return DEBUG_PLOT_RIGHT_X
