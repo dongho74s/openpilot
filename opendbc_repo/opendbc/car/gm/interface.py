@@ -402,6 +402,12 @@ class CarInterface(CarInterfaceBase):
       ret.networkLocation = NetworkLocation.fwdCamera
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value
       ret.minEnableSpeed = -1
+      if candidate == CAR.CHEVROLET_BOLT_ACC_PEDAL and not bolt_acc_pedal_long:
+        # Mode 1 drives through the ECM's ACC, and the Bolt's ECM and camera allow it only above 5 km/h or at a stop
+        # with the brake pressed (see the Silverado note below). Engaging stopped without the brake made the ECM fault
+        # 0.5 s later (rlog 00000021--282be5cb94--1, 2026-11-19, twice, behind a lead in one-pedal hold). GM's
+        # belowEngageSpeed then blocks such an engage unless stopped with brake >= 20, as on the stock ACC.
+        ret.minEnableSpeed = 5 * CV.KPH_TO_MS
       ret.pcmCruise = False
       ret.openpilotLongitudinalControl = True
       ret.autoResumeSng = True

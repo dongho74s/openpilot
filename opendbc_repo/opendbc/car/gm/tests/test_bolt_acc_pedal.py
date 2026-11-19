@@ -252,7 +252,7 @@ def test_other_bolt_longcontrol_streams_unchanged(runtime, monkeypatch, key):
 
 BOLT = CAR.CHEVROLET_BOLT_ACC_PEDAL
 HYBRID_SAFETY = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.GAS_INTERCEPTOR)
-LONG_FIELDS = ("openpilotLongitudinalControl", "pcmCruise", "autoResumeSng", "minEnableSpeed", "startingState", "startAccel",
+LONG_FIELDS = ("openpilotLongitudinalControl", "pcmCruise", "autoResumeSng", "startingState", "startAccel",
                "vEgoStarting", "vEgoStopping", "stopAccel", "stoppingDecelRate", "longitudinalActuatorDelay",
                "enableGasInterceptorDEPRECATED", "networkLocation", "radarUnavailable", "transmissionType")
 
@@ -273,12 +273,21 @@ def test_longitudinal_car_params_are_the_bolt_euvs(runtime, pedal, alpha):
 def test_car_params_with_pedal(runtime, alpha):
   cp = bolt_cp(runtime, BOLT, True, alpha)
   assert cp.safetyConfigs[0].safetyParam == HYBRID_SAFETY  # no NO_ACC, PEDAL_LONG or BOLT_ACC_PEDAL panda bits
-  assert cp.openpilotLongitudinalControl and not cp.pcmCruise and cp.autoResumeSng and cp.minEnableSpeed == -1
+  assert cp.openpilotLongitudinalControl and not cp.pcmCruise and cp.autoResumeSng
+  # the ECM's own rule (above 5 km/h, or stopped with the brake): the Bolt EUV with pedal has -1 there
+  assert cp.minEnableSpeed == pytest.approx(5 / 3.6)
   assert not cp.flags & GMFlags.PEDAL_LONG.value  # would cancel the ECM's ACC that camera long drives through
   assert bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, alpha).flags & GMFlags.PEDAL_LONG.value  # the Bolt EUV keeps it
   # carrot's single-breakpoint GM tuning, so LongTuningKpV/KiV/Kf apply; the delay is the LongActuatorDelay Param's
   lt = cp.longitudinalTuning
   assert (list(lt.kpBP), list(lt.kiBP)) == ([0.0], [0.0])
+
+
+def test_min_enable_speed_only_in_mode_1_with_a_pedal(runtime, monkeypatch):
+  assert bolt_cp(runtime, BOLT, True, False).minEnableSpeed == pytest.approx(5 / 3.6)
+  assert bolt_cp(runtime, BOLT, False, True).minEnableSpeed == bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True).minEnableSpeed
+  monkeypatch.setattr(runtime.interface, "Params", memory_params(BoltPedalLongMode=2))
+  assert bolt_cp(runtime, BOLT, True, False).minEnableSpeed == -1  # StarPilot mode cancels the ECM's ACC
 
 
 def test_car_params_without_pedal_are_the_bolt_euvs_camera_paths(runtime):
