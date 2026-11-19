@@ -809,6 +809,55 @@ def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
     assert wifi_left - bt_right >= 6.0
     assert bt_left > lfa_lane_right
 
+  # Driving screen with a right-side panel (navigation live panel) uses
+  # the same anchor as DEBUG_GRAPH_RIGHT (2026-11-19).
+  assert ClusterUiRenderer._status_icons_right_x(
+    cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT, True
+  ) == cluster_renderer.DEBUG_PLOT_RIGHT_X
+  assert ClusterUiRenderer._status_icons_right_x(
+    cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT, False
+  ) == cluster_renderer.DESIGN_WIDTH
+
+
+def test_right_panel_visible_on_driving_screen_with_navi() -> None:
+  renderer = object.__new__(ClusterUiRenderer)
+  blank = SimpleNamespace(navi_debug=None, navi_live=None, navi_dashboard=None)
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT
+  ) is False
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT
+  ) is True
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_TRIP_REPORT
+  ) is True
+  with_dashboard = SimpleNamespace(
+    navi_debug=None,
+    navi_live=None,
+    navi_dashboard=SimpleNamespace(connected=False, map_stream_stalled=False, media=[]),
+  )
+  assert renderer._right_panel_visible(
+    with_dashboard, cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT
+  ) is True
+  with_live = SimpleNamespace(
+    navi_debug=None,
+    navi_live=SimpleNamespace(current="x"),
+    navi_dashboard=None,
+  )
+  assert renderer._right_panel_visible(
+    with_live, cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT
+  ) is True
+  # Navigation debug panel replaces the live panel and does not reach
+  # the top icons or the bottom status line.
+  with_debug = SimpleNamespace(
+    navi_debug=object(),
+    navi_live=SimpleNamespace(current="x"),
+    navi_dashboard=None,
+  )
+  assert renderer._right_panel_visible(
+    with_debug, cluster_renderer.CLUSTER_SCREEN_MODE_DEFAULT
+  ) is False
+
 
 def test_speed_gear_badge_has_transparent_interior() -> None:
   renderer = object.__new__(ClusterUiRenderer)
