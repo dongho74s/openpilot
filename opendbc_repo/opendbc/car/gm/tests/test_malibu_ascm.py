@@ -93,16 +93,26 @@ def test_radar_read_only_when_the_whole_stock_stream_is_on_bus_1(runtime):
   assert runtime.interface.CarInterface.get_params(MALIBU_ASCM, partial, [], False, True, False).radarUnavailable
 
 
-def test_steers_with_starpilots_command_timing(runtime):
+STEER_FIELDS = ("STEER_MAX", "STEER_MAX_EPS", "STEER_STEP", "INACTIVE_STEER_STEP", "STEER_DELTA_UP", "STEER_DELTA_DOWN",
+                "STEER_DRIVER_ALLOWANCE", "STEER_DRIVER_MULTIPLIER", "STEER_DRIVER_FACTOR", "PANDA_MAX_RATE_UP",
+                "PANDA_MAX_RATE_DOWN", "PANDA_MAX_RT_DELTA", "PANDA_RT_INTERVAL_MS")
+
+
+def steer_view(params):
+  return {**{f: getattr(params, f) for f in STEER_FIELDS}, "custom_up_ceiling": params.max_custom_steer_delta_up()}
+
+
+def test_steers_like_the_traverse(runtime):
+  # user request 2026-11-19: same steering as the Traverse (33 Hz, +10/-15) and the other GM cars' limits
+  traverse = runtime.interface.CarInterface.get_params(CAR.CHEVROLET_TRAVERSE, gen_empty_fingerprint(), [], False, True, False)
   params = CarControllerParams(malibu_cp(runtime))
+  assert steer_view(params) == steer_view(CarControllerParams(traverse))
   assert (params.STEER_STEP, params.STEER_DELTA_UP, params.STEER_DELTA_DOWN) == (3, 10, 15)
 
 
-@pytest.mark.parametrize("custom,expected", [({}, (10, 15)), ({"CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99}, (10, 15)),
-                                             ({"CustomSteerDeltaUp": 3, "CustomSteerDeltaDown": 5}, (3, 15)),
-                                             ({"CustomSteerDeltaUp": 12, "CustomSteerDeltaDown": 20}, (10, 15))])
-def test_custom_steps_stay_inside_this_harnesss_panda_limits(runtime, monkeypatch, custom, expected):
-  # The panda enforces StarPilot's up 10 / down 15 here, and wants a drop of at least 15 while the driver opposes
+@pytest.mark.parametrize("custom", [{}, {"CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99},
+                                    {"CustomSteerDeltaUp": 3, "CustomSteerDeltaDown": 5}, {"CustomSteerMax": 250}])
+def test_custom_steering_settings_act_as_on_the_traverse(runtime, monkeypatch, custom):
   from opendbc.car.gm.tests.test_display_speed import MemoryParams
 
   class Custom(MemoryParams):
@@ -110,28 +120,14 @@ def test_custom_steps_stay_inside_this_harnesss_panda_limits(runtime, monkeypatc
       super().__init__(*args)
       self.values.update(custom)
   monkeypatch.setattr(runtime.controller, "Params", Custom)
-  params = CarControllerParams(malibu_cp(runtime))
-  assert (params.PANDA_MAX_RATE_UP, params.PANDA_MAX_RATE_DOWN, params.max_custom_steer_delta_up()) == (10, 15, 10)
-  controller = runtime.controller.CarController(DBC[MALIBU_ASCM], malibu_cp(runtime))
   ci, _ = run(runtime, ticks=1)
-  controller.update(structs.CarControl().as_reader(), ci.CS, time.monotonic_ns())
-  assert (controller.params.STEER_DELTA_UP, controller.params.STEER_DELTA_DOWN) == expected
-
-
-def test_other_gm_custom_down_steps_have_no_floor(runtime, monkeypatch):
-  from opendbc.car.gm.tests.test_display_speed import MemoryParams
-
-  class Custom(MemoryParams):
-    def __init__(self, *args):
-      super().__init__(*args)
-      self.values.update({"CustomSteerDeltaDown": 5})
-  monkeypatch.setattr(runtime.controller, "Params", Custom)
-  cp = runtime.interface.CarInterface.get_params(CAR.CHEVROLET_BOLT_CC, gen_empty_fingerprint(), [], False, True, False)
-  assert CarControllerParams(cp).STEER_DELTA_DOWN_MIN == 0
-  controller = runtime.controller.CarController(DBC[CAR.CHEVROLET_BOLT_CC], cp)
-  ci, _ = run(runtime, ticks=1)
-  controller.update(structs.CarControl().as_reader(), ci.CS, time.monotonic_ns())
-  assert controller.params.STEER_DELTA_DOWN == 5
+  views = []
+  for cp in (malibu_cp(runtime), runtime.interface.CarInterface.get_params(CAR.CHEVROLET_TRAVERSE, gen_empty_fingerprint(), [],
+                                                                           False, True, False)):
+    controller = runtime.controller.CarController(DBC[cp.carFingerprint], cp)
+    controller.update(structs.CarControl().as_reader(), ci.CS, time.monotonic_ns())
+    views.append(steer_view(controller.params))
+  assert views[0] == views[1]
 
 
 def test_the_other_malibus_are_unchanged(runtime):

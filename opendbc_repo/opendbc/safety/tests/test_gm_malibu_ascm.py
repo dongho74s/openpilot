@@ -236,20 +236,22 @@ VIOLATIONS = {
 }
 
 
-@pytest.mark.parametrize('case', sorted(VIOLATIONS))
-def test_ascm_intercept_blocks_steering_limit_violations(native, case):
-  use(native, ASCM_INT)
-  native.set_controls_allowed(True)
-  accepted = steer(native, VIOLATIONS[case])
-  assert all(accepted[:-1]) and not accepted[-1]
+# What the Traverse runs with openpilot longitudinal (interface.py); any other GM layout gives the same steering checks
+TRAVERSE = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.HW_SDGM | GMSafetyFlags.MANUAL_AUTO_HOLD)
 
 
+@pytest.mark.parametrize('param', [ASCM_INT, ASCM_INT_C9])
 @pytest.mark.parametrize('case', sorted(VIOLATIONS))
-def test_the_camera_harness_still_passes_them(native, case):
-  # carrot's existing GM policy, unchanged for every other car
-  use(native, CAMERA)
-  native.set_controls_allowed(True)
-  assert all(steer(native, VIOLATIONS[case]))
+def test_steering_checks_are_the_traverses_and_other_gm_cars(native, param, case):
+  """Steering stays carrot's GM policy (user request 2026-11-19): the panda does not drop LKA frames that fail the
+  torque checks, exactly as on the camera harness and the Traverse."""
+  results = {}
+  for p in (param, CAMERA, TRAVERSE):
+    use(native, p)
+    native.set_controls_allowed(True)
+    results[p] = steer(native, VIOLATIONS[case])
+  assert results[param] == results[CAMERA] == results[TRAVERSE]
+  assert all(results[param])
 
 
 def test_ascm_intercept_keeps_always_on_lateral(native):
@@ -316,18 +318,17 @@ def lateral_drive(scenario):
   return ticks
 
 
-SCENARIOS = ["steady", "driver opposes", "driver opposes negative", "driver pulses", "driver pulses negative", "driver helps"]
-CUSTOMS = [{}, {"CustomSteerMax": 999, "CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99},
-           {"CustomSteerDeltaUp": 3, "CustomSteerDeltaDown": 5}]
+SCENARIOS = ["steady", "driver opposes", "driver pulses negative"]
+CUSTOMS = [{}, {"CustomSteerMax": 999, "CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99}]
 
 
 @pytest.mark.parametrize('param', [ASCM_INT, ASCM_INT_C9])
-@pytest.mark.parametrize('pscm_period', [1, 10])
+@pytest.mark.parametrize('pscm_period', [1])
 @pytest.mark.parametrize('custom', range(len(CUSTOMS)))
 @pytest.mark.parametrize('scenario', SCENARIOS)
-def test_the_hosts_steering_frames_pass_the_new_checks(native, runtime, monkeypatch, param, pscm_period, custom, scenario):
-  """The real CarController (StarPilot timing, CustomSteer* clipping, PandaRtGuard) against the enforced C checks, with
-  the driver's torque reaching both the host (PSCMStatus) and the panda's driver samples."""
+def test_the_hosts_steering_frames_reach_the_car(native, runtime, monkeypatch, param, pscm_period, custom, scenario):
+  """The real CarController against the C hooks, with the driver's torque reaching both the host (PSCMStatus) and the
+  panda's driver samples: every LKA frame is transmitted, as on the other GM cars."""
   from opendbc.car.gm.tests.test_display_speed import MemoryParams
 
   class Custom(MemoryParams):

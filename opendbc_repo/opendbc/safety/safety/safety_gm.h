@@ -313,18 +313,6 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     .max_rt_interval = 250000,
     .type = TorqueDriverLimited,
   };
-  // StarPilot's GM limits for the Malibu ASCM harness, which also blocks violations. The host's down step equals this
-  // max_rate_down, as driver_limit_check makes every command drop by at least that much while the driver opposes it.
-  const TorqueSteeringLimits GM_ASCM_INT_STEERING_LIMITS = {
-    .max_steer = 300,
-    .max_rate_up = 10,
-    .max_rate_down = 15,
-    .driver_torque_allowance = 65,
-    .driver_torque_multiplier = 4,
-    .max_rt_delta = 128,
-    .max_rt_interval = 250000,
-    .type = TorqueDriverLimited,
-  };
 
   bool tx = true;
   int addr = GET_ADDR(to_send);
@@ -352,14 +340,8 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
 
     bool steer_req = GET_BIT(to_send, 3U);
 
-    if (steer_torque_cmd_checks(desired_torque, steer_req, gm_ascm_int ? GM_ASCM_INT_STEERING_LIMITS : GM_STEERING_LIMITS)) {
+    if (steer_torque_cmd_checks(desired_torque, steer_req, GM_STEERING_LIMITS)) {
       //tx = false;
-      // Carrot leaves GM torque-limit violations to the host. The Malibu ASCM harness blocks them as StarPilot does
-      // (max, rate, real-time and steer-request checks); permission to steer while disengaged (always-on lateral) is
-      // unchanged.
-      if (gm_ascm_int) {
-        tx = false;
-      }
     }
   }
 
