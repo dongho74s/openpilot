@@ -415,6 +415,23 @@ class TestChevroletTrailblazerNNFF(unittest.TestCase):
         self.assertEqual(on.carFingerprint, car)
         self.assertEqual(on.lateralTuning.which(), "torque")
 
+  def test_volt_cc_steers_with_nnff_off(self):
+    # it used to get an empty PID with NNFF off, which raised once engaged; it now runs the torque controller
+    from openpilot.selfdrive.controls.lib import latcontrol_torque
+    from opendbc.car.vehicle_model import VehicleModel
+
+    ci = self.interface(CAR.CHEVROLET_VOLT_CC, nnff=False)
+    self.assertEqual(ci.CP.lateralTuning.which(), "torque")
+    self.assertFalse(ci.use_nnff)
+    with patch.object(latcontrol_torque, "Params", return_value=self.params):
+      controller = latcontrol_torque.LatControlTorque(ci.CP.as_reader(), ci)
+      cs = SimpleNamespace(vEgo=20.0, aEgo=0.0, steeringAngleDeg=0.0, steeringRateDeg=0.0, steeringPressed=False)
+      cc = SimpleNamespace(angularVelocity=[0.0] * 3, orientationNED=[0.0] * 3)
+      params = SimpleNamespace(roll=0.0, angleOffsetDeg=0.0)
+      for curvature in (0.0, 0.002, -0.002):
+        torque, _, log = controller.update(True, cs, VehicleModel(ci.CP), params, False, curvature, cc, False, None)
+        self.assertTrue(log.active and math.isfinite(torque) and abs(torque) <= 1.0)
+
   def test_real_torque_controller_runs_the_traverse_nnff_path(self):
     from openpilot.selfdrive.controls.lib import latcontrol_torque
 
@@ -425,10 +442,7 @@ class TestChevroletTrailblazerNNFF(unittest.TestCase):
         for enabled in (False, True):
           with self.subTest(car=car, enabled=enabled):
             ci = self.interface(car, nnff=enabled)
-            if ci.CP.lateralTuning.which() != "torque":
-              # the Volt CC steers with PID while NNFF is off (controlsd builds LatControlPID), as before
-              self.assertFalse(enabled or ci.use_nnff)
-              continue
+            self.assertEqual(ci.CP.lateralTuning.which(), "torque")   # torque tuning either way, as on the Traverse
             controller = latcontrol_torque.LatControlTorque(ci.CP.as_reader(), ci)
             self.assertEqual(controller.use_nnff, enabled)
             self.assertEqual(controller.nnff_frogpilot_parity, enabled)

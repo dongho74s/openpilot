@@ -2,6 +2,7 @@
 StarPilot's ASCM_INT path (StarPilotHQ/StarPilot stable 8589b73f, CHEVROLET_MALIBU_ASCM). The ASCM keeps the stock ACC and
 radar; openpilot steers. Real DBC, packer, parser, CarState and CarController; no device I/O."""
 import time
+from types import SimpleNamespace as NS
 
 import pytest
 
@@ -135,7 +136,9 @@ def test_the_other_malibus_are_unchanged(runtime):
   assert premier.networkLocation == structs.CarParams.NetworkLocation.gateway
   assert premier.safetyConfigs[0].safetyParam == 0
   assert premier.openpilotLongitudinalControl and not premier.pcmCruise and not premier.radarUnavailable
-  assert (CarControllerParams(premier).STEER_STEP, CarControllerParams(premier).STEER_DELTA_UP) == (4, 5)
+  # their layouts are unchanged; since 2026-11-19 (user request) they steer at the Traverse's timing like this car
+  for params in (CarControllerParams(premier), CarControllerParams(NS(carFingerprint=CAR.CHEVROLET_MALIBU_CC))):
+    assert (params.STEER_STEP, params.STEER_DELTA_UP, params.STEER_DELTA_DOWN) == (3, 10, 15)
 
   fingerprint = gen_empty_fingerprint()
   fingerprint[0] = dict(FINGERPRINTS[CAR.CHEVROLET_MALIBU_CC][0])

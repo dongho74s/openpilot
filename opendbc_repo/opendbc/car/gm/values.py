@@ -420,8 +420,11 @@ def is_cc_only(CP) -> bool:
 # from 0.60 to 0.28-0.30 s. Not yet checked in the car; the fingerprint also covers the Bolt EV 2017-23 No-ACC.
 # The Bolt ACC with pedal shares the Bolt No-ACC's steering, so it takes the same timing.
 # The Malibu ASCM harness steers like the Traverse (user request 2026-11-19); StarPilot also runs its GM cars at this timing.
+# The other Chevrolets that borrow the Traverse's Trailblazer NNFF model (Malibu, Malibu CC, Volt 2019, Volt CC) take the
+# same timing so their steering matches the Traverse too (user request 2026-11-19). Not checked in these cars.
 FROGPILOT_STEER_TIMING_CAR = {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
-                              CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_MALIBU_ASCM}
+                              CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_MALIBU_ASCM,
+                              CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_VOLT_2019, CAR.CHEVROLET_VOLT_CC}
 # We're integrated at the Safety Data Gateway Module on these cars
 SDGM_CAR = {CAR.CADILLAC_XT4, CAR.CHEVROLET_TRAVERSE, CAR.BUICK_BABYENCLAVE, CAR.CHEVROLET_VOLT_2019}
 

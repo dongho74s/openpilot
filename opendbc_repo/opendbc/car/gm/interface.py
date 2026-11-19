@@ -282,6 +282,11 @@ class CarInterface(CarInterfaceBase):
         ret.lateralTuning.pid.kiV = [0.]
         ret.lateralTuning.pid.kf = 1.
 
+    elif candidate == CAR.CHEVROLET_VOLT_CC:
+      # No lateral tuning used to be set here, so with NNFF off the Volt CC got an empty PID and lateral control raised
+      # "array of sample points is empty" once engaged (Codex review 2026-11-19). Torque tuning, as on the Traverse.
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
     elif candidate == CAR.CADILLAC_CT6_ACC:
       ret.steerActuatorDelay = 0.3
       ret.longitudinalTuning.kpBP = [0.]
