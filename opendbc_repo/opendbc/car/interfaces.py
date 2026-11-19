@@ -41,10 +41,13 @@ TORQUE_NN_MODEL_PATH = os.path.join(BASEDIR, 'torque_data/lat_models')
 # comma's NN feedforward and 1.05-1.12x the Bolt EUV NNFF model's, so with NNFF on it borrows that model (user request).
 # Its fingerprint also covers the Bolt EV 2017-23 No-ACC, for which the donor is untested. The Bolt ACC with pedal
 # (CHEVROLET_BOLT_ACC_PEDAL) is the same car and steering, so it borrows the same model.
-# The Malibu ASCM harness (CHEVROLET_MALIBU_ASCM) has no NNFF model either; it borrows the Trailblazer's, as the Traverse
-# does (user request 2026-11-19). Whether that model suits the Malibu's steering is untested.
-NNFF_MODEL_SUBSTITUTES = {"CHEVROLET_TRAVERSE": "CHEVROLET_TRAILBLAZER", "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_EUV",
-                          "CHEVROLET_BOLT_ACC_PEDAL": "CHEVROLET_BOLT_EUV", "CHEVROLET_MALIBU_ASCM": "CHEVROLET_TRAILBLAZER"}
+# Every other Chevrolet without an NNFF model of its own borrows the Trailblazer's, as the Traverse does (user request
+# 2026-11-19: the Malibu ASCM harness first, then every Chevrolet without NNFF, as the user's StarPilot fork does for the
+# Malibus). Whether that model suits these cars' steering is untested.
+TRAILBLAZER_NNFF_BORROWERS = ("CHEVROLET_TRAVERSE", "CHEVROLET_MALIBU", "CHEVROLET_MALIBU_CC", "CHEVROLET_MALIBU_ASCM",
+                              "CHEVROLET_VOLT_2019", "CHEVROLET_VOLT_CC", "CHEVROLET_TRAILBLAZER_CC", "CHEVROLET_TRAX")
+NNFF_MODEL_SUBSTITUTES = {**{car: "CHEVROLET_TRAILBLAZER" for car in TRAILBLAZER_NNFF_BORROWERS},
+                          "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_EUV", "CHEVROLET_BOLT_ACC_PEDAL": "CHEVROLET_BOLT_EUV"}
 # With NNFF on and a model present these use NNFF before comma's own NN feedforward, as FrogPilot does (it picks its
 # NNFF whenever it has a model; user request 2026-11-15). Every other car with comma's NN keeps comma's path.
 # The Bolt CC and the Bolt ACC with pedal join them with their substitute model (user request 2026-11-17).
