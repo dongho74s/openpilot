@@ -387,6 +387,55 @@ def test_gas_pressed_matches_the_panda_raw_average(runtime, raw1, raw2):
   assert gas_pressed_for(runtime, raw1, raw2) == ((raw1 + raw2) // 2 > 550)
 
 
+def gas_pressed_series(runtime, samples, disengage_on_gas=False):
+  """gasPressed from one CarState fed one (raw track average, ECM AcceleratorPedal2) per 10 ms frame, track1 = track2 =
+  raw. DisengageOnAccelerator off (carrot's default) sets DISABLE_DISENGAGE_ON_GAS, as card.py does."""
+  from opendbc.safety import ALTERNATIVE_EXPERIENCE
+  cp = bolt_cp(runtime, BOLT, True, False)
+  cp.alternativeExperience = 0 if disengage_on_gas else ALTERNATIVE_EXPERIENCE.DISABLE_DISENGAGE_ON_GAS
+  ci = runtime.interface.CarInterface.__new__(runtime.interface.CarInterface)
+  ci.CS = runtime.state.CarState(cp)
+  ci.can_parsers = ci.CS.get_can_parsers(cp)
+  ci.v_ego_cluster_seen = False
+  packer = runtime.CANPacker(DBC[BOLT][Bus.pt])
+  pressed = []
+  for tick, (raw, ecm) in enumerate(samples):
+    frames = [f for f in carstate_frames(packer, 0, False) if f[0] != 0x1C4]
+    frames.append(packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": 0, "AcceleratorPedal2": ecm}))
+    frames.append(packer.make_can_msg("GAS_SENSOR", 0, {"INTERCEPTOR_GAS": raw * 0.125677 - 75.909,
+                                                         "INTERCEPTOR_GAS2": raw * 0.251976 - 76.601}))
+    pressed.append(bool(ci.update([(1_000_000_000 + tick * 10_000_000, frames)]).gasPressed))
+  return pressed
+
+
+# rlog 00000023--f5c4a454cd--13, 24.6-25.6 s: a light foot sitting on 550 (the ECM's AcceleratorPedal2 read 1-13 there).
+# The panda-exact threshold flipped gasPressed 10 times here, and carrot took each flip as a gas tap (+10 km/h).
+LIGHT_FOOT = [(raw, 8) for raw in (544, 552, 547, 551, 542, 554, 548, 557, 549, 551, 545, 553, 550, 557, 548, 559,
+                                         538, 554, 545, 564)]
+
+
+def test_a_light_foot_on_the_threshold_stays_one_press(runtime):
+  """A press starts above the panda's 550 and is held down to 515 while the ECM still reads the pedal pressed."""
+  samples = LIGHT_FOOT + [(530, 8), (516, 8), (515, 8), (475, 0), (551, 9), (516, 9), (475, 0), (550, 0)]
+  pressed = gas_pressed_series(runtime, samples)
+  assert pressed == [False] + [True] * (len(LIGHT_FOOT) - 1) + [True, True, False, False, True, True, False, False]
+  assert all(host or raw <= 550 for host, (raw, _) in zip(pressed, samples))  # never released while the panda sees a press
+
+
+def test_the_ecm_pedal_ends_a_held_press(runtime):
+  """A pedal resting inside the band (or a foot the ECM reads as off) cannot hold a press: AcceleratorPedal2 0 ends it."""
+  samples = [(475, 0), (551, 9), (540, 9), (540, 0), (540, 0), (551, 9), (540, 0)]
+  assert gas_pressed_series(runtime, samples) == [False, True, True, False, False, True, False]
+
+
+def test_disengage_on_gas_keeps_the_panda_edges(runtime):
+  """With DisengageOnAccelerator on the panda drops control on each press edge of its own, so the host must see exactly
+  its edges (Codex review 2026-11-19: a held press hid the panda's second edge after a re-engage)."""
+  samples = LIGHT_FOOT + [(475, 0), (565, 20), (535, 15), (535, 15), (565, 20), (475, 0)]
+  assert gas_pressed_series(runtime, samples, disengage_on_gas=True) == [raw > 550 for raw, _ in samples]
+  assert gas_pressed_series(runtime, samples[-6:]) == [False, True, True, True, True, False]
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # CarController: the camera-long frames, plus the pedal only at the ECM's standstill
 

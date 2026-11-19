@@ -12,6 +12,7 @@ from opendbc.car.gm.stock_fcw import StockFcw, stock_fcw_supported
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CAMERA_ACC_CAR, \
   is_bolt_acc_pedal_starpilot, is_cc_only
 from opendbc.car.interfaces import CarStateBase
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 
 ButtonType = structs.CarState.ButtonEvent.Type
 TransmissionType = structs.CarParams.TransmissionType
@@ -39,6 +40,11 @@ def create_stock_long_cancel_button_events() -> list[structs.CarState.ButtonEven
 INTERCEPTOR_GAS_SCALE = ((0.125677, -75.909), (0.251976, -76.601))
 GM_PANDA_INTERCEPTOR_GAS_THRESHOLD = 550  # safety_gm.h GM_GAS_INTERCEPTOR_THRESHOLD
 BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD = 595  # safety_gm.h, Bolt ACC with pedal in StarPilot mode (bit 2048)
+# Bolt ACC with pedal: a press may be held down to this many raw counts below the panda's threshold. A light foot sits
+# right on 550 (rlog 00000023--f5c4a454cd--13: 535-565, the ECM's AcceleratorPedal2 1-13), so the panda-exact threshold
+# flipped gasPressed every 20-120 ms; carrot took each flip as a gas tap (+10 km/h, 30 -> 140) and the panda dropped
+# the gas frames sent in the gaps. The pedal rests at ~475 (450-486 in both logged segments, AcceleratorPedal2 0).
+BOLT_ACC_PEDAL_GAS_RELEASE_MARGIN = 35
 
 
 def interceptor_raw_average(gas, gas2):
@@ -71,6 +77,7 @@ class CarState(CarStateBase):
     # (StarPilot) runs as a CC-only pedal-long car and replays the camera's 0x370 FCWAlert level on openpilot's 0x370.
     self.is_bolt_acc_pedal = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED
     self.is_bolt_starpilot = self.is_bolt_acc_pedal and is_bolt_acc_pedal_starpilot(CP)
+    self.bolt_gas_pressed = False
     self.cc_only = is_cc_only(CP)
     self.stock_fcw_alert = 0
     self.is_metric = False
@@ -221,11 +228,20 @@ class CarState(CarStateBase):
       threshold = 20 if self.CP.carFingerprint in CAMERA_ACC_CAR else 4
       ret.gasPressed = ret.gas > threshold
       if self.is_bolt_acc_pedal:
-        # The panda's own decision (raw track average > 550, or StarPilot's 595 in mode 2) on the same frame, so both
-        # see the same press and release edges; the scaled thresholds left a band where only one of them saw a press.
+        # The panda's own decision (raw track average > 550, or StarPilot's 595 in mode 2) on the same frame is always a
+        # press, so the host never releases while the panda sees one. Just under it a press is held (down to
+        # BOLT_ACC_PEDAL_GAS_RELEASE_MARGIN below) only while
+        #  - the panda ignores gas edges (DisengageOnAccelerator off, carrot's default): with them on it drops control
+        #    on every edge of its own and the host must see the same edges, and
+        #  - the ECM still reads the driver's pedal as pressed (AcceleratorPedal2, 0 with the foot off), so a pedal
+        #    resting inside the band cannot hold a press forever.
         threshold = BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD if self.is_bolt_starpilot else GM_PANDA_INTERCEPTOR_GAS_THRESHOLD
-        ret.gasPressed = interceptor_raw_average(pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"],
-                                                 pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) > threshold
+        raw = interceptor_raw_average(pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"], pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"])
+        hold = (self.bolt_gas_pressed and raw > threshold - BOLT_ACC_PEDAL_GAS_RELEASE_MARGIN and
+                bool(self.CP.alternativeExperience & ALTERNATIVE_EXPERIENCE.DISABLE_DISENGAGE_ON_GAS) and
+                pt_cp.vl["AcceleratorPedal2"]["AcceleratorPedal2"] > 0)
+        self.bolt_gas_pressed = raw > threshold or hold
+        ret.gasPressed = self.bolt_gas_pressed
     else:
       ret.gas = pt_cp.vl["AcceleratorPedal2"]["AcceleratorPedal2"] / 254.
       ret.gasPressed = ret.gas > 1e-5
