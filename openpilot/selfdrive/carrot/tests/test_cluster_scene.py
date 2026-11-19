@@ -831,6 +831,35 @@ def test_right_panel_visible_on_driving_screen_with_navi() -> None:
   assert renderer._right_panel_visible(
     blank, cluster_renderer.CLUSTER_SCREEN_MODE_TRIP_REPORT
   ) is True
+  # DEBUG (1), DEBUG_SYSTEM (2) and NAV_MODEL (7) also have a right-side
+  # panel on the same strip, so the icons and overtake text anchor to
+  # the road view's right edge there too (2026-11-19).
+  renderer.panel_layout = cluster_renderer.CLUSTER_PANEL_LAYOUT_DRIVING_LEFT
+  renderer.screen_mode = cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG
+  ) is True
+  renderer.screen_mode = cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG_SYSTEM
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG_SYSTEM
+  ) is True
+  # NAV_MODEL is excluded from panel swapping, so its map panel stays
+  # on the right even with the swapped layout.
+  renderer.panel_layout = cluster_renderer.CLUSTER_PANEL_LAYOUT_DRIVING_RIGHT
+  renderer.screen_mode = cluster_renderer.CLUSTER_SCREEN_MODE_NAV_MODEL
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_NAV_MODEL
+  ) is True
+  # With the swapped layout the DEBUG panels move to the left, so the
+  # road view's right edge is the screen's far right again.
+  renderer.screen_mode = cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG
+  ) is False
+  renderer.screen_mode = cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG_SYSTEM
+  assert renderer._right_panel_visible(
+    blank, cluster_renderer.CLUSTER_SCREEN_MODE_DEBUG_SYSTEM
+  ) is False
   with_dashboard = SimpleNamespace(
     navi_debug=None,
     navi_live=None,
