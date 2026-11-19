@@ -73,9 +73,19 @@ class CarControllerParams:
       self.STEER_DELTA_UP = 10
       self.STEER_DELTA_DOWN = 15
 
+    if CP.carFingerprint in ASCM_INT_CAR:
+      # This harness's panda enforces StarPilot's GM torque limits (safety_gm.h GM_ASCM_INT_STEERING_LIMITS: up 10,
+      # down 15). While the driver opposes the command the panda wants every command to drop by at least its down step,
+      # so the host keeps a down step of exactly 15 and a custom up step of at most 10.
+      self.PANDA_MAX_RATE_UP = 10
+      self.PANDA_MAX_RATE_DOWN = 15
+      self.STEER_DELTA_DOWN_MIN = 15
+
   # Panda GM torque limits (safety_gm.h GM_STEERING_LIMITS); a CustomSteerDelta* setting is clipped to stay inside them.
   PANDA_MAX_RATE_UP = 20
   PANDA_MAX_RATE_DOWN = 25
+  # A custom down step is raised to this (0: no floor). Only cars whose panda enforces the torque checks need one.
+  STEER_DELTA_DOWN_MIN = 0
   PANDA_MAX_RT_DELTA = 128
   PANDA_RT_INTERVAL_MS = 250
 

@@ -98,6 +98,42 @@ def test_steers_with_starpilots_command_timing(runtime):
   assert (params.STEER_STEP, params.STEER_DELTA_UP, params.STEER_DELTA_DOWN) == (3, 10, 15)
 
 
+@pytest.mark.parametrize("custom,expected", [({}, (10, 15)), ({"CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99}, (10, 15)),
+                                             ({"CustomSteerDeltaUp": 3, "CustomSteerDeltaDown": 5}, (3, 15)),
+                                             ({"CustomSteerDeltaUp": 12, "CustomSteerDeltaDown": 20}, (10, 15))])
+def test_custom_steps_stay_inside_this_harnesss_panda_limits(runtime, monkeypatch, custom, expected):
+  # The panda enforces StarPilot's up 10 / down 15 here, and wants a drop of at least 15 while the driver opposes
+  from opendbc.car.gm.tests.test_display_speed import MemoryParams
+
+  class Custom(MemoryParams):
+    def __init__(self, *args):
+      super().__init__(*args)
+      self.values.update(custom)
+  monkeypatch.setattr(runtime.controller, "Params", Custom)
+  params = CarControllerParams(malibu_cp(runtime))
+  assert (params.PANDA_MAX_RATE_UP, params.PANDA_MAX_RATE_DOWN, params.max_custom_steer_delta_up()) == (10, 15, 10)
+  controller = runtime.controller.CarController(DBC[MALIBU_ASCM], malibu_cp(runtime))
+  ci, _ = run(runtime, ticks=1)
+  controller.update(structs.CarControl().as_reader(), ci.CS, time.monotonic_ns())
+  assert (controller.params.STEER_DELTA_UP, controller.params.STEER_DELTA_DOWN) == expected
+
+
+def test_other_gm_custom_down_steps_have_no_floor(runtime, monkeypatch):
+  from opendbc.car.gm.tests.test_display_speed import MemoryParams
+
+  class Custom(MemoryParams):
+    def __init__(self, *args):
+      super().__init__(*args)
+      self.values.update({"CustomSteerDeltaDown": 5})
+  monkeypatch.setattr(runtime.controller, "Params", Custom)
+  cp = runtime.interface.CarInterface.get_params(CAR.CHEVROLET_BOLT_CC, gen_empty_fingerprint(), [], False, True, False)
+  assert CarControllerParams(cp).STEER_DELTA_DOWN_MIN == 0
+  controller = runtime.controller.CarController(DBC[CAR.CHEVROLET_BOLT_CC], cp)
+  ci, _ = run(runtime, ticks=1)
+  controller.update(structs.CarControl().as_reader(), ci.CS, time.monotonic_ns())
+  assert controller.params.STEER_DELTA_DOWN == 5
+
+
 def test_the_other_malibus_are_unchanged(runtime):
   premier = runtime.interface.CarInterface.get_params(CAR.CHEVROLET_MALIBU, malibu_fingerprint(sascm=False), [], False, True, False)
   assert premier.networkLocation == structs.CarParams.NetworkLocation.gateway
@@ -113,10 +149,15 @@ def test_the_other_malibus_are_unchanged(runtime):
   assert not no_acc.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_ASCM_INT
 
 
-def frames(packer, tick, *, brake_pos=0, ecm_brake=0, cruise_state=1, ascm_lkas=True, ascm_counter=None, accel_pos=True):
+def frames(packer, tick, *, brake_pos=0, ecm_brake=0, cruise_state=1, ascm_lkas=True, ascm_counter=None, accel_pos=True,
+           driver_torque=0.0, pscm=True):
   """One 10 ms slice of the car side (bus 0) and the ASCM side (bus 2) with the relay closed."""
   sends = {(addr, 0): (addr, bytes(length), 0) for addr, length in FINGERPRINTS[CAR.CHEVROLET_MALIBU][0].items()
            if addr not in ASCM_OUTPUTS}
+  msg = packer.make_can_msg("PSCMStatus", 0, {"LKADriverAppldTrq": driver_torque})
+  sends[(msg[0], msg[2])] = tuple(msg)
+  if not pscm:
+    del sends[(msg[0], msg[2])]
   sends[(SASCM, 0)] = (SASCM, bytes(8), 0)
   if accel_pos:
     msg = packer.make_can_msg("ECMAcceleratorPos", 0, {"BrakePedalPos": brake_pos})

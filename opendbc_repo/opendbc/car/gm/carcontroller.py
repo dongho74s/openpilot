@@ -144,7 +144,7 @@ class CarController(CarControllerBase):
       if steerDeltaUp > 0:
         self.params.STEER_DELTA_UP = min(steerDeltaUp, self.params.max_custom_steer_delta_up())
       if steerDeltaDown > 0:
-        self.params.STEER_DELTA_DOWN = min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN)
+        self.params.STEER_DELTA_DOWN = max(min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN), self.params.STEER_DELTA_DOWN_MIN)
       self.cluster_take_steering_mode = params.get_int("GmClusterTakeSteering")
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")

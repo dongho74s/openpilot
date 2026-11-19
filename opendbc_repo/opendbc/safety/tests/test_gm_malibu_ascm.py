@@ -231,6 +231,7 @@ def steer(lib, frames, start_us=1_000_000, step_us=30_000):
 VIOLATIONS = {
   "over the 300 limit": [(0, True)] + [(min(10 * i, 300), True) for i in range(1, 31)] + [(301, True)],
   "a jump from 0 to 100": [(0, True), (100, True)],
+  "a rise of 11": [(0, True), (10, True), (21, True)],
   "torque without the request bit": [(0, True), (10, False)],
 }
 
@@ -296,36 +297,69 @@ def test_the_new_bits_are_ignored_next_to_any_other_mode_bit(native, extra, came
   assert behavior(native, base | int(GMSafetyFlags.HW_ASCM_INT)) == behavior(native, base)
 
 
-@pytest.mark.parametrize('custom', [{}, {"CustomSteerMax": 999, "CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99}])
-def test_the_hosts_steering_frames_pass_the_new_checks(native, runtime, monkeypatch, custom):
-  """The real CarController (StarPilot timing, CustomSteer* clipping, PandaRtGuard) against the enforced C checks."""
+def lateral_drive(scenario):
+  """(torque request, driver torque in Nm) for every 10 ms tick."""
+  sign = -1.0 if scenario.endswith("negative") else 1.0
+  ticks = []
+  for tick in range(700):
+    request = 0.0 if tick < 20 else 1.0 if tick < 420 else 0.3 if tick < 520 else 0.0
+    driver = 0.0
+    if scenario == "steady" and 300 <= tick < 420:
+      request = -1.0
+    elif scenario.startswith("driver opposes") and 150 <= tick < 260:
+      driver = -3.0
+    elif scenario.startswith("driver pulses") and 150 <= tick < 400 and (tick // 15) % 2 == 0:
+      driver = -3.0
+    elif scenario == "driver helps" and 150 <= tick < 260:
+      driver = 3.0
+    ticks.append((sign * request, sign * driver))
+  return ticks
+
+
+SCENARIOS = ["steady", "driver opposes", "driver opposes negative", "driver pulses", "driver pulses negative", "driver helps"]
+CUSTOMS = [{}, {"CustomSteerMax": 999, "CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99},
+           {"CustomSteerDeltaUp": 3, "CustomSteerDeltaDown": 5}]
+
+
+@pytest.mark.parametrize('param', [ASCM_INT, ASCM_INT_C9])
+@pytest.mark.parametrize('pscm_period', [1, 10])
+@pytest.mark.parametrize('custom', range(len(CUSTOMS)))
+@pytest.mark.parametrize('scenario', SCENARIOS)
+def test_the_hosts_steering_frames_pass_the_new_checks(native, runtime, monkeypatch, param, pscm_period, custom, scenario):
+  """The real CarController (StarPilot timing, CustomSteer* clipping, PandaRtGuard) against the enforced C checks, with
+  the driver's torque reaching both the host (PSCMStatus) and the panda's driver samples."""
   from opendbc.car.gm.tests.test_display_speed import MemoryParams
 
   class Custom(MemoryParams):
     def __init__(self, *args):
       super().__init__(*args)
-      self.values.update(custom)
+      self.values.update(CUSTOMS[custom])
   monkeypatch.setattr(runtime.controller, "Params", Custom)
 
-  use(native, ASCM_INT)
+  use(native, param)
   native.set_torque_driver(0, 0)
-  ci = car.malibu_interface(runtime)
+  ci = car.malibu_interface(runtime, car.malibu_cp(runtime, accel_pos=not param & int(GMSafetyFlags.ASCM_INT_C9_BRAKE)))
+  assert ci.CP.safetyConfigs[0].safetyParam == param
   controller = runtime.controller.CarController(car.DBC[car.MALIBU_ASCM], ci.CP)
   packer = runtime.CANPacker(car.DBC[car.MALIBU_ASCM][car.Bus.pt])
-  requests = [0.0] * 20 + [1.0] * 150 + [-1.0] * 150 + [0.3] * 60 + [-0.05] * 30 + [0.0] * 80
   t0 = time.monotonic_ns()
-  sent, rejected = 0, []
-  for tick, request in enumerate(requests):
+  sent, rejected, peak = 0, [], 0
+  for tick, (request, driver) in enumerate(lateral_drive(scenario)):
     now = t0 + tick * 10_000_000
-    ci.update([(now, car.frames(packer, tick, ascm_counter=2))])
+    native.set_timer(1_000_000 + tick * 10_000)
+    slice_ = car.frames(packer, tick, ascm_counter=2, driver_torque=driver, pscm=tick % pscm_period == 0)
+    for address, dat, bus in slice_:
+      if address == 0x184 and bus == 0:
+        rx(native, address, bytes(dat))
+    ci.update([(now, slice_)])
     cc = car.structs.CarControl(enabled=True, latActive=True)
     cc.actuators.torque = request
-    _, sends = controller.update(cc.as_reader(), ci.CS, now)
-    native.set_timer(1_000_000 + tick * 10_000)
+    output, sends = controller.update(cc.as_reader(), ci.CS, now)
+    peak = max(peak, abs(controller.apply_torque_last))
     for address, dat, bus in sends:
       if address == 0x180:
         sent += 1
         if not tx(native, address, bytes(dat), bus=bus):
-          rejected.append(tick)
-  assert sent > 150
+          rejected.append((tick, controller.apply_torque_last))
+  assert sent > 200 and peak >= 100  # it really steered, also at a custom up step of 3
   assert rejected == []
