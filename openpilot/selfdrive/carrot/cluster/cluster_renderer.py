@@ -253,8 +253,11 @@ WIFI_STATUS_ICON_SIZE = 48.0
 # WIFI_STATUS_CENTER_X now only anchors NAV_STATUS_CENTER_X (the navigation
 # label drawn under the clock).
 TOP_RIGHT_STATUS_MARGIN = 28.0
-# Bluetooth icon height matches the Wi-Fi icon height (2026-11-19).
-TOP_RIGHT_BT_ICON_H = WIFI_STATUS_ICON_SIZE
+# Bluetooth icon height. The rune is drawn in a narrow 2:1 box, so at the
+# same height as the square Wi-Fi texture it looks much smaller (2026-11-19
+# photo: the mark read as tiny next to Wi-Fi). 64 makes its visual weight
+# match the 48-pixel Wi-Fi icon while staying centred on the same line.
+TOP_RIGHT_BT_ICON_H = 64.0
 TOP_RIGHT_BT_GAP = 16.0
 # Keep the badge to the right of the clock, clear of its text and stroke.
 EGPU_STATUS_CENTER_X = 474.0

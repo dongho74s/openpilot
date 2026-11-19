@@ -763,11 +763,12 @@ def test_traffic_states_share_the_slot_beside_driving_mode(monkeypatch, traffic_
 
 
 def test_top_status_icons_keep_outer_and_inter_icon_margins() -> None:
-  # Bluetooth icon is the same height as the Wi-Fi icon and sky blue when
-  # connected (2026-11-19).
-  assert cluster_renderer.TOP_RIGHT_BT_ICON_H == pytest.approx(
-    cluster_renderer.WIFI_STATUS_ICON_SIZE
-  )
+  # Bluetooth icon is sky blue when connected (2026-11-19). Its height is
+  # deliberately larger than the Wi-Fi icon's: the rune is drawn in a
+  # narrow 2:1 box, so at equal height it reads as much smaller than the
+  # square Wi-Fi texture (2026-11-19 photo).
+  assert cluster_renderer.TOP_RIGHT_BT_ICON_H > cluster_renderer.WIFI_STATUS_ICON_SIZE
+  assert cluster_renderer.TOP_RIGHT_BT_ICON_H == pytest.approx(64.0)
   assert SKY_BLUE == (135, 206, 235)
   # Layout rearranged 2026-11-18: LFA (carrot steering icon) moved to the
   # top-left end, Wi-Fi + Bluetooth moved to the road view's right edge.
