@@ -6,11 +6,14 @@ import ctypes
 import os
 from pathlib import Path
 import subprocess
+import time
 
 import pytest
 
 from opendbc.car import structs
 from opendbc.car.gm.values import GMSafetyFlags
+from opendbc.car.gm.tests import test_malibu_ascm as car
+from opendbc.car.gm.tests.test_display_speed import runtime  # noqa: F401
 
 GM = structs.CarParams.SafetyModel.gm
 ASCM_INT = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT)
@@ -40,6 +43,7 @@ def native(tmp_path_factory):
   lib.get_cruise_engaged_prev.restype = ctypes.c_bool
   lib.set_cruise_engaged_prev.argtypes = [ctypes.c_bool]
   lib.set_timer.argtypes = [ctypes.c_uint32]
+  lib.set_torque_driver.argtypes = [ctypes.c_int, ctypes.c_int]
   lib.gm_test_frame.argtypes = [ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_char_p, ctypes.c_uint]
   lib.gm_test_frame.restype = ctypes.c_int
   return lib
@@ -206,3 +210,122 @@ def test_stock_lkas_on_the_car_side_is_a_relay_malfunction(native):
   native.set_controls_allowed(True)
   rx(native, 0x180, bytes(4))
   assert not tx(native, 0x180, bytes(4))
+
+
+def lkas(torque, request=True):
+  raw = torque & 0x7FF
+  return bytes([(raw >> 8) | (0x08 if request else 0), raw & 0xFF, 0, 0])
+
+
+def steer(lib, frames, start_us=1_000_000, step_us=30_000):
+  """Sends (torque, request) frames 30 ms apart from a fresh state; returns which were accepted."""
+  lib.set_timer(start_us)
+  lib.set_torque_driver(0, 0)
+  accepted = []
+  for i, (torque, request) in enumerate(frames):
+    lib.set_timer(start_us + i * step_us)
+    accepted.append(tx(lib, 0x180, lkas(torque, request)))
+  return accepted
+
+
+VIOLATIONS = {
+  "over the 300 limit": [(0, True)] + [(min(10 * i, 300), True) for i in range(1, 31)] + [(301, True)],
+  "a jump from 0 to 100": [(0, True), (100, True)],
+  "torque without the request bit": [(0, True), (10, False)],
+}
+
+
+@pytest.mark.parametrize('case', sorted(VIOLATIONS))
+def test_ascm_intercept_blocks_steering_limit_violations(native, case):
+  use(native, ASCM_INT)
+  native.set_controls_allowed(True)
+  accepted = steer(native, VIOLATIONS[case])
+  assert all(accepted[:-1]) and not accepted[-1]
+
+
+@pytest.mark.parametrize('case', sorted(VIOLATIONS))
+def test_the_camera_harness_still_passes_them(native, case):
+  # carrot's existing GM policy, unchanged for every other car
+  use(native, CAMERA)
+  native.set_controls_allowed(True)
+  assert all(steer(native, VIOLATIONS[case]))
+
+
+def test_ascm_intercept_keeps_always_on_lateral(native):
+  use(native, ASCM_INT)
+  native.set_controls_allowed(False)
+  assert all(steer(native, [(0, True), (10, True), (20, True), (10, True), (0, True)]))
+
+
+MODE_BITS = [int(GMSafetyFlags.HW_CAM_LONG), int(GMSafetyFlags.CC_LONG), int(GMSafetyFlags.NO_CAMERA),
+             int(GMSafetyFlags.HW_ASCM_LONG), int(GMSafetyFlags.NO_ACC), int(GMSafetyFlags.PEDAL_LONG),
+             int(GMSafetyFlags.GAS_INTERCEPTOR), int(GMSafetyFlags.EV), int(GMSafetyFlags.HW_SDGM),
+             int(GMSafetyFlags.MANUAL_AUTO_HOLD), int(GMSafetyFlags.BOLT_ACC_PEDAL)]
+NEW_BITS = int(GMSafetyFlags.HW_ASCM_INT | GMSafetyFlags.ASCM_INT_C9_BRAKE)
+
+
+def behavior(lib, param):
+  """What a param does: brake source, RX checks, a TX sample, forwarding sample and steering-limit enforcement."""
+  use(lib, param)
+  out = [tuple(brake_state(lib, pos, bit)) for pos, bit in ((10, 0), (0, 1))]
+  for missing in (None, 0xBE, 0xF1, 0x3D1, 0xBD, 0x201):
+    use(lib, param)
+    for address, length in {**RX_FRAMES, 0x3D1: 8, 0xBD: 7, 0x201: 6}.items():
+      if address != missing:
+        rx(lib, address, bytes(length))
+    out.append(lib.safety_config_valid())
+  for address, length, bus, data in ((0x200, 6, 0, None), (0x1E1, 7, 0, button(CANCEL)), (0x2CB, 8, 0, None), (0x370, 6, 0, None),
+                                     (0x315, 5, 2, None), (0x184, 8, 2, None), (0x1E1, 7, 2, button(CANCEL))):
+    use(lib, param)
+    lib.set_controls_allowed(True)
+    lib.set_cruise_engaged_prev(True)
+    out.append(tx(lib, address, data or bytes(length), bus=bus))
+  use(lib, param)
+  out.append(tuple(fwd(lib, address, bus) for address, bus in ((0x180, 2), (0x370, 2), (0x315, 2), (0x2CB, 2), (0x184, 0), (0x3D1, 0))))
+  use(lib, param)
+  lib.set_controls_allowed(True)
+  out.append(tuple(steer(lib, VIOLATIONS["a jump from 0 to 100"])))
+  return out
+
+
+@pytest.mark.parametrize('extra', MODE_BITS)
+@pytest.mark.parametrize('camera', [True, False])
+def test_the_new_bits_are_ignored_next_to_any_other_mode_bit(native, extra, camera):
+  base = extra | (CAMERA if camera else 0)
+  assert behavior(native, base | NEW_BITS) == behavior(native, base)
+  assert behavior(native, base | int(GMSafetyFlags.HW_ASCM_INT)) == behavior(native, base)
+
+
+@pytest.mark.parametrize('custom', [{}, {"CustomSteerMax": 999, "CustomSteerDeltaUp": 99, "CustomSteerDeltaDown": 99}])
+def test_the_hosts_steering_frames_pass_the_new_checks(native, runtime, monkeypatch, custom):
+  """The real CarController (StarPilot timing, CustomSteer* clipping, PandaRtGuard) against the enforced C checks."""
+  from opendbc.car.gm.tests.test_display_speed import MemoryParams
+
+  class Custom(MemoryParams):
+    def __init__(self, *args):
+      super().__init__(*args)
+      self.values.update(custom)
+  monkeypatch.setattr(runtime.controller, "Params", Custom)
+
+  use(native, ASCM_INT)
+  native.set_torque_driver(0, 0)
+  ci = car.malibu_interface(runtime)
+  controller = runtime.controller.CarController(car.DBC[car.MALIBU_ASCM], ci.CP)
+  packer = runtime.CANPacker(car.DBC[car.MALIBU_ASCM][car.Bus.pt])
+  requests = [0.0] * 20 + [1.0] * 150 + [-1.0] * 150 + [0.3] * 60 + [-0.05] * 30 + [0.0] * 80
+  t0 = time.monotonic_ns()
+  sent, rejected = 0, []
+  for tick, request in enumerate(requests):
+    now = t0 + tick * 10_000_000
+    ci.update([(now, car.frames(packer, tick, ascm_counter=2))])
+    cc = car.structs.CarControl(enabled=True, latActive=True)
+    cc.actuators.torque = request
+    _, sends = controller.update(cc.as_reader(), ci.CS, now)
+    native.set_timer(1_000_000 + tick * 10_000)
+    for address, dat, bus in sends:
+      if address == 0x180:
+        sent += 1
+        if not tx(native, address, bytes(dat), bus=bus):
+          rejected.append(tick)
+  assert sent > 150
+  assert rejected == []

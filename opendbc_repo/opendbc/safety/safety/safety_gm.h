@@ -342,6 +342,12 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
 
     if (steer_torque_cmd_checks(desired_torque, steer_req, GM_STEERING_LIMITS)) {
       //tx = false;
+      // Carrot leaves GM torque-limit violations to the host. The Malibu ASCM harness blocks them as StarPilot does
+      // (max, rate, real-time and steer-request checks); permission to steer while disengaged (always-on lateral) is
+      // unchanged.
+      if (gm_ascm_int) {
+        tx = false;
+      }
     }
   }
 
@@ -558,8 +564,11 @@ static safety_config gm_init(uint16_t param) {
 
   gm_cc_long = GET_FLAG(param, GM_PARAM_CC_LONG);
   gm_sdgm = GET_FLAG(param, GM_PARAM_HW_SDGM);
-  // Only meaningful on the forwarding (camera) layout; the ASCM layout already reads the brake from 0xBE.
-  gm_ascm_int = GET_FLAG(param, GM_PARAM_HW_ASCM_INT) && (gm_hw == GM_CAM);
+  // Only the exact stock-ACC layout the host builds for this car: HW_CAM + HW_ASCM_INT, optionally + the C9 brake. Any
+  // other mode bit alongside them makes the panda ignore both new bits, so a mixed param keeps its existing behavior.
+  const uint16_t GM_ASCM_INT_PARAMS = GM_PARAM_HW_CAM | GM_PARAM_HW_ASCM_INT | GM_PARAM_ASCM_INT_C9_BRAKE;
+  gm_ascm_int = GET_FLAG(param, GM_PARAM_HW_ASCM_INT) && GET_FLAG(param, GM_PARAM_HW_CAM) &&
+                ((param & (uint16_t)(~GM_ASCM_INT_PARAMS)) == 0U);
   gm_ascm_int_c9_brake = gm_ascm_int && GET_FLAG(param, GM_PARAM_ASCM_INT_C9_BRAKE);
   gm_cam_long = false;
 #ifdef ALLOW_DEBUG
