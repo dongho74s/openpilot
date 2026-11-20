@@ -360,11 +360,16 @@ class MochiSaver:
     blink = self._blink_scale(t)
     lid = min(lid, blink)
 
-    # 눈 (좌·우)
+    # 눈 (좌·우) — 후진 R / 주차 P는 눈동자 대신 눈 안에 큰 글자
+    eye_letter = None
+    if expr == EXPR_REVERSE:
+      eye_letter = "R"
+    elif expr == EXPR_PARK:
+      eye_letter = "P"
     for side in (-1, 1):
       ex = cx + side * eye_dx + jx
       ey = face_cy + eye_y + jy
-      self._draw_eye(ex, ey, eye_r, lid, pupil_dx, pupil_dy, pupil_r, t, expr, side)
+      self._draw_eye(ex, ey, eye_r, lid, pupil_dx, pupil_dy, pupil_r, t, expr, side, eye_letter)
 
     # 입
     self._draw_mouth(cx, face_cy + mouth_y, mouth, s, t)
@@ -377,10 +382,6 @@ class MochiSaver:
       self._draw_sweat(cx, face_cy, s, t)
     elif expr == EXPR_START:
       self._draw_badge_text("GO~~", cx, face_cy - 380.0 * s, 130, C_YELLOW, s)
-    elif expr == EXPR_REVERSE:
-      self._draw_gear_badge(cx + 640.0 * s, face_cy - 360.0 * s, s, "R")
-    elif expr == EXPR_PARK:
-      self._draw_gear_badge(cx + 640.0 * s, face_cy - 360.0 * s, s, "P")
     elif expr == EXPR_AUTOHOLD:
       self._draw_hold_badge(cx, face_cy - 380.0 * s, s)
 
@@ -399,15 +400,23 @@ class MochiSaver:
 
   def _draw_eye(self, ex: float, ey: float, r: float, lid: float,
                 pupil_dx: float, pupil_dy: float, pupil_r: float,
-                t: float, expr: str, side: int) -> None:
+                t: float, expr: str, side: int, letter: str | None = None) -> None:
     # 흰자 (원)
     rl.draw_circle(int(ex), int(ey), int(r), EYE_WHITE)
-    # 눈동자
-    px = ex + pupil_dx
-    py = ey + pupil_dy
-    rl.draw_circle(int(px), int(py), int(pupil_r), PUPIL)
-    # 눈동자 반짝이
-    rl.draw_circle(int(px - pupil_r * 0.3), int(py - pupil_r * 0.3), int(pupil_r * 0.22), PUPIL_HI)
+    if letter is not None:
+      # 눈 안에 큰 글자 (후진 R / 주차 P) — 눈동자 대신 글자
+      font, _ = self._fonts()
+      font_size = max(10, int(r * 1.33))
+      size_vec = measure_text_cached(font, letter, font_size)
+      pos = rl.Vector2(ex - size_vec.x / 2.0, ey - size_vec.y / 2.0)
+      rl.draw_text_ex(font, letter, pos, font_size, 0, PUPIL)
+    else:
+      # 눈동자
+      px = ex + pupil_dx
+      py = ey + pupil_dy
+      rl.draw_circle(int(px), int(py), int(pupil_r), PUPIL)
+      # 눈동자 반짝이
+      rl.draw_circle(int(px - pupil_r * 0.3), int(py - pupil_r * 0.3), int(pupil_r * 0.22), PUPIL_HI)
     # 눈꺼풀: 검은 배경 위라 위에서 덮으면 감은 것처럼 보인다
     if lid < 1.0:
       cover_h = 2.0 * r * (1.0 - lid)
@@ -444,15 +453,6 @@ class MochiSaver:
     pos = rl.Vector2(cx - size_vec.x / 2.0, y)
     rl.draw_text_ex(font, text, pos, font_size, 0, color)
 
-  def _draw_gear_badge(self, x: float, y: float, s: float, letter: str) -> None:
-    """기어 배지: 커다란 노란 글자 배지 (후진 R / 주차 P)."""
-    font, _ = self._fonts()
-    w, h = 200.0 * s, 200.0 * s
-    rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, h), 0.25, 12, C_YELLOW)
-    size_vec = measure_text_cached(font, letter, int(150 * s))
-    pos = rl.Vector2(x + (w - size_vec.x) / 2.0, y + (h - size_vec.y) / 2.0 - 8 * s)
-    rl.draw_text_ex(font, letter, pos, int(150 * s), 0, rl.BLACK)
-
   def _draw_traffic_light(self, cx: float, cy: float, s: float) -> None:
     """신호등 표정: 가로 신호등 2배 (빨·노·초 3등, 켜진 등만 밝게).
 
@@ -471,22 +471,19 @@ class MochiSaver:
   def _draw_blinker_arrows(self, cx: float, eye_y: float, s: float, t: float) -> None:
     """깜빡이 표정: 눈 옆 큰 이중 화살표 + 알약 배경 (켜진 구간에 깜빡임).
 
-    왼쪽 깜빡이는 왼쪽 눈 바깥쪽, 오른쪽 깜빡이는 오른쪽 눈 바깥쪽에
-    눈 높이로 그림. 가운데가 아니라 눈 좌우라 방향이 바로 느껴짐.
-    양쪽(비상)이면 둘 다 그림.
+    왼쪽·오른쪽 깜빡이 둘 다 그림 — 켜진 쪽은 밝은 노란색으로 깜빡이고
+    꺼진 쪽은 어둡게 보여서 좌우 구분이 바로 됨. 양쪽(비상)이면 둘 다 밝게.
     """
     on = int(t * 1.4) % 2 == 0
-    color = C_YELLOW if on else rl.Color(150, 105, 25, 255)
     arrow = 110.0 * s
     pw, ph = 260.0 * s, 180.0 * s
-    sides = []
-    if self._blink_left:
-      sides.append(-1)
-    if self._blink_right:
-      sides.append(1)
-    for side in sides:
+    for side, active in ((-1, self._blink_left), (1, self._blink_right)):
       ax = cx + side * 600.0 * s
       rl.draw_rectangle_rounded(rl.Rectangle(ax - pw / 2.0, eye_y - ph / 2.0, pw, ph), 0.5, 12, C_DARK)
+      if active:
+        color = C_YELLOW if on else rl.Color(150, 105, 25, 255)
+      else:
+        color = rl.Color(70, 70, 70, 255)
       for k in (0, 1):
         acx = ax + side * (k - 0.5) * 65.0 * s
         pts = [(acx - side * arrow / 2.0, eye_y - arrow / 2.0), (acx - side * arrow / 2.0, eye_y + arrow / 2.0),
