@@ -65,7 +65,8 @@ EXPR_PARK = "park"  # 주차
 EXPR_START = "start"  # 정지 중 출발
 EXPR_AUTOHOLD = "autohold"  # 오토홀드
 EXPR_TRAFFIC = "traffic"  # 신호등 (빨간불/초록불 확인될 때만)
-EXPR_BLINKER = "blinker"  # 깜빡이 (켜져 있을 때만)
+EXPR_BLINKER_LEFT = "blinker_left"  # 좌측 깜빡이 (켜져 있을 때만)
+EXPR_BLINKER_RIGHT = "blinker_right"  # 우측 깜빡이 (켜져 있을 때만)
 
 # 신호등 상태 (longitudinalPlan.trafficState, TrafficState enum):
 # 0=없음, 1=빨간불, 2=초록불
@@ -253,8 +254,10 @@ class MochiSaver:
       expr = EXPR_EMERGENCY
     elif self._traffic_state != TRAFFIC_OFF:
       expr = EXPR_TRAFFIC
-    elif self._blink_left or self._blink_right:
-      expr = EXPR_BLINKER
+    elif self._blink_left:
+      expr = EXPR_BLINKER_LEFT
+    elif self._blink_right:
+      expr = EXPR_BLINKER_RIGHT
     elif a_ego <= DECEL:
       expr = EXPR_DECEL
     elif a_ego >= ACCEL:
@@ -331,12 +334,13 @@ class MochiSaver:
       # 신호등을 올려다봄 — 빨간불은 가만히, 초록불은 미소
       pupil_dy = -45.0 * s
       mouth = "smile" if self._traffic_state == TRAFFIC_GREEN else "calm"
-    elif expr == EXPR_BLINKER:
-      # 켜진 깜빡이 쪽으로 눈동자 이동 (비상은 양쪽이라 가운데)
-      if self._blink_left and not self._blink_right:
-        pupil_dx = -55.0 * s
-      elif self._blink_right and not self._blink_left:
-        pupil_dx = 55.0 * s
+    elif expr == EXPR_BLINKER_LEFT:
+      # 왼쪽 깜빡이 쪽으로 눈동자 이동 (비상은 양쪽이라 가운데)
+      pupil_dx = 0.0 if self._blink_right else -55.0 * s
+      mouth = "smile"
+    elif expr == EXPR_BLINKER_RIGHT:
+      # 오른쪽 깜빡이 쪽으로 눈동자 이동
+      pupil_dx = 55.0 * s
       mouth = "smile"
     elif expr == EXPR_REVERSE:
       pupil_dx, pupil_dy = 30.0 * s, -50.0 * s
@@ -388,7 +392,7 @@ class MochiSaver:
     # 신호등·깜빡이 표정: 신호등은 얼굴 위 맨 위에, 깜빡이는 눈 옆에 그림
     if expr == EXPR_TRAFFIC:
       self._draw_traffic_light(cx, rect.y + 96.0 * s, s)
-    elif expr == EXPR_BLINKER:
+    elif expr in (EXPR_BLINKER_LEFT, EXPR_BLINKER_RIGHT):
       self._draw_blinker_arrows(cx, face_cy + eye_y, s, t)
 
   def _blink_scale(self, t: float, period: float = 2.3) -> float:
