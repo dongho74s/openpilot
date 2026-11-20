@@ -435,6 +435,8 @@ CAMERA_ACC_CAR.update({CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROL
 # We're integrated between the ASCM and the powertrain bus on these cars (StarPilot ASCM_INT): the ASCM keeps the stock ACC
 # and radar, the panda forwards both ways except the ASCM's LKAS command, which openpilot replaces.
 ASCM_INT_CAR = {CAR.CHEVROLET_MALIBU_ASCM}
+# Speeds shown on the comma follow the Malibu cluster, as the Traverse's do (cluster_speed.MALIBU_CLUSTER_RATIO)
+MALIBU_CLUSTER_CAR = {CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_ASCM}
 # Alt ASCMActiveCruiseControlStatus
 ALT_ACCS = {CAR.GMC_YUKON}
 

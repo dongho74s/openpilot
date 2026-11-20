@@ -305,9 +305,12 @@ def test_other_gm_paths_keep_standby_gap_behavior(runtime, candidate, alpha, rem
     assert parser.vl["ASCMActiveCruiseControlStatus"]["ACCGapLevel"] == 0
 
 
+MALIBUS = (CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_ASCM)
+
+
 def test_non_traverse_dashboard_passthrough(runtime):
   for candidate in CAR:
-    if candidate != CAR.CHEVROLET_TRAVERSE:
+    if candidate != CAR.CHEVROLET_TRAVERSE and candidate not in MALIBUS:
       assert runtime.controller.get_acc_dashboard_speed_kph(NS(carFingerprint=candidate), 100.) == 100.
 
 
@@ -348,3 +351,91 @@ def test_controlsd_non_traverse_selection_unchanged():
         before = namespace["hudControl"].setSpeed
         exec(code, namespace)
         assert namespace["hudControl"].setSpeed == before
+
+
+# --- Malibu like the Traverse (user request 2026-11-20) -----------------------------------------------------------
+def test_malibu_ratio_is_the_measured_one():
+  # ECMVehicleSpeed / vEgo on the 2026-11-19 Malibu ASCM log: 1.045-1.048 at 15-70 km/h
+  assert cluster_speed.MALIBU_CLUSTER_RATIO == pytest.approx(1.046)
+  assert cluster_speed.gm_malibu_cluster_speed_from_raw_ms(0.) == 0.
+  assert cluster_speed.gm_malibu_cluster_speed_from_raw_ms(-1.) == -1.
+  for kph in (20., 58.5, 100.):
+    shown = cluster_speed.gm_malibu_cluster_speed_from_raw_ms(kph / 3.6) * 3.6
+    assert cluster_speed.gm_malibu_raw_display_kph_from_cluster_display_kph(shown) == pytest.approx(kph)
+
+
+@pytest.mark.parametrize("candidate", MALIBUS)
+def test_malibu_shows_cluster_speeds_without_changing_motion(runtime, candidate):
+  ci, packer = parser_state(runtime, candidate)
+  ret = ci.update([(1_000_000_000, frames(packer, 95., 95.))])
+  assert ret.vEgo * 3.6 == pytest.approx(95, abs=.0311)  # motion is untouched
+  assert ret.vEgoRaw == pytest.approx(ret.vEgo)
+  assert ret.vEgoCluster * 3.6 == pytest.approx(95 * 1.046, abs=.6)  # interface hysteresis is 0.5 km/h
+  if candidate != CAR.CHEVROLET_MALIBU_ASCM:
+    # openpilot long (ASCM replacement) or 0x3D1 cruise control: no stock 0x370 set speed is read, 0 in this frame
+    assert ret.cruiseState.speedCluster == ret.cruiseState.speed == 0
+  else:
+    assert ret.cruiseState.speed * 3.6 == pytest.approx(95)
+    assert ret.cruiseState.speedCluster * 3.6 == pytest.approx(95 * 1.046)
+  assert ret.vCluRatio == pytest.approx(1 / 1.046)
+
+
+def test_a_malibu_with_the_cluster_speed_message_keeps_it(runtime):
+  ci, packer = parser_state(runtime, CAR.CHEVROLET_MALIBU_ASCM, flags=GMFlags.SPEED_RELATED_MSG)
+  ret = ci.update([(1_000_000_000, frames(packer, 95., 95.))])
+  assert ret.vCluRatio == pytest.approx(.96)  # the SPEED_RELATED path, unchanged
+  assert ret.cruiseState.speedCluster * 3.6 == pytest.approx(95 * 1.046)
+
+
+def test_zero_and_reverse_malibu_get_no_offset(runtime):
+  ci, packer = parser_state(runtime, CAR.CHEVROLET_MALIBU_ASCM)
+  zero = ci.update([(1_000_000_000, frames(packer, 0, 0))])
+  assert zero.vEgoCluster == zero.cruiseState.speedCluster == 0
+  reverse = ci.update([(2_000_000_000, frames(packer, 30, 0, reverse=True))])
+  assert reverse.vEgo < 0 and reverse.vEgoCluster <= 0
+
+
+@pytest.mark.parametrize("candidate", MALIBUS)
+def test_malibu_dashboard_set_speed_goes_back_to_raw(runtime, candidate):
+  assert runtime.controller.get_acc_dashboard_speed_kph(NS(carFingerprint=candidate), 104.6) == pytest.approx(100.)
+  assert runtime.controller.get_acc_dashboard_speed_kph(NS(carFingerprint=candidate), 0.) == 0.
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2, 3])
+@pytest.mark.parametrize("metric", [False, True])
+def test_stock_acc_malibu_shows_the_stock_set_speed_in_every_mode(runtime, mode, metric):
+  cp = build_cp(runtime, CAR.CHEVROLET_MALIBU_ASCM)
+  assert cp.pcmCruise
+  helper = runtime.cruise.VCruiseCarrot(cp)
+  helper.params.values["SpeedFromPCM"] = mode
+  helper.v_cruise_kph = helper.v_cruise_cluster_kph = 80.
+  helper.cruise_state_available_last = True
+  helper._gas_pressed_count = helper._brake_pressed_count = -2
+  cs = structs.CarState(gearShifter="drive", vEgo=70/3.6, vEgoCluster=73/3.6,
+                       cruiseState={"available": True, "enabled": True, "speed": 95/3.6, "speedCluster": 99.37/3.6})
+  sm = {"carControl": structs.CarControl(enabled=True), "carrotMan": NS()}
+  class Messages(dict):
+    alive = dict.fromkeys(("carrotMan", "longitudinalPlan", "radarState", "drivingModelData"), False)
+    valid = alive
+    seen = alive
+  helper.update_v_cruise(cs, Messages(sm), metric)
+  assert helper.v_cruise_cluster_kph == pytest.approx(99.37)  # the cluster's set speed, whatever SpeedFromPCM is
+  assert helper.v_cruise_kph == pytest.approx(95 if mode == 1 else 80)  # the control target is not rescaled
+
+
+def test_controlsd_hud_shows_the_malibu_set_speed():
+  root = Path(__file__).resolve().parents[5]
+  tree = ast.parse((root / "openpilot/selfdrive/controls/controlsd.py").read_text())
+  block = next(node for node in ast.walk(tree) if isinstance(node, ast.If) and
+               ast.unparse(node.test) == "self.CP.carFingerprint == GM_CAR.CHEVROLET_TRAVERSE")
+  code = compile(ast.Module(body=[block], type_ignores=[]), "controlsd-display", "exec")
+  for candidate in MALIBUS:
+    for pcm in (True, False):
+      for mode in range(4):
+        for x_state in (0, 3):
+          hud = NS()
+          namespace = dict(self=NS(CP=NS(carFingerprint=candidate, pcmCruise=pcm), params=NS(get_int=lambda key: mode)),
+                           CS=NS(vCruiseCluster=100), lp=NS(xState=x_state), hudControl=hud, GM_CAR=CAR, CV=CV,
+                           desired_kph=50, setSpeed=40 / 3.6)
+          exec(code, namespace)
+          assert hud.setSpeed * 3.6 == pytest.approx(100)

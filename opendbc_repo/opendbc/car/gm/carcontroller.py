@@ -11,7 +11,9 @@ from opendbc.car.gm.auto_resume import GMAutoResume
 from opendbc.car.gm.auto_stop_off import AutoStopOff, BUTTON_MAX_AGE_NS, LATCH_MAX_AGE_NS, feature_now_ns, fresh
 from openpilot.common.swaglog import cloudlog
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.cluster_speed import gm_raw_display_kph_from_cluster_display_kph
+from opendbc.car.gm.cluster_speed import gm_raw_display_kph_from_cluster_display_kph, \
+  gm_malibu_raw_display_kph_from_cluster_display_kph
+from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
 from opendbc.car.gm.manual_auto_hold import manual_hold_supported
 from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR
@@ -48,6 +50,8 @@ def cluster_take_steering_requested(mode, hud_control):
 def get_acc_dashboard_speed_kph(CP, cluster_target_kph):
   if CP.carFingerprint == CAR.CHEVROLET_TRAVERSE:
     return gm_raw_display_kph_from_cluster_display_kph(cluster_target_kph)
+  if CP.carFingerprint in MALIBU_CLUSTER_CAR:
+    return gm_malibu_raw_display_kph_from_cluster_display_kph(cluster_target_kph)
   return cluster_target_kph
 
 

@@ -6,7 +6,9 @@ import numpy as np
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm import gmcan
-from opendbc.car.gm.cluster_speed import gm_cluster_cruise_speed_from_raw_ms
+from opendbc.car.gm.cluster_speed import gm_cluster_cruise_speed_from_raw_ms, gm_malibu_cluster_speed_from_raw_ms, \
+  MALIBU_CLUSTER_RATIO
+from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
 from opendbc.car.gm.manual_auto_hold import ManualAutoHold, manual_hold_supported
 from opendbc.car.gm.stock_fcw import StockFcw, stock_fcw_supported
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CAMERA_ACC_CAR, \
@@ -351,6 +353,17 @@ class CarState(CarStateBase):
         ret.vEgoCluster = gm_cluster_cruise_speed_from_raw_ms(ret.vEgo)
       if ret.cruiseState.speed > 0.0:
         ret.cruiseState.speedCluster = gm_cluster_cruise_speed_from_raw_ms(ret.cruiseState.speed)
+
+    if self.CP.carFingerprint in MALIBU_CLUSTER_CAR:
+      # Like the Traverse: the comma shows the cluster's numbers. A Malibu with the SPEED_RELATED cluster speed keeps that
+      # message's speed and ratio (above); without it, the measured fixed offset. vCluRatio turns a set speed taken in
+      # cluster numbers back into wheel speed for the planner, as on the Trailblazer and Trax, so SET keeps the speed.
+      if not self.CP.flags & GMFlags.SPEED_RELATED_MSG.value:
+        if ret.vEgo > 0.0:
+          ret.vEgoCluster = gm_malibu_cluster_speed_from_raw_ms(ret.vEgo)
+        ret.vCluRatio = 1.0 / MALIBU_CLUSTER_RATIO
+      if ret.cruiseState.speed > 0.0:
+        ret.cruiseState.speedCluster = gm_malibu_cluster_speed_from_raw_ms(ret.cruiseState.speed)
 
     # Don't add event if transitioning from INIT, unless it's to an actual button
     if self.cruise_buttons != CruiseButtons.UNPRESS or prev_cruise_buttons != CruiseButtons.INIT:

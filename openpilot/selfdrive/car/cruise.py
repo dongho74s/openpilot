@@ -10,6 +10,8 @@ from openpilot.selfdrive.car.toyota_pcm_speed import ToyotaPcmSetSpeedSync
 
 from opendbc.car import structs
 from opendbc.car.gm.values import CAR as GM_CAR
+STOCK_SET_SPEED_DISPLAY_CARS = (GM_CAR.CHEVROLET_TRAVERSE, GM_CAR.CHEVROLET_MALIBU, GM_CAR.CHEVROLET_MALIBU_CC,
+                                GM_CAR.CHEVROLET_MALIBU_ASCM)
 GearShifter = structs.CarState.GearShifter
 
 
@@ -440,7 +442,9 @@ class VCruiseCarrot:
 
     # Stock Traverse ACC owns the displayed set speed, even in Carrot PCM modes
     # that retain a separate local target. Do not rescale that control target.
-    if self.CP.carFingerprint == GM_CAR.CHEVROLET_TRAVERSE and self.CP.pcmCruise and CS.cruiseState.available:
+    # The stock-ACC Malibu (ASCM harness) too: its panda only lets openpilot send cancel, so a Carrot target could never
+    # reach the car's set speed (user request 2026-11-20: Malibu like the Traverse).
+    if self.CP.carFingerprint in STOCK_SET_SPEED_DISPLAY_CARS and self.CP.pcmCruise and CS.cruiseState.available:
       self.v_cruise_cluster_kph = CS.cruiseState.speedCluster * CV.MS_TO_KPH
 
     self.cruise_state_available_last = CS.cruiseState.available

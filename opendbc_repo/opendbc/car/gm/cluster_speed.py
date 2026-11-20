@@ -119,6 +119,21 @@ def gm_cluster_cruise_speed_from_raw_ms(raw_speed_ms: float) -> float:
   return gm_cluster_display_kph_from_raw_display_kph(raw_display_kph) * CV.KPH_TO_MS
 
 
+# Malibu 2016-19 (all three car choices, user request 2026-11-20: show speeds like the Traverse does). Its cluster reads
+# a fixed ~4.6% above the wheel speed: on a Malibu ASCM log of 2026-11-19, ECMVehicleSpeed / vEgo was 1.045-1.048 at
+# 15-30, 30-45 and 45-70 km/h (284 samples). That car has no SPEED_RELATED (0x260) cluster speed message. The set speed
+# is taken to read through the same offset, as measured on the Traverse; not yet checked against a Malibu cluster.
+MALIBU_CLUSTER_RATIO = 1.046
+
+
+def gm_malibu_cluster_speed_from_raw_ms(raw_speed_ms: float) -> float:
+  return raw_speed_ms * MALIBU_CLUSTER_RATIO if raw_speed_ms > 0.0 else raw_speed_ms
+
+
+def gm_malibu_raw_display_kph_from_cluster_display_kph(cluster_display_kph: float) -> float:
+  return cluster_display_kph / MALIBU_CLUSTER_RATIO if cluster_display_kph > 0.0 else cluster_display_kph
+
+
 def gm_raw_cruise_speed_from_cluster_ms(cluster_speed_ms: float) -> float:
   if cluster_speed_ms <= 0.0:
     return cluster_speed_ms

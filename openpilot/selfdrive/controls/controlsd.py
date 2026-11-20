@@ -425,6 +425,8 @@ class Controls:
       # The replacement stock ACC display shows SET, not a transient planner
       # slowdown. The GM controller encodes this in the stock display domain.
       hudControl.setSpeed = float(CS.vCruiseCluster * CV.KPH_TO_MS)
+    elif self.CP.carFingerprint in (GM_CAR.CHEVROLET_MALIBU, GM_CAR.CHEVROLET_MALIBU_CC, GM_CAR.CHEVROLET_MALIBU_ASCM):
+      hudControl.setSpeed = float(CS.vCruiseCluster * CV.KPH_TO_MS)  # the Malibu like the Traverse (2026-11-20)
     elif self.CP.pcmCruise:
       speed_from_pcm = self.params.get_int("SpeedFromPCM")
       if speed_from_pcm == 1: #toyota
