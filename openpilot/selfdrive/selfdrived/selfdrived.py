@@ -545,7 +545,10 @@ class SelfdriveD:
     # 클램프 조향 보정 작동 알림 (레인리스 전용): controlsd가 보정이 의미 있게
     # 걸릴 때 controlsState.clampSteerActive를 세운다. selfdrived는 플래그만
     # 보고 이벤트를 만들고, 띵 소리·표시는 events.py의 알림 정의가 담당한다.
-    if self.sm['controlsState'].clampSteerActive:
+    # controlsState가 유효하지 않거나 살아 있지 않으면 stale 플래그를 무시한다
+    # (controlsd가 죽은 뒤 남은 True가 계속 띵 울리는 것을 막는다).
+    if (self.sm.valid['controlsState'] and self.sm.alive['controlsState']
+            and self.sm['controlsState'].clampSteerActive):
       self.events.add(EventName.clampSteerActive)
 
     # Check for FCW

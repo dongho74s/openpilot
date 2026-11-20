@@ -1,4 +1,5 @@
 import math
+import time
 import numpy as np
 from openpilot.cereal import log
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -21,6 +22,10 @@ KEEP_MIN_DISTANCE_FROM_EDGELANE = 1.15
 ROAD_EDGE_STD_MAX = 0.5  # 도로경계 신뢰도 상한: std가 이보다 크면 경계 위치를 믿지 않음
 CLAMP_PROB_ON = 0.5      # 클램프 활성화 확률: 이 위면 해당 측 클램프 켜짐
 CLAMP_PROB_OFF = 0.3     # 클램프 비활성화 확률: 이 아래로 떨어져야 꺼짐 (경계값 깜빡임 방지)
+# 차선변경·깜빡이 후 클램프 휴지기: 레인리스 보정과 같은 2초
+CLAMP_LANE_CHANGE_HOLDOFF_SEC = 2.0
+# 끊긴 차선 메시지가 마지막 온전한 차선을 유지하는 시간; 지나면 안 본 것으로 취급(확률 0)
+LINES_HOLD_FRAMES = int(round(0.5 / DT_MDL))
 
 def clamp(num, min_value, max_value):
   # weird broken case, do something reasonable
@@ -82,10 +87,12 @@ class LanePlanner:
     self.le_std = float('inf')
     self.re_std = float('inf')
     self.edges_valid = False
+    self.lines_broken_frames = 0
     self.clamp_left_active = False
     self.clamp_right_active = False
     self.clamp_max_correction = 0.0
     self.clamp_sides = ""
+    self.clamp_holdoff_until = 0.0
 
     self.lanefull_mode = False
     self.d_prob_count = 0
@@ -97,7 +104,17 @@ class LanePlanner:
     lane_lines = md.laneLines
     edges = md.roadEdges
 
-    if len(lane_lines) >= 4 and len(lane_lines[0].t) == TRAJECTORY_SIZE:
+    # 차선·도로경계는 배열이 전부 온전한 메시지에서만 가져온다. get_d_path와
+    # 클램프가 배열끼리 빼고 보간하므로, 배열 하나만 짧아도 plannerd가 멈춘다.
+    # 끊긴 차선 메시지는 마지막 온전한 차선을 LINES_HOLD_FRAMES만큼 유지하고
+    # 그 뒤에는 안 본 것으로 취급한다. 끊긴 경계는 차선으로 폴백한다.
+    lines_whole = len(lane_lines) >= 4 and len(md.laneLineProbs) >= 3 and len(md.laneLineStds) >= 3 and \
+                  all(len(a) == TRAJECTORY_SIZE for a in (lane_lines[0].t, lane_lines[1].t, lane_lines[2].t,
+                                                          lane_lines[1].x, lane_lines[1].y, lane_lines[2].x, lane_lines[2].y))
+    edges_whole = len(edges) >= 2 and len(md.roadEdgeStds) >= 2 and \
+                  all(len(a) == TRAJECTORY_SIZE for a in (edges[0].t, edges[0].x, edges[0].y, edges[1].x, edges[1].y))
+
+    if lines_whole:
       self.ll_t = (np.array(lane_lines[1].t) + np.array(lane_lines[2].t))/2
       # left and right ll x is the same
       self.ll_x = lane_lines[1].x
@@ -107,8 +124,13 @@ class LanePlanner:
       self.rll_prob = md.laneLineProbs[2]
       self.lll_std = md.laneLineStds[1]
       self.rll_std = md.laneLineStds[2]
+      self.lines_broken_frames = 0
+    else:
+      self.lines_broken_frames += 1
+      if self.lines_broken_frames > LINES_HOLD_FRAMES:
+        self.lll_prob = self.rll_prob = 0.
 
-    if len(edges[0].t) == TRAJECTORY_SIZE:
+    if edges_whole:
       self.le_y = np.array(edges[0].y) + md.roadEdgeStds[0] * 0.4
       self.re_y = np.array(edges[1].y) - md.roadEdgeStds[1] * 0.4
       self.edge_x = np.array(edges[0].x)
@@ -121,7 +143,7 @@ class LanePlanner:
       self.edges_valid = False
 
     desire_state = md.meta.desireState
-    if len(desire_state):
+    if len(desire_state) > max(log.Desire.laneChangeLeft, log.Desire.laneChangeRight):
       self.l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
       self.r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
 
@@ -310,7 +332,7 @@ class LanePlanner:
     except Exception:
       return True, KEEP_MIN_DISTANCE_FROM_LANE, KEEP_MIN_DISTANCE_FROM_EDGELANE
 
-  def apply_min_distance_clamp(self, path_xyz, v_ego):
+  def apply_min_distance_clamp(self, path_xyz, v_ego, lane_changing=False, now=None):
     """최종 경로가 감지된 차선·도로경계를 밟지 않도록 최소 거리를 유지한다.
 
     레인리스 모드에서는 차선 중심 보정이 꺼져 있어 모델 경로가 안쪽 선을 밟을 수
@@ -320,21 +342,21 @@ class LanePlanner:
     - 좌/우 각각: 차선이 보이면 차선 기준, 차선이 안 보이면 도로경계 기준
       (경계 std가 작을 때만)으로 최소 거리를 유지한다. 거리 기본값은 차선
       1.35m·도로경계 1.15m이며 당근 웹 ej 탭에서 실시간으로 바꿀 수 있다.
-    - 차선변경 중에는 차선을 넘는 것이 의도된 동작이므로 동작하지 않는다.
+    - 차선변경 중(플래너 배율·모델 laneChangeState·깜빡이)에는 차선을 넘는 것이
+      의도된 동작이므로 동작하지 않고, 종료 후 2초간도 쉰다 (레인리스 보정과 동일).
     - 저속에서는 횡단보도·주차선 등에 반응하지 않도록 서서히 활성화한다.
     - 차로가 너무 좁아 양쪽 하한이 충돌하면 차선 중앙으로 폴백한다.
+    - 모델 데이터가 보간할 수 없으면 경로는 그대로 둔다 (plannerd를 멈추지 않는다).
     """
     self.clamp_max_correction = 0.0
     self.clamp_sides = ""
     enabled, min_dist_lane, min_dist_edge = self._read_clamp_settings()
     # 웹 ej 탭에서 끄면 클램프 전체를 끈다. 히스테리시스 상태도 초기화해서
     # 다시 켰을 때 깨끗하게 시작한다.
-    if not enabled:
-      self.clamp_left_active = False
-      self.clamp_right_active = False
-      return path_xyz
-    # 차선변경 중이거나 ATC 동작 중에는 의도적으로 선을 넘으므로 클램프를 끈다.
-    if self.lane_change_multiplier < 0.5:
+    now = time.monotonic() if now is None else now
+    if lane_changing or self.lane_change_multiplier < 0.5:
+      self.clamp_holdoff_until = now + CLAMP_LANE_CHANGE_HOLDOFF_SEC
+    if not enabled or now < self.clamp_holdoff_until:
       self.clamp_left_active = False
       self.clamp_right_active = False
       return path_xyz
@@ -343,33 +365,43 @@ class LanePlanner:
     if strength <= 0.0:
       return path_xyz
 
-    # 히스테리시스: 0.5를 넘으면 켜고 0.3 아래로 떨어져야 끈다 (경계값 깜빡임 방지).
-    if self.l_prob > CLAMP_PROB_ON:
-      self.clamp_left_active = True
-    elif self.l_prob < CLAMP_PROB_OFF:
+    # 차선 배열이 서로 맞지 않으면 선 하한은 주지 않는다 (도로경계는 줄 수 있음).
+    # 히스테리시스에 선을 못 쓴다고 알려 양쪽을 끈다.
+    lines_ok = len(self.ll_x) >= 2 and len(self.ll_x) == len(self.lll_y) == len(self.rll_y)
+    if not lines_ok:
       self.clamp_left_active = False
-    if self.r_prob > CLAMP_PROB_ON:
-      self.clamp_right_active = True
-    elif self.r_prob < CLAMP_PROB_OFF:
       self.clamp_right_active = False
+    else:
+      # 히스테리시스: 0.5를 넘으면 켜고 0.3 아래로 떨어져야 끈다 (경계값 깜빡임 방지).
+      if self.l_prob > CLAMP_PROB_ON:
+        self.clamp_left_active = True
+      elif self.l_prob < CLAMP_PROB_OFF:
+        self.clamp_left_active = False
+      if self.r_prob > CLAMP_PROB_ON:
+        self.clamp_right_active = True
+      elif self.r_prob < CLAMP_PROB_OFF:
+        self.clamp_right_active = False
 
     n = path_xyz.shape[0]
     path_x = path_xyz[:, 0]
     lo = np.full(n, -np.inf)  # 좌측 하한: 경로는 이 값보다 우측이어야 한다
     hi = np.full(n, np.inf)   # 우측 하한: 경로는 이 값보다 좌측이어야 한다
-    if self.clamp_left_active:
-      left_y = np.interp(path_x, self.ll_x, self.lll_y)
-      lo = np.maximum(lo, left_y + min_dist_lane)
-    elif self.edges_valid and self.le_std < ROAD_EDGE_STD_MAX:
-      # 좌측 차선이 안 보일 때만 도로경계로 폴백한다.
-      left_edge_y = np.interp(path_x, self.edge_x, self.le_y)
-      lo = np.maximum(lo, left_edge_y + min_dist_edge)
-    if self.clamp_right_active:
-      right_y = np.interp(path_x, self.ll_x, self.rll_y)
-      hi = np.minimum(hi, right_y - min_dist_lane)
-    elif self.edges_valid and self.re_std < ROAD_EDGE_STD_MAX:
-      right_edge_y = np.interp(path_x, self.edge_x, self.re_y)
-      hi = np.minimum(hi, right_edge_y - min_dist_edge)
+    try:
+      if self.clamp_left_active:
+        left_y = np.interp(path_x, self.ll_x, self.lll_y)
+        lo = np.maximum(lo, left_y + min_dist_lane)
+      elif self.edges_valid and self.le_std < ROAD_EDGE_STD_MAX:
+        # 좌측 차선이 안 보일 때만 도로경계로 폴백한다.
+        left_edge_y = np.interp(path_x, self.edge_x, self.le_y)
+        lo = np.maximum(lo, left_edge_y + min_dist_edge)
+      if self.clamp_right_active:
+        right_y = np.interp(path_x, self.ll_x, self.rll_y)
+        hi = np.minimum(hi, right_y - min_dist_lane)
+      elif self.edges_valid and self.re_std < ROAD_EDGE_STD_MAX:
+        right_edge_y = np.interp(path_x, self.edge_x, self.re_y)
+        hi = np.minimum(hi, right_edge_y - min_dist_edge)
+    except (ValueError, TypeError, IndexError):
+      return path_xyz   # 보간할 수 없는 모델 데이터: 경로는 그대로 둔다 (plannerd를 멈추지 않음)
 
     # 모델이 NaN을 뱉으면 해당 측 하한을 무효화한다 (NaN이 경로로 번지는 것 방지).
     lo = np.where(np.isfinite(lo), lo, -np.inf)

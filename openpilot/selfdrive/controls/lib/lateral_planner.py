@@ -159,8 +159,16 @@ class LateralPlanner:
 
     self.path_xyz[:, 1] += self.pathOffset
     # 최소거리 클램프: 최종 경로(PathOffset 포함)가 차선·도로경계를 밟지 않도록 bound한다.
-    # 레인리스 모드에서도 동작한다.
-    self.path_xyz = self.LP.apply_min_distance_clamp(self.path_xyz, v_ego_car)
+    # 레인리스 모드에서도 동작한다. 차선변경 중(플래너 배율·모델 laneChangeState·
+    # 깜빡이)에는 차선을 넘는 것이 의도된 동작이므로 동작하지 않고, 종료 후 2초간도
+    # 쉰다 (레인리스 보정과 동일). 레인리스 보정의 홀드오프와는 별개 타이머다.
+    cs = sm['carState']
+    lane_changing = (self.LP.lane_change_multiplier < 0.5
+                     or md.meta.laneChangeState != log.LaneChangeState.off
+                     or cs.leftBlinker or cs.rightBlinker)
+    self.path_xyz = self.LP.apply_min_distance_clamp(self.path_xyz, v_ego_car,
+                                                     lane_changing=lane_changing,
+                                                     now=time.monotonic())
 
     if self.lanelines_active:
       # 클램프된 최종 경로에서 yaw를 다시 구한다.

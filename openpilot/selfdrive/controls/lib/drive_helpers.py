@@ -195,6 +195,10 @@ class ClampSteerCorrector:
     self._prev_time = None
     # 불감대 게이트 상태: 위반이 20cm를 넘으면 True, 10cm 아래로 떨어지면 False.
     self._correction_active = False
+    # 쓰던 선이 끊긴 끈적한 상태: 선이 돌아오거나 메시지에서 아예 사라져야
+    # 끝난다. 끊긴 동안은 그 측 도로경계로 조용히 넘어가지 않는다.
+    self._left_lost = False
+    self._right_lost = False
 
   def _read_settings(self):
     """(enabled, min_dist_lane_m, min_dist_edge_m, gain)을 읽는다.
@@ -267,16 +271,30 @@ class ClampSteerCorrector:
     elif abs(kappa) >= CLAMP_STEER_ALERT_ON_THRESHOLD and now >= self._alert_cooldown_until:
       self.alert_active = True
 
-  def update(self, md, v_ego, lane_changing):
+  def update(self, md, v_ego, lane_changing, usable=True):
     """모델 곡률에 더할 곡률 보정(1/m)을 계산한다. 양수 = 우회전.
 
     반환되는 보정 크기에 따라 알림 상태(alert_active)도 함께 갱신한다.
     보정이 0이면 알림은 꺼지는 방향으로 간다 (쿨다운은 _update_alert에서
     관리). 모든 early return 경로가 이 래퍼를 거치므로 알림 상태가
     stale로 남지 않는다.
+
+    usable=False(유효하지 않거나 살아 있지 않은 modelV2, 레인리스 분기가
+    아닐 때 controlsd가 매 사이클 호출)는 보호 정지다. _update_impl이
+    None을 반환하면 슬루 제한을 거치지 않고 0으로 바로 끈다. 차선변경
+    중에도 보정이 1.5~2초 동안 스르르 빠지는 것이 아니라 즉시 멈춘다.
     """
-    kappa = self._update_impl(md, v_ego, lane_changing)
-    kappa = self._slew_limit(kappa)
+    kappa = self._update_impl(md, v_ego, lane_changing, usable)
+    if kappa is None:
+      # 보호 정지: 바로 0. 다음 호출은 0에서 다시 시작한다.
+      self._prev_kappa = 0.0
+      self._prev_time = time.monotonic()
+      kappa = 0.0
+    else:
+      kappa = self._slew_limit(kappa)
+      # 속도가 올라가면 상한이 줄어든다: 슬루 제한 뒤에도 현재 속도 상한으로 자른다.
+      cap = min(CLAMP_STEER_MAX_LAT_ACCEL / max(v_ego, MIN_SPEED) ** 2, CLAMP_STEER_MAX_CURVATURE)
+      kappa = float(np.clip(kappa, -cap, cap))
     self.last_correction = kappa
     self._update_alert(kappa)
     return kappa
@@ -303,15 +321,15 @@ class ClampSteerCorrector:
     self._prev_kappa += float(np.clip(kappa - self._prev_kappa, -max_delta, max_delta))
     return self._prev_kappa
 
-  def _update_impl(self, md, v_ego, lane_changing):
-    """update()의 본체. 보정 곡률만 계산하고 알림 상태는 건드리지 않는다."""
+  def _update_impl(self, md, v_ego, lane_changing, usable=True):
+    """update()의 본체. 보정 곡률만 계산하고 알림 상태는 건드리지 않는다.
+
+    보호 정지(차선변경·홀드오프·모델 불량·클램프 꺼짐·게인 0·저속)에는
+    None을 반환해 update()가 슬루 제한을 거치지 않고 0으로 바로 끄게 한다.
+    usable=False면 설정을 읽지 않고 바로 보호 정지한다 (controlsd가
+    레인리스가 아닐 때도 매 사이클 호출하므로 Params 읽기를 아낀다).
+    """
     self.last_correction = 0.0
-    enabled, min_lane, min_edge, gain = self._read_settings()
-    if not enabled or gain <= 0.0:
-      self.left_active = False
-      self.right_active = False
-      self._correction_active = False
-      return 0.0
     # 차선변경 중에는 선을 넘는 것이 의도된 동작이므로 보정하지 않는다.
     # 차선변경이 끝난 뒤에도 홀드오프(2초) 동안은 보정하지 않는다. desire/
     # laneChangeState가 꺼지는 시점은 타이머 기준이라 차가 새 차선에 안착하기
@@ -320,40 +338,101 @@ class ClampSteerCorrector:
     # 사이클 갱신되므로, 종료 시점부터 정확히 홀드오프 시간만큼 유지된다.
     now = time.monotonic()
     if lane_changing:
+      self._lane_change_holdoff_until = now + CLAMP_STEER_LANE_CHANGE_HOLDOFF_SEC
+    # 보호 정지: 차선변경·홀드오프·모델 불량(usable=False)이면 설정을 읽지
+    # 않고 바로 끈다. 클램프 꺼짐·게인 0도 마찬가지다.
+    if lane_changing or now < self._lane_change_holdoff_until or not usable:
       self.left_active = False
       self.right_active = False
       self._correction_active = False
-      self._lane_change_holdoff_until = now + CLAMP_STEER_LANE_CHANGE_HOLDOFF_SEC
-      return 0.0
-    if now < self._lane_change_holdoff_until:
+      return None
+    enabled, min_lane, min_edge, gain = self._read_settings()
+    if not enabled or gain <= 0.0:
+      self.left_active = False
+      self.right_active = False
       self._correction_active = False
-      return 0.0
+      return None
     # 저속 페이드인: 5km/h 이하 0, 10km/h 이상 100% (경로 클램프와 동일 구간)
     strength = float(np.interp(v_ego * 3.6, [5.0, 10.0], [0.0, 1.0]))
     if strength <= 0.0:
       self._correction_active = False
-      return 0.0
+      return None
     try:
       return self._compute(md, v_ego, min_lane, min_edge, gain, strength)
     except Exception:
       self._correction_active = False
-      return 0.0
+      return None
 
   def _compute(self, md, v_ego, min_lane, min_edge, gain, strength):
+    """차선·도로경계 위반량에서 보정 곡률을 계산한다.
+
+    각 측은 좌/우 각각 따로 판단한다: 한쪽 선이 깨져도 반대쪽은 살린다.
+    - 선(0x142 대체: 모델 차선)이 보이면 그쪽은 선 기준으로 보정한다.
+    - 선이 안 보이면 경계(도로 가장자리) 기준으로 보정한다.
+    - 선이 깨졌으면(배열 비거나 NaN 포함·확률 0.5 미만) 그 측 보정은 바로
+      끄고, 도로경계로도 넘어가지 않는다 (선 위치를 모르는 상태에선 경계
+      기준 조향이 안전하지 않기 때문). 선이 돌아오거나 메시지에서 아예
+      사라져야 끝나는 끈적한 상태다.
+    - 경계가 깨졌으면(배열 비거나 NaN 포함·std 0.5 이상) 그 측 보정은 바로 끈다.
+    - 보정할 재료가 전혀 없으면 None을 반환해 update()가 슬루 제한을
+      거치지 않고 0으로 바로 끄게 한다 (보호 정지).
+    """
     lane_lines = md.laneLines
     edges = md.roadEdges
-    lines_ok = (len(lane_lines) >= 4 and len(lane_lines[1].y) >= 2
-                and len(lane_lines[2].y) >= 2 and len(md.laneLineProbs) >= 3)
-    edges_ok = (len(edges) >= 2 and len(edges[0].y) >= 2 and len(edges[1].y) >= 2
-                and len(md.roadEdgeStds) >= 2)
+    probs = md.laneLineProbs
+    edge_stds = md.roadEdgeStds
+    n = ModelConstants.IDX_N
+
+    # 각 측 선이 보정할 만큼 믿을 만한지: 배열 전부 온전 + 확률 0.5 이상 +
+    # NaN 없음. 한쪽이 깨져도 반대쪽은 살린다.
+    def side_line_ok(idx):
+      if len(lane_lines) <= idx or len(probs) <= idx:
+        return False
+      y = lane_lines[idx].y
+      x = lane_lines[idx].x
+      return (len(y) == n and len(x) == n and float(probs[idx]) >= CLAMP_STEER_PROB_ON
+              and not np.isnan(np.asarray(y, dtype=float)).any()
+              and not np.isnan(np.asarray(x, dtype=float)).any())
+
+    # 각 측 도로경계가 보정할 만큼 믿을 만한지: 배열 전부 온전 + std 0.5 미만 + NaN 없음.
+    def side_edge_ok(idx):
+      if len(edges) <= idx or len(edge_stds) <= idx:
+        return False
+      y = edges[idx].y
+      x = edges[idx].x
+      return (len(y) == n and len(x) == n and float(edge_stds[idx]) < CLAMP_STEER_EDGE_STD_MAX
+              and not np.isnan(np.asarray(y, dtype=float)).any()
+              and not np.isnan(np.asarray(x, dtype=float)).any())
+
+    left_ok = side_line_ok(1)
+    right_ok = side_line_ok(2)
+    # 선이 깨졌으면(배열 비거나 NaN 포함·확률 낮음) 끈적한 상태로 진입한다.
+    # 메시지에 선이 아예 없어지면(배열 길이 0) 끝난다. 이 상태에선 그 측
+    # 경계로 폴백하지 않는다.
+    if not left_ok and len(lane_lines) > 1 and len(lane_lines[1].y) > 0:
+      self._left_lost = True
+    if left_ok or len(lane_lines) <= 1 or len(lane_lines[1].y) == 0:
+      self._left_lost = False
+    if not right_ok and len(lane_lines) > 2 and len(lane_lines[2].y) > 0:
+      self._right_lost = True
+    if right_ok or len(lane_lines) <= 2 or len(lane_lines[2].y) == 0:
+      self._right_lost = False
+    left_edge_ok = side_edge_ok(0) and not self._left_lost
+    right_edge_ok = side_edge_ok(1) and not self._right_lost
+
     pos_ok = (len(md.position.x) >= 2 and len(md.position.y) >= 2)
-    if not pos_ok or (not lines_ok and not edges_ok):
-      return 0.0
+    # 보정할 재료가 전혀 없으면 보호 정지(None): 슬루를 거치지 않고 바로 0.
+    if not pos_ok or (not left_ok and not right_ok and not left_edge_ok and not right_edge_ok):
+      self.left_active = False
+      self.right_active = False
+      self._correction_active = False
+      return None
 
     # 확률 히스테리시스: 0.5를 넘으면 켜고 0.3 아래로 떨어져야 끈다 (경로 클램프와 동일).
-    if lines_ok:
-      l_prob = float(md.laneLineProbs[1])
-      r_prob = float(md.laneLineProbs[2])
+    # 좌/우를 따로 검사하므로 빈 오른쪽 선이 왼쪽 상태를 초기화하지 않는다.
+    if len(probs) >= 3:
+      l_prob = float(probs[1])
+      r_prob = float(probs[2])
       if l_prob > CLAMP_STEER_PROB_ON:
         self.left_active = True
       elif l_prob < CLAMP_STEER_PROB_OFF:
@@ -362,44 +441,54 @@ class ClampSteerCorrector:
         self.right_active = True
       elif r_prob < CLAMP_STEER_PROB_OFF:
         self.right_active = False
-    else:
-      self.left_active = False
-      self.right_active = False
 
     # 룩어헤드 거리: 1초 앞 지점 (5~30m). 고속일수록 멀리 보고 미리 조향한다.
     lookahead = float(np.clip(v_ego * CLAMP_STEER_LOOKAHEAD_TIME,
                               CLAMP_STEER_LOOKAHEAD_MIN, CLAMP_STEER_LOOKAHEAD_MAX))
     path_y = float(np.interp(lookahead, md.position.x, md.position.y))
     if not math.isfinite(path_y):
-      return 0.0
+      self._correction_active = False
+      return None
 
+    # 좌/우 하한을 각각 구한다: 한쪽 선이 NaN이거나 못 써도 반대쪽 하한은 살린다.
     # 좌측 하한: 경로는 이 값보다 우측(+y)이어야 한다. 차선이 보이면 차선 기준,
     # 안 보이면 도로경계 기준(연석 std가 작을 때만). 경로 클램프와 동일 로직.
     lo = -np.inf
-    if self.left_active:
-      left_y = float(np.interp(lookahead, lane_lines[1].x, lane_lines[1].y))
-      lo = left_y + min_lane
-    elif edges_ok:
-      le_std = float(md.roadEdgeStds[0])
-      if le_std < CLAMP_STEER_EDGE_STD_MAX:
+    if self.left_active and left_ok:
+      try:
+        left_y = float(np.interp(lookahead, lane_lines[1].x, lane_lines[1].y))
+        if math.isfinite(left_y):
+          lo = left_y + min_lane
+      except (ValueError, TypeError, IndexError):
+        pass
+    elif left_edge_ok:
+      try:
+        le_std = float(edge_stds[0])
         left_edge_y = float(np.interp(lookahead, edges[0].x, edges[0].y)) + le_std * 0.4
-        lo = left_edge_y + min_edge
+        if math.isfinite(left_edge_y):
+          lo = left_edge_y + min_edge
+      except (ValueError, TypeError, IndexError):
+        pass
     # 우측 하한: 경로는 이 값보다 좌측(-y)이어야 한다.
     hi = np.inf
-    if self.right_active:
-      right_y = float(np.interp(lookahead, lane_lines[2].x, lane_lines[2].y))
-      hi = right_y - min_lane
-    elif edges_ok:
-      re_std = float(md.roadEdgeStds[1])
-      if re_std < CLAMP_STEER_EDGE_STD_MAX:
+    if self.right_active and right_ok:
+      try:
+        right_y = float(np.interp(lookahead, lane_lines[2].x, lane_lines[2].y))
+        if math.isfinite(right_y):
+          hi = right_y - min_lane
+      except (ValueError, TypeError, IndexError):
+        pass
+    elif right_edge_ok:
+      try:
+        re_std = float(edge_stds[1])
         right_edge_y = float(np.interp(lookahead, edges[1].x, edges[1].y)) - re_std * 0.4
-        hi = right_edge_y - min_edge
-    if not math.isfinite(lo):
-      lo = -np.inf
-    if not math.isfinite(hi):
-      hi = np.inf
+        if math.isfinite(right_edge_y):
+          hi = right_edge_y - min_edge
+      except (ValueError, TypeError, IndexError):
+        pass
     if lo == -np.inf and hi == np.inf:
-      return 0.0
+      self._correction_active = False
+      return None
 
     # 목표 y: 위반한 만큼만 밀어낸 위치. 양쪽 하한이 충돌하면(좁은 차로)
     # 중간 = 차선 중앙을 목표로 한다.

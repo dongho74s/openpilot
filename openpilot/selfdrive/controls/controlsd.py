@@ -226,6 +226,21 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    # 최소거리 클램프 보정기 입력: 차선변경 여부와 modelV2 유효 여부.
+    # 차선변경 중에는 클램프 보정을 끈다. desire만으로는 부족하다: desire는
+    # laneChangeStarting/Finishing에서만 서고, Finishing 종료는 타이머
+    # 기준이라 차가 새 차선에 안착하기 전에 꺼질 수 있다. laneChangeState는
+    # preLaneChange부터 서 있어 의도 단계부터 커버하고, 깜빡이는 FSM과
+    # 무관한 독립 신호다. 종료 후 홀드오프·슬루 제한은 보정기 내부에서 처리한다.
+    # 레인리스 분기가 아니어도 보정기를 매 사이클 돌려 차선변경 홀드오프와
+    # 알림 쿨다운 이력을 유지한다 (그때는 usable=False로 보정 0).
+    lane_changing = (model_v2.meta.desire != log.Desire.none
+                     or model_v2.meta.laneChangeState != log.LaneChangeState.off
+                     or CS.leftBlinker or CS.rightBlinker
+                     or getattr(self.sm['carrotMan'], 'atc_active', False))
+    clamp_usable = self.sm.valid['modelV2'] and self.sm.alive['modelV2']
+    laneless_clamp = False
+
     if not CC.latActive:
       new_desired_curvature = self.curvature
     elif self.is_vw_meb:
@@ -251,18 +266,18 @@ class Controls:
       # 레인리스: 모델 곡률에 최소거리 클램프 보정을 더한다. lateral planner의
       # 경로 클램프는 레인리스 조향에 닿지 않으므로 여기서 직접 보정한다.
       # 차가 선에 가까울 때만 위반한 만큼 개입하고, 평상시에는 0이다.
-      # 차선변경 중에는 클램프 보정을 끈다. desire만으로는 부족하다: desire는
-      # laneChangeStarting/Finishing에서만 서고, Finishing 종료는 타이머
-      # 기준이라 차가 새 차선에 안착하기 전에 꺼질 수 있다. laneChangeState는
-      # preLaneChange부터 서 있어 의도 단계부터 커버하고, 깜빡이는 FSM과
-      # 무관한 독립 신호다. 종료 후 홀드오프·슬루 제한은 보정기 내부에서 처리한다.
-      lane_changing = (model_v2.meta.desire != log.Desire.none
-                       or model_v2.meta.laneChangeState != log.LaneChangeState.off
-                       or CS.leftBlinker or CS.rightBlinker
-                       or getattr(self.sm['carrotMan'], 'atc_active', False))
-      clamp_kappa = self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing)
+      # modelV2가 유효하지 않거나 살아 있지 않으면 보정을 0으로 바로 끈다
+      # (보호 정지: 슬루 제한을 거치지 않음).
+      laneless_clamp = True
+      clamp_kappa = self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing, usable=clamp_usable)
       new_desired_curvature = smooth_value(
         model_v2.action.desiredCurvature + clamp_kappa, self.desired_curvature, 0.1)
+
+    if not laneless_clamp:
+      # 레인리스가 아닐 때도 보정기를 매 사이클 돌린다: 차선변경 홀드오프와
+      # 알림 쿨다운 이력을 유지하기 위해서다. usable=False라 보정은 0으로
+      # 바로 꺼지고 설정을 읽지 않는다.
+      self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing, usable=False)
 
     # FrogPilot keeps the lateral acceleration limit (3.0 m/s^2, LateralAccelLimit) at every speed
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
