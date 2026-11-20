@@ -19,10 +19,12 @@
   > 후진(R) > 주차(P, 기어가 진짜 P일 때만) > 오토홀드
   > 정지 중 출발 (출발 직후 3초) > 주행중(기본)
 
-주행중일 때는 얼굴이 4초마다 랜덤으로 바뀐다 (10가지 변형:
+주행중일 때는 얼굴이 4초마다 랜덤으로 바뀐다 (20가지 변형:
   기본·왼쪽보기·오른쪽보기·위보기·아래보기·왼쪽윙크·오른쪽윙크·
-  졸림·놀람·활짝웃음). 상태 표정 10가지 + 변형 10가지 = 얼굴 20가지.
-  상태 표정이 뜨면 변형은 멈추고, 주행중으로 돌아오면 바로 새 얼굴이 나온다.
+  졸림·놀람·활짝웃음·선글라스·하트눈·별눈·우는얼굴·화난얼굴·
+  어지러움·혀내밈·부끄러움·파티모자·돈눈). 상태 표정 10가지 + 변형 20가지
+  = 얼굴 30가지. 상태 표정이 뜨면 변형은 멈추고, 주행중으로 돌아오면
+  바로 새 얼굴이 나온다.
 
 머리 위 상태 표시줄 (얼굴 표정과 별개, 얼굴을 안 가림):
   신호등: 빨간불/초록불이 확인될 때만 머리 위에 가로 3등 표시.
@@ -75,12 +77,14 @@ EXPR_TRAFFIC = "traffic"  # 신호등 (빨간불/초록불 확인될 때만)
 EXPR_BLINKER_LEFT = "blinker_left"  # 좌측 깜빡이 (켜져 있을 때만)
 EXPR_BLINKER_RIGHT = "blinker_right"  # 우측 깜빡이 (켜져 있을 때만)
 
-# 주행중(기본 표정)일 때 랜덤으로 바뀌는 얼굴 변형 — 10가지.
+# 주행중(기본 표정)일 때 랜덤으로 바뀌는 얼굴 변형 — 20가지.
 # 상태 표정(신호등·깜빡이·급감속 등)이 아닐 때만 돌아간다.
-# 상태 표정 10가지(주행중 제외) + 이 변형 10가지 = 얼굴 20가지.
+# 상태 표정 10가지(주행중 제외) + 이 변형 20가지 = 얼굴 30가지.
 IDLE_VARIANTS = (
   "normal", "look_left", "look_right", "look_up", "look_down",
   "wink_left", "wink_right", "sleepy", "surprised", "big_smile",
+  "sunglasses", "heart_eyes", "star_eyes", "crying", "angry",
+  "dizzy", "tongue", "blush", "party", "money",
 )
 IDLE_VARIANT_S = 4.0  # 얼굴 변형이 바뀌는 간격(초)
 
@@ -100,6 +104,14 @@ C_SWEAT = rl.Color(120, 200, 255, 255)
 C_DARK = rl.Color(40, 40, 45, 255)
 C_GAUGE_BG = rl.Color(255, 255, 255, 60)
 C_GAUGE_FG = rl.Color(0, 220, 180, 255)
+# 화려한 변형용 색
+C_TONGUE = rl.Color(255, 120, 160, 255)  # 혀 (분홍)
+C_BLUSH = rl.Color(255, 150, 180, 255)  # 볼터치 (연분홍)
+C_TEARS = rl.Color(100, 180, 255, 255)  # 눈물 (파랑)
+C_PARTY = rl.Color(180, 100, 255, 255)  # 파티 모자 (보라)
+C_HEART = rl.Color(255, 80, 120, 255)  # 하트 눈 (빨강)
+C_SUNGLASS = rl.Color(20, 20, 25, 255)  # 선글라스 (거의 검정)
+C_MONEY = rl.Color(60, 200, 90, 255)  # 돈 눈 (초록 $)
 
 
 class MochiSaver:
@@ -360,6 +372,8 @@ class MochiSaver:
     lid = 1.0  # 1=활짝, 0.45=반쯤 감음
     lid_l = lid_r = None  # 한쪽 눈만 따로 감을 때(윙크) 사용, None이면 lid
     mouth = "smile"
+    pupil_style = "circle"  # 눈동자 모양 (하트·별·X·돈)
+    prop = None  # 얼굴 소품 (선글라스·눈물·눈썹·혀·볼터치·모자)
     if expr == EXPR_TRAFFIC:
       # 신호등을 올려다봄 — 빨간불은 가만히, 초록불은 미소
       pupil_dy = -45.0 * s
@@ -373,7 +387,7 @@ class MochiSaver:
       pupil_dx = 55.0 * s
       mouth = "smile"
     elif expr == EXPR_DRIVING:
-      # 기본 주행 표정: 10가지 얼굴 변형 중 지금 뽑힌 것
+      # 기본 주행 표정: 20가지 얼굴 변형 중 지금 뽑힌 것
       v = self._idle_variant
       if v == "look_left":
         pupil_dx = -60.0 * s
@@ -396,6 +410,38 @@ class MochiSaver:
         pupil_r = 75.0 * s
         mouth = "o"
       elif v == "big_smile":
+        mouth = "open"
+      elif v == "sunglasses":
+        prop = "sunglasses"
+      elif v == "heart_eyes":
+        pupil_style = "heart"
+        mouth = "open"
+      elif v == "star_eyes":
+        pupil_style = "star"
+        mouth = "o"
+      elif v == "crying":
+        pupil_dy = -30.0 * s
+        mouth = "wavy"
+        prop = "tears"
+      elif v == "angry":
+        pupil_r = 48.0 * s
+        mouth = "flat"
+        prop = "brows"
+      elif v == "dizzy":
+        pupil_style = "x"
+        mouth = "wavy"
+      elif v == "tongue":
+        mouth = "open"
+        prop = "tongue"
+      elif v == "blush":
+        pupil_dx = 40.0 * s
+        mouth = "smile"
+        prop = "cheeks"
+      elif v == "party":
+        mouth = "open"
+        prop = "hat"
+      elif v == "money":
+        pupil_style = "money"
         mouth = "open"
       # "normal"은 기본값 그대로 (눈동자 가운데, 미소)
     elif expr == EXPR_REVERSE:
@@ -438,10 +484,25 @@ class MochiSaver:
       ex = cx + side * eye_dx + jx
       ey = face_cy + eye_y + jy
       eye_lid = lid_l if side < 0 else lid_r
-      self._draw_eye(ex, ey, eye_r, eye_lid, pupil_dx, pupil_dy, pupil_r, t, expr, side, eye_letter)
+      self._draw_eye(ex, ey, eye_r, eye_lid, pupil_dx, pupil_dy, pupil_r, t, expr, side, eye_letter, pupil_style)
 
     # 입
     self._draw_mouth(cx, face_cy + mouth_y, mouth, s, t)
+
+    # 화려한 변형용 소품 (주행중일 때만)
+    if expr == EXPR_DRIVING:
+      if prop == "sunglasses":
+        self._draw_sunglasses(cx, face_cy, eye_y, eye_dx, eye_r, s)
+      elif prop == "tears":
+        self._draw_tears(cx, face_cy, eye_y, eye_dx, s, t)
+      elif prop == "brows":
+        self._draw_angry_brows(cx, face_cy, eye_y, eye_dx, eye_r, s)
+      elif prop == "tongue":
+        self._draw_tongue(cx, face_cy + mouth_y, s)
+      elif prop == "cheeks":
+        self._draw_cheeks(cx, face_cy, eye_y, eye_dx, s)
+      elif prop == "hat":
+        self._draw_party_hat(cx, face_cy, s)
 
     # 표정별 배지·글자·소품
     if expr == EXPR_DECEL:
@@ -469,7 +530,8 @@ class MochiSaver:
 
   def _draw_eye(self, ex: float, ey: float, r: float, lid: float,
                 pupil_dx: float, pupil_dy: float, pupil_r: float,
-                t: float, expr: str, side: int, letter: str | None = None) -> None:
+                t: float, expr: str, side: int, letter: str | None = None,
+                pupil_style: str = "circle") -> None:
     # 흰자 (원)
     rl.draw_circle(int(ex), int(ey), int(r), EYE_WHITE)
     if letter is not None:
@@ -480,12 +542,28 @@ class MochiSaver:
       pos = rl.Vector2(ex - size_vec.x / 2.0, ey - size_vec.y / 2.0)
       rl.draw_text_ex(font, letter, pos, font_size, 0, PUPIL)
     else:
-      # 눈동자
+      # 눈동자 (스타일에 따라 모양이 다름)
       px = ex + pupil_dx
       py = ey + pupil_dy
-      rl.draw_circle(int(px), int(py), int(pupil_r), PUPIL)
-      # 눈동자 반짝이
-      rl.draw_circle(int(px - pupil_r * 0.3), int(py - pupil_r * 0.3), int(pupil_r * 0.22), PUPIL_HI)
+      if pupil_style == "heart":
+        self._draw_heart(px, py, pupil_r, C_HEART)
+      elif pupil_style == "star":
+        self._draw_star(px, py, pupil_r, C_YELLOW)
+      elif pupil_style == "x":
+        thick = max(6.0, pupil_r * 0.22)
+        rl.draw_line_ex(rl.Vector2(px - pupil_r * 0.6, py - pupil_r * 0.6), rl.Vector2(px + pupil_r * 0.6, py + pupil_r * 0.6), thick, PUPIL)
+        rl.draw_line_ex(rl.Vector2(px + pupil_r * 0.6, py - pupil_r * 0.6), rl.Vector2(px - pupil_r * 0.6, py + pupil_r * 0.6), thick, PUPIL)
+      elif pupil_style == "money":
+        font, _ = self._fonts()
+        font_size = max(10, int(pupil_r * 1.6))
+        size_vec = measure_text_cached(font, "$", font_size)
+        pos = rl.Vector2(px - size_vec.x / 2.0, py - size_vec.y / 2.0)
+        rl.draw_text_ex(font, "$", pos, font_size, 0, C_MONEY)
+      else:
+        # 기본 동그란 눈동자
+        rl.draw_circle(int(px), int(py), int(pupil_r), PUPIL)
+        # 눈동자 반짝이
+        rl.draw_circle(int(px - pupil_r * 0.3), int(py - pupil_r * 0.3), int(pupil_r * 0.22), PUPIL_HI)
     # 눈꺼풀: 검은 배경 위라 위에서 덮으면 감은 것처럼 보인다
     if lid < 1.0:
       cover_h = 2.0 * r * (1.0 - lid)
@@ -576,3 +654,68 @@ class MochiSaver:
       sx = cx + side * 480.0 * s
       sy = cy - 260.0 * s + fall
       rl.draw_circle(int(sx), int(sy), int(16 * s), C_SWEAT)
+
+  # ---------------------------------------------------------------
+  # 화려한 변형용 소품
+  # ---------------------------------------------------------------
+
+  def _draw_heart(self, cx: float, cy: float, r: float, color: rl.Color) -> None:
+    """하트 모양 (눈동자 대신)."""
+    rl.draw_circle(int(cx - r * 0.35), int(cy - r * 0.25), int(r * 0.38), color)
+    rl.draw_circle(int(cx + r * 0.35), int(cy - r * 0.25), int(r * 0.38), color)
+    rl.draw_triangle(rl.Vector2(cx - r * 0.73, cy - r * 0.05), rl.Vector2(cx + r * 0.73, cy - r * 0.05), rl.Vector2(cx, cy + r * 0.85), color)
+
+  def _draw_star(self, cx: float, cy: float, r: float, color: rl.Color) -> None:
+    """네모 반짝이 별 (눈동자 대신) — 위·아래·왼쪽·오른쪽 삼각형 4개."""
+    w = r * 0.28
+    rl.draw_triangle(rl.Vector2(cx, cy - r), rl.Vector2(cx - w, cy), rl.Vector2(cx + w, cy), color)
+    rl.draw_triangle(rl.Vector2(cx, cy + r), rl.Vector2(cx - w, cy), rl.Vector2(cx + w, cy), color)
+    rl.draw_triangle(rl.Vector2(cx - r, cy), rl.Vector2(cx, cy - w), rl.Vector2(cx, cy + w), color)
+    rl.draw_triangle(rl.Vector2(cx + r, cy), rl.Vector2(cx, cy - w), rl.Vector2(cx, cy + w), color)
+
+  def _draw_sunglasses(self, cx: float, face_cy: float, eye_y: float, eye_dx: float, eye_r: float, s: float) -> None:
+    """선글라스: 양쪽 눈에 검은 렌즈 + 코 다리."""
+    w, h = eye_r * 2.3, eye_r * 1.4
+    for side in (-1, 1):
+      ex = cx + side * eye_dx
+      ey = face_cy + eye_y
+      rl.draw_rectangle_rounded(rl.Rectangle(ex - w / 2.0, ey - h / 2.0, w, h), 0.4, 12, C_SUNGLASS)
+    rl.draw_line_ex(rl.Vector2(cx - eye_dx + eye_r * 1.1, face_cy + eye_y), rl.Vector2(cx + eye_dx - eye_r * 1.1, face_cy + eye_y), max(8.0, 14.0 * s), C_SUNGLASS)
+
+  def _draw_tears(self, cx: float, face_cy: float, eye_y: float, eye_dx: float, s: float, t: float) -> None:
+    """우는 얼굴: 눈 아래로 떨어지는 파란 눈물방울."""
+    for i, side in enumerate((-1, 1)):
+      fall = ((t * 200.0 + i * 150.0) % 200.0) * s
+      tx = cx + side * eye_dx
+      ty = face_cy + eye_y + 120.0 * s + fall
+      rl.draw_circle(int(tx), int(ty), int(18 * s), C_TEARS)
+
+  def _draw_angry_brows(self, cx: float, face_cy: float, eye_y: float, eye_dx: float, eye_r: float, s: float) -> None:
+    """화난 얼굴: 가운데로 내려가는 사선 눈썹."""
+    ey = face_cy + eye_y - eye_r * 1.35
+    thick = max(8.0, 16.0 * s)
+    for side in (-1, 1):
+      # 바깥쪽은 높고 안쪽(가운데)은 낮게
+      x_out = cx + side * (eye_dx + eye_r * 0.95)
+      x_in = cx + side * (eye_dx - eye_r * 0.95)
+      rl.draw_line_ex(rl.Vector2(x_out, ey - 18.0 * s), rl.Vector2(x_in, ey + 18.0 * s), thick, PUPIL)
+
+  def _draw_tongue(self, cx: float, mouth_cy: float, s: float) -> None:
+    """혀 내밈: 입 아래로 나온 분홍 혀."""
+    w, h = 75.0 * s, 95.0 * s
+    rl.draw_rectangle_rounded(rl.Rectangle(cx - w / 2.0, mouth_cy + 5.0 * s, w, h), 0.5, 12, C_TONGUE)
+
+  def _draw_cheeks(self, cx: float, face_cy: float, eye_y: float, eye_dx: float, s: float) -> None:
+    """부끄러움: 양쪽 볼에 분홍 볼터치."""
+    for side in (-1, 1):
+      cheek_x = cx + side * (eye_dx + 130.0 * s)
+      cheek_y = face_cy + 110.0 * s
+      rl.draw_circle(int(cheek_x), int(cheek_y), int(48 * s), C_BLUSH)
+
+  def _draw_party_hat(self, cx: float, face_cy: float, s: float) -> None:
+    """파티 모자: 머리 위 뾰족 모자 + 방울."""
+    base_y = face_cy - 260.0 * s
+    tip_y = face_cy - 480.0 * s
+    hat_w = 220.0 * s
+    rl.draw_triangle(rl.Vector2(cx - hat_w / 2.0, base_y), rl.Vector2(cx + hat_w / 2.0, base_y), rl.Vector2(cx, tip_y), C_PARTY)
+    rl.draw_circle(int(cx), int(tip_y), int(26 * s), C_YELLOW)
