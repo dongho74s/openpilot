@@ -50,6 +50,14 @@ def _from_stock(alert) -> NuiAlert:
   return NuiAlert(alert.text1, alert.text2, "", int(alert.size), int(alert.status))
 
 
+def alert_icon(lane_departure: bool) -> tuple[str, int, int, int, float, tuple]:
+  """(icon, size, glow width, glow height, glow radius, stops) for the FCW/AEB or LDW icon: rect adjusted by -58, -44, 58, 52."""
+  size = 292 if lane_departure else 348
+  gw, gh = size + 116, size + 96
+  glow = (0xFF, 0xC3, 0x53, 255) if lane_departure else (0xFF, 0x5D, 0x57, 255)
+  return "lanecrossing" if lane_departure else "collision", size, gw, gh, gw * 0.56, d.glow_stops(glow, 82, 34)
+
+
 def layout_size(alert: NuiAlert) -> int:
   """The alert size drawn here.
 
@@ -79,6 +87,14 @@ class NuiAlerts:
                              text_alignment_vertical=TextAlignmentVertical.TOP, text_color=rl.WHITE)
     self._full_subtitle = Label("", font_size=88, text_alignment=TextAlignment.CENTER,
                                 text_alignment_vertical=TextAlignmentVertical.TOP, text_color=rl.WHITE)
+
+  def prewarm_steps(self) -> list:
+    steps = [lambda: d.texture("lead_depart", LEAD_DEPART_ICON, LEAD_DEPART_ICON, keep_aspect=True),
+             lambda: d.texture("autohold", AUTOHOLD_ICON, AUTOHOLD_ICON, keep_aspect=True)]
+    for lane_departure in (False, True):
+      name, size, gw, gh, radius, stops = alert_icon(lane_departure)
+      steps += [lambda n=name, z=size: d.texture(n, z, z), lambda a=(gw, gh, radius, stops): d.bake_radial_glow(*a)]
+    return steps
 
   def get_alert(self, sm, started_frame: int, started_time: float, now: float) -> NuiAlert | None:
     if started_frame != self._started_frame:
@@ -173,15 +189,13 @@ class NuiAlerts:
       self._full_subtitle.render(rl.Rectangle(x0, y0 + r[3] - (361 if is_long else 420), w, 300))
 
   def _draw_alert_icon(self, x0: float, y0: float, w: float, lane_departure: bool, now: float) -> None:
-    size = 292 if lane_departure else 348
+    name, size, gw, gh, radius, stops = alert_icon(lane_departure)
     interval_ms = 320 if lane_departure else 120
     if (d.blink_ms() // interval_ms) % 2 != 0:
       return
     ix, iy = x0 + (w - size) / 2, y0 + (188 if lane_departure else 164)
-    gw, gh = size + 116, size + 96
-    glow = (0xFF, 0xC3, 0x53, 255) if lane_departure else (0xFF, 0x5D, 0x57, 255)
-    d.draw_radial_glow((ix - 58, iy - 44, gw, gh), gw * 0.56, d.glow_stops(glow, 82, 34))
-    d.draw_texture_rect(d.texture("lanecrossing" if lane_departure else "collision", size, size), ix, iy, size, size)
+    d.draw_radial_glow((ix - 58, iy - 44, gw, gh), radius, stops)
+    d.draw_texture_rect(d.texture(name, size, size), ix, iy, size, size)
 
   def _draw_lead_departing(self, x0: float, y0: float, w: float, h: float, alert: NuiAlert) -> None:
     tex = d.texture("lead_depart", LEAD_DEPART_ICON, LEAD_DEPART_ICON, keep_aspect=True)

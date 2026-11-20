@@ -49,6 +49,17 @@ def gap_rect(x0: float, y0: float, w: float, h: float) -> tuple[float, float, fl
   return sx - GAP_ICON_WIDTH - 34, sy + (sh - GAP_ICON_HEIGHT) // 2 + 2, GAP_ICON_WIDTH, GAP_ICON_HEIGHT
 
 
+def lfa_glow(glow: s.RGBA) -> tuple[int, int, float, tuple]:
+  """(width, height, radius, stops) of the LFA glow (icon rect adjusted by -26, -22, 26, 24)."""
+  w, h = LFA_ICON_SIZE + 52, LFA_ICON_SIZE + 46
+  return w, h, w * 0.55, d.glow_stops(glow, 76, 34)
+
+
+def warning_glow() -> tuple[int, int, float, tuple]:
+  w, h = WARNING_ICON_SIZE + 52, WARNING_ICON_SIZE + 44
+  return w, h, w * 0.55, d.glow_stops((0xFF, 0x68, 0x5B, 255), 64, 26)
+
+
 def wheel_center(x0: float, y0: float, w: float, h: float, size: int) -> tuple[float, float]:
   return x0 + w - HUD_SIDE_MARGIN - size / 2, y0 + h - HUD_BOTTOM_MARGIN - size / 2
 
@@ -92,6 +103,16 @@ class NuiHud:
   def close(self) -> None:
     self._turn_left.close()
     self._turn_right.close()
+
+  def prewarm_steps(self) -> list:
+    """Every texture this HUD can draw, so none is decoded in the middle of a drive."""
+    steps = [lambda n=n: d.texture(f"gap{n}", GAP_ICON_WIDTH, GAP_ICON_HEIGHT) for n in range(1, 5)]
+    steps += [lambda: d.texture("lfa", LFA_ICON_SIZE, LFA_ICON_SIZE), lambda: d.texture("warning", WARNING_ICON_SIZE, WARNING_ICON_SIZE),
+              lambda: d.texture("steeringwheel", 150, 150, keep_aspect=True),
+              lambda: d.texture("steeringwheel", 178, 178, keep_aspect=True), self._turn_left.get, self._turn_right.get,
+              lambda: d.bake_radial_glow(*warning_glow())]
+    steps += [lambda c=c: d.bake_radial_glow(*lfa_glow(c)) for c in (s.ENGAGED_GREEN, s.LATERAL_ONLY_MINT, s.OVERRIDE_BLUE)]
+    return steps
 
   def _fallback_personality(self, now: float) -> int:
     if now >= self._param_next:
@@ -229,8 +250,8 @@ class NuiHud:
     ix, iy = rx + rw - 1 - 84, ry + 2
     tint, glow = s.lfa_style(self.long_override, self.lateral_only, self.enabled, self.engageable)
     if glow is not None:
-      gw, gh = LFA_ICON_SIZE + 52, LFA_ICON_SIZE + 46
-      d.draw_radial_glow((ix - 26, iy - 22, gw, gh), gw * 0.55, d.glow_stops(glow, 76, 34))
+      gw, gh, radius, stops = lfa_glow(glow)
+      d.draw_radial_glow((ix - 26, iy - 22, gw, gh), radius, stops)
     d.draw_texture_rect(d.texture("lfa", LFA_ICON_SIZE, LFA_ICON_SIZE), ix, iy, LFA_ICON_SIZE, LFA_ICON_SIZE, d.color(tint))
 
   def _draw_steering_wheel(self, x0, y0, w, h) -> None:
@@ -249,6 +270,6 @@ class NuiHud:
     cx, cy = wheel_center(x0, y0, w, h, STEERING_ICON_WARNING_SIZE)
     ix = cx - STEERING_ICON_WARNING_SIZE / 2 - 84
     iy = cy - STEERING_ICON_WARNING_SIZE / 2 - 20
-    gw, gh = WARNING_ICON_SIZE + 52, WARNING_ICON_SIZE + 44
-    d.draw_radial_glow((ix - 26, iy - 22, gw, gh), gw * 0.55, d.glow_stops((0xFF, 0x68, 0x5B, 255), 64, 26))
+    gw, gh, radius, stops = warning_glow()
+    d.draw_radial_glow((ix - 26, iy - 22, gw, gh), radius, stops)
     d.draw_texture_rect(d.texture("warning", WARNING_ICON_SIZE, WARNING_ICON_SIZE), ix, iy, WARNING_ICON_SIZE, WARNING_ICON_SIZE)

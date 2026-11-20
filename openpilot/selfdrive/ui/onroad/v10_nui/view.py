@@ -21,6 +21,13 @@ SCREEN_CORNER_COLOR: s.RGBA = (0, 0, 0, 255)
 BLINDSPOT_GLOW: s.RGBA = (0xFF, 0x67, 0x4A, 255)
 
 
+def blindspot_icon(name: str):
+  """(texture, glow width, glow height, radius, stops) for one blind-spot icon: rect adjusted by -34, -28, 34, 28."""
+  tex = d.texture(name, BLINDSPOT_W, BLINDSPOT_H, keep_aspect=True)
+  gw, gh = tex.width + 68, tex.height + 56
+  return tex, gw, gh, gw * 0.56, d.glow_stops(BLINDSPOT_GLOW, 82, 34)
+
+
 def status_name(status) -> str:
   return str(getattr(status, "value", status))
 
@@ -38,6 +45,10 @@ class NuiOnroad:
     self.hud = NuiHud(params)
     self.dm = NuiDriverMonitor()
     self.alerts = NuiAlerts()
+    # Decode icons and bake glows one per frame from the first frame on, instead of at first use mid-drive.
+    self._prewarm = (self.hud.prewarm_steps() + self.alerts.prewarm_steps() + self.dm.prewarm_steps() +
+                     [lambda n=n: d.bake_radial_glow(*blindspot_icon(n)[1:]) for n in ("blindspot_left", "blindspot_right")] +
+                     [lambda: d.bake_rounded_corner(SCREEN_CORNER_RADIUS, SCREEN_CORNER_COLOR)])
 
   def set_transform(self, transform) -> None:
     self.model.set_transform(transform)
@@ -47,6 +58,7 @@ class NuiOnroad:
 
   def close(self) -> None:
     self.hud.close()
+    d.release_baked_textures()
 
   def render(self, rect: rl.Rectangle, ui, draw_model: bool = True, now: float | None = None) -> dict[str, float]:
     """Draw the overlay; returns per-part milliseconds for uiDebug."""
@@ -80,6 +92,8 @@ class NuiOnroad:
     alert = self.alerts.get_alert(sm, ui.started_frame, ui.started_time, now)
     self.alerts.render(rect, alert, now)
     timings['alert'] = (time.monotonic() - t) * 1000.0
+    if self._prewarm:
+      self._prewarm.pop(0)()
     return timings
 
   @staticmethod
@@ -100,7 +114,6 @@ class NuiOnroad:
                                  (right, bool(cs.rightBlinker), "blindspot_right", rect.x + rect.width - 40 - BLINDSPOT_W)):
       if not show or (blink and not blink_on):
         continue
-      tex = d.texture(name, BLINDSPOT_W, BLINDSPOT_H, keep_aspect=True)
-      gw, gh = tex.width + 68, tex.height + 56
-      d.draw_radial_glow((x - 34, y - 28, gw, gh), gw * 0.56, d.glow_stops(BLINDSPOT_GLOW, 82, 34))
+      tex, gw, gh, radius, stops = blindspot_icon(name)
+      d.draw_radial_glow((x - 34, y - 28, gw, gh), radius, stops)
       d.draw_texture_rect(tex, x, y, tex.width, tex.height)

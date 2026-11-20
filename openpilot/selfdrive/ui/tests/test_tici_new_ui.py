@@ -214,7 +214,12 @@ def nui(monkeypatch):
                "draw_rectangle_gradient_v", "draw_line_ex", "rl_begin", "rl_end", "rl_color4ub", "rl_vertex2f", "draw_rectangle_rec"):
     setattr(rl, name, rec(name))
   font = NS(name="font")
-  gui = NS(texture=lambda path, w, h, **kw: NS(path=path, width=w, height=h), font=lambda weight: font)
+  requests = []
+
+  def texture(path, w, h, **kw):
+    requests.append((path, w, h, kw.get("keep_aspect_ratio", True)))
+    return NS(path=path, width=w, height=h)
+  gui = NS(texture=texture, font=lambda weight: font)
 
   class Label:
     def __init__(self, *a, **k):
@@ -262,8 +267,18 @@ def nui(monkeypatch):
   for name in modules:
     monkeypatch.delitem(sys.modules, f"openpilot.selfdrive.ui.onroad.v10_nui.{name}")
   monkeypatch.setattr(modules["draw"], "blink_ms", lambda: 0)  # every blink in its visible phase
+  baked = []
+
+  def fake_baked(key, make):
+    pixels = make()
+    baked.append((key, pixels))
+    requests.append(key)
+    return NS(path=f"baked:{key[0]}", width=pixels.shape[1], height=pixels.shape[0])
+  monkeypatch.setattr(modules["draw"], "_baked_texture", fake_baked)
   params = NS(get_int=lambda key: {"ShowPathEnd": 1, "LongitudinalPersonality": 2}.get(key, 0))
-  return NS(m=modules, calls=calls, rl=rl, params=params, rect=rect_t(0, 0, 2160, 1080))
+  monkeypatch.setattr(modules["draw"].ThresholdTexture, "get",
+                      lambda self: requests.append(("threshold", self._path)) or NS(path=self._path, width=72, height=72))
+  return NS(m=modules, calls=calls, rl=rl, params=params, rect=rect_t(0, 0, 2160, 1080), baked=baked, requests=requests)
 
 
 def textures(calls):
@@ -281,10 +296,10 @@ def test_hud_engaged_layout(nui):
   assert (hud.speed, hud.set_speed, hud.gap_level, hud.steering_angle) == (pytest.approx(72.0), 100.0, 2, -12.0)
   hud.draw(nui.rect)
   assert texts(nui.calls) == ["SET", "100", "72", "KM/H"]
-  assert textures(nui.calls) == ["gap2.png", "gap2.png", "lfa.png", "steeringwheel.png"]
+  assert textures(nui.calls) == ["gap2.png", "gap2.png", "baked:glow", "lfa.png", "steeringwheel.png"]
   wheel = [c for c in nui.calls if c[0] == "draw_texture_pro"][-1]
   assert wheel[3] == (2160 - 104 - 78, 1080 - 96 - 78, 150, 150) and wheel[5] == -12.0
-  assert any(c[0] == "rl_begin" for c in nui.calls)  # LFA glow when engaged
+  assert not any(c[0] == "rl_begin" for c in nui.calls)  # glows are baked textures, not per-frame triangles
 
 
 def test_hud_stale_car_state_and_parked_timer(nui):
@@ -316,7 +331,7 @@ def test_hud_override_signals_and_steer_limit(nui):
   hud._turn_left.get = lambda: NS(path="turn_signal_left.png", width=72, height=72)
   hud.draw(nui.rect)
   assert "MPH" in texts(nui.calls) and "62" in texts(nui.calls)
-  names = textures(nui.calls)
+  names = [n for n in textures(nui.calls) if not n.startswith("baked:")]
   assert names[0] == "turn_signal_left.png" and "warning.png" in names
   lfa = next(c for c in nui.calls if c[0] == "draw_texture_pro" and c[1].path.endswith("lfa.png"))
   assert lfa[-1] == nui.rl.Color(*s.OVERRIDE_BLUE)
@@ -498,34 +513,27 @@ def test_one_line_alerts_use_the_one_line_box(nui):
   assert texts(nui.calls) == ["Lane Departure Detected"]
 
 
-def _triangles(calls):
-  verts = [c[1:] for c in calls if c[0] == "rl_vertex2f"]
-  return [verts[i:i + 3] for i in range(0, len(verts), 3)]
+def test_screen_corners_are_one_baked_corner_drawn_four_ways(nui):
+  nui.m["draw"].draw_rounded_corners((300, 0, 1860, 1080), 60, (0, 0, 0, 255))
+  quads = [c for c in nui.calls if c[0] == "draw_texture_pro"]
+  assert [(c[3].x, c[3].y, c[3].width, c[3].height) for c in quads] == [
+    (300, 0, 60, 60), (2100, 0, 60, 60), (300, 1020, 60, 60), (2100, 1020, 60, 60)]
+  assert [(c[2].width, c[2].height) for c in quads] == [(60, 60), (-60, 60), (60, -60), (-60, -60)]  # mirrored
+  assert not any(c[0] == "rl_begin" for c in nui.calls)
+  corner = nui.baked[-1][1]
+  assert corner.shape == (60, 60, 4) and corner[0, 0, 3] == 255 and corner[59, 59, 3] == 0 and corner[0, 59, 3] <= 1
 
 
-def _cross(tri):
-  (ax, ay), (bx, by), (cx, cy) = tri
-  return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
-
-
-def test_screen_corners_are_rounded_with_front_facing_triangles(nui):
-  nui.m["draw"].draw_rounded_corners((300, 0, 1860, 1080), 60, (0, 0, 0, 255), segments=4)
-  triangles = _triangles(nui.calls)
-  assert len(triangles) == 16
-  assert {tri[0] for tri in triangles} == {(300, 0), (2160, 0), (2160, 1080), (300, 1080)}
-  centres = {(300, 0): (360, 60), (2160, 0): (2100, 60), (2160, 1080): (2100, 1020), (300, 1080): (360, 1020)}
-  for corner, *arc in triangles:
-    for px, py in arc:
-      assert np.hypot(px - centres[corner][0], py - centres[corner][1]) == pytest.approx(60)
-  assert all(_cross(tri) < 0 for tri in triangles)  # raylib's own front-face order: never culled on the GPU
-
-
-def test_glow_triangles_are_front_facing(nui):
-  nui.m["draw"].draw_radial_glow((100, 100, 156, 150), 85.8, nui.m["draw"].glow_stops((73, 210, 131, 255), 76, 34))
-  triangles = _triangles(nui.calls)
-  assert triangles and all(_cross(tri) < 0 for tri in triangles)
-
-
+def test_glow_pixels_match_the_qt_radial_gradient(nui):
+  d = nui.m["draw"]
+  px = d.glow_rgba(156, 150, 85.8, d.glow_stops((73, 210, 131, 255), 76, 34))
+  assert px.shape == (150, 156, 4)
+  assert abs(int(px[75, 78, 3]) - 76) <= 1  # centre
+  assert abs(int(px[75, 78 + 39, 3]) - 34) <= 2  # 0.45 of the radius out
+  assert px[0, 0, 3] == 0  # outside the ellipse
+  assert abs(int(px[75, 0, 3]) - 6) <= 1  # the ellipse (78 px) clips the 85.8 px gradient, as in Qt
+  assert (px[..., :3][px[..., 3] > 0] == (73, 210, 131)).all()
+  assert not any(c[0] == "rl_begin" for c in nui.calls)
 def test_screen_corners_round_the_whole_screen_after_the_sidebar():
   tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
   body = [ast.unparse(n) for n in _function(tree, "_render_nui", "AugmentedRoadView").body]
@@ -623,3 +631,53 @@ def test_auto_hide_stops_when_leaving_onroad_or_new_ui_1(sidebar_layout):
 def test_main_layout_checks_the_sidebar_deadline_every_frame_before_drawing():
   body = [ast.unparse(n) for n in _function(ast.parse(MAIN_LAYOUT.read_text(encoding="utf-8")), "_render", "MainLayout").body]
   assert body.index("self._auto_hide_sidebar(time.monotonic())") < body.index("self._render_main_content()")
+
+
+def test_prewarm_covers_every_texture_the_screen_can_draw(nui):
+  view = nui.m["view"].NuiOnroad(nui.params)
+  while view._prewarm:
+    view._prewarm.pop(0)()
+  warmed = set(nui.requests)
+  nui.requests.clear()
+  hud, dm, alerts = view.hud, view.dm, view.alerts
+  for status, setup in ((s.STATUS_ENGAGED, {}), (s.STATUS_DISENGAGED, {"enabled": False}),
+                        (s.STATUS_OVERRIDE, {"state": "overriding", "gas": True}), (s.STATUS_DISENGAGED, {"lateral": True}),
+                        (s.STATUS_ENGAGED, {"steer_limit": True})):
+    for personality in ("aggressive", "standard", "relaxed", "moreRelaxed"):
+      sm = make_sm()
+      ss, cs, cc = sm["selfdriveState"], sm["carState"], sm["carControl"]
+      ss.personality = personality
+      cs.leftBlinker = cs.rightBlinker = cs.leftBlindspot = cs.rightBlindspot = True
+      if setup.get("enabled") is False or setup.get("lateral"):
+        ss.enabled, cc.longActive = False, False
+        cc.latActive = bool(setup.get("lateral"))
+      if setup.get("state"):
+        ss.state, cs.gasPressed = setup["state"], True
+      if setup.get("steer_limit"):
+        ss.alertType = "steerSaturated/warning"
+      hud.update(sm, STARTED, status, True, 100.0)
+      hud.draw(nui.rect)
+      dm.update(sm, STARTED, 50.1)
+      dm.draw(nui.rect)
+      view._draw_blindspots(nui.rect, sm, STARTED)
+  for alert in (nui.m["alerts"].NuiAlert("BRAKE!", "Risk", "fcw/permanent", 3, 2),
+                nui.m["alerts"].NuiAlert("Lane Departure", "", "ldw/permanent", 1, 1),
+                nui.m["alerts"].NuiAlert("Press Resume", "", "resumeRequired/warning", 1, 1),
+                nui.m["alerts"].NuiAlert("", "Lead vehicle departed", "leadDepartingUi", 3, 0)):
+    alerts.render(nui.rect, alert, 10.0)
+  view.draw_screen_corners(nui.rect)
+  drawn = set(nui.requests)
+  assert drawn and drawn <= warmed, drawn - warmed
+
+
+@pytest.mark.parametrize("name", ["state", "draw", "hud", "model", "driver_monitor"])
+def test_modules_import_with_the_real_pyray(name, monkeypatch):
+  """pyray's types are functions, so e.g. `rl.Texture | None` in a signature only fails with the real library."""
+  pytest.importorskip("pyray")
+  if name == "model":
+    pytest.importorskip("openpilot.selfdrive.locationd.calibrationd")  # needs native msgq, absent on a Mac
+  for module in [m for m in sys.modules if m.startswith("openpilot.selfdrive.ui.onroad.v10_nui.") and not m.endswith(".state")]:
+    monkeypatch.delitem(sys.modules, module)
+  importlib.import_module(f"openpilot.selfdrive.ui.onroad.v10_nui.{name}")
+  for module in [m for m in sys.modules if m.startswith("openpilot.selfdrive.ui.onroad.v10_nui.") and not m.endswith(".state")]:
+    monkeypatch.delitem(sys.modules, module)

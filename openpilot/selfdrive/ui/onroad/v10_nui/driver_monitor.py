@@ -25,6 +25,12 @@ class NuiDriverMonitor:
     self.engageable = False
     self.rotation = 0.0
 
+  @staticmethod
+  def prewarm_steps() -> list:
+    return [lambda: d.texture("dm_background", DM_SIZE, DM_SIZE, folder=d.DM_DIR),
+            lambda: d.texture("dm_cone", CONE_SIZE, CONE_SIZE, folder=d.DM_DIR),
+            lambda: d.texture("dm_person", PERSON_SIZE, PERSON_SIZE, folder=d.DM_DIR)]
+
   def update(self, sm, started_frame: int, now: float) -> None:
     ss = sm['selfdriveState']
     self.visible = ss.alertSize == AlertSize.none and sm.recv_frame['driverStateV2'] > started_frame

@@ -1,5 +1,4 @@
 """raylib helpers for the v10-nui tici screen (Qt QPainter equivalents)."""
-import math
 import time
 
 import numpy as np
@@ -13,10 +12,9 @@ ICON_DIR = "icons/v10_nui"
 DM_DIR = "icons_mici/onroad/driver_monitoring"
 
 LEFT, CENTER, RIGHT = "left", "center", "right"
+GLOW_DOWNSCALE = 2
 TOP, BOTTOM = "top", "bottom"
 
-_GLOW_SEGMENTS = 36
-_GLOW_RINGS = (0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0)
 
 
 def blink_ms() -> int:
@@ -102,54 +100,77 @@ def draw_vertical_gradient(x: float, y: float, w: float, h: float, stops: tuple[
                                  color(c0), color(c1))
 
 
-def _gradient_at(stops: tuple[tuple[float, RGBA], ...], t: float) -> RGBA:
-  t = clamp(t, 0.0, 1.0)
-  if t <= stops[0][0]:
-    return stops[0][1]
-  for (p0, c0), (p1, c1) in zip(stops, stops[1:], strict=False):
-    if t <= p1:
-      f = (t - p0) / max(p1 - p0, 1e-6)
-      return tuple(int(round(a + (b - a) * f)) for a, b in zip(c0, c1, strict=True))  # type: ignore[return-value]
-  return stops[-1][1]
+def glow_rgba(width: int, height: int, radius: float, stops: tuple[tuple[float, RGBA], ...]) -> np.ndarray:
+  """Pixels of QPainter drawEllipse(0, 0, width, height) filled with QRadialGradient(centre, radius, stops)."""
+  ys, xs = np.mgrid[0:height, 0:width].astype(np.float32) + 0.5
+  rx, ry = width / 2.0, height / 2.0
+  dx, dy = xs - rx, ys - ry
+  t = np.hypot(dx, dy) / max(radius, 1e-6)
+  positions = np.array([p for p, _ in stops], dtype=np.float32)
+  channels = np.array([c for _, c in stops], dtype=np.float32)
+  rgba = np.stack([np.interp(t, positions, channels[:, i]) for i in range(4)], axis=-1)
+  # Antialiased ellipse edge, about one pixel wide.
+  edge = (1.0 - np.hypot(dx / rx, dy / ry)) * min(rx, ry) + 0.5
+  rgba[..., 3] *= np.clip(edge, 0.0, 1.0)
+  return np.clip(np.rint(rgba), 0, 255).astype(np.uint8)
 
 
-def _emit(points, colors) -> None:
-  """One triangle in raylib's own front-face order (as DrawCircleGradient), so GPU culling never drops it."""
-  (ax, ay), (bx, by), (cx, cy) = points
-  if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > 0:
-    points = (points[0], points[2], points[1])
-    colors = (colors[0], colors[2], colors[1])
-  for (px, py), c in zip(points, colors, strict=True):
-    rl.rl_color4ub(c[0], c[1], c[2], c[3])
-    rl.rl_vertex2f(px, py)
+def corner_rgba(radius: int, rgba: RGBA) -> np.ndarray:
+  """Top-left screen corner outside a quarter circle of this radius (antialiased), clear inside."""
+  ys, xs = np.mgrid[0:radius, 0:radius].astype(np.float32) + 0.5
+  coverage = np.clip(np.hypot(radius - xs, radius - ys) - radius + 0.5, 0.0, 1.0)
+  out = np.empty((radius, radius, 4), dtype=np.uint8)
+  out[..., :3] = rgba[:3]
+  out[..., 3] = np.rint(coverage * rgba[3]).astype(np.uint8)
+  return out
+
+
+_baked: dict = {}
+
+
+def _baked_texture(key, make) -> rl.Texture:
+  """Upload generated pixels once; drawing is then one textured quad per frame."""
+  tex = _baked.get(key)
+  if tex is None:
+    pixels = make()
+    h, w = pixels.shape[:2]
+    image = rl.gen_image_color(w, h, rl.BLANK)
+    rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+    rl.ffi.memmove(image.data, np.ascontiguousarray(pixels).tobytes(), w * h * 4)
+    tex = rl.load_texture_from_image(image)
+    rl.set_texture_filter(tex, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+    rl.set_texture_wrap(tex, rl.TextureWrap.TEXTURE_WRAP_CLAMP)
+    rl.unload_image(image)
+    _baked[key] = tex
+  return tex
+
+
+def release_baked_textures() -> None:
+  for tex in _baked.values():
+    rl.unload_texture(tex)
+  _baked.clear()
+
+
+def bake_radial_glow(width: float, height: float, radius: float, stops: tuple[tuple[float, RGBA], ...]) -> "rl.Texture | None":  # pyray types are functions
+  # A soft gradient: half resolution, stretched with bilinear filtering, is visually the same and 4x cheaper to bake.
+  iw, ih = int(round(width / GLOW_DOWNSCALE)), int(round(height / GLOW_DOWNSCALE))
+  if iw <= 0 or ih <= 0 or radius <= 0:
+    return None
+  key = ("glow", iw, ih, round(float(radius), 2), tuple(stops))
+  return _baked_texture(key, lambda: glow_rgba(iw, ih, radius / GLOW_DOWNSCALE, stops))
 
 
 def draw_radial_glow(rect: tuple[float, float, float, float], radius: float, stops: tuple[tuple[float, RGBA], ...]) -> None:
   """QPainter drawEllipse(rect) with QRadialGradient(rect centre, radius, stops)."""
   x, y, w, h = rect
-  cx, cy, rx, ry = x + w / 2, y + h / 2, w / 2, h / 2
-  if radius <= 0 or rx <= 0 or ry <= 0:
-    return
-  dirs = [(math.cos(2 * math.pi * j / _GLOW_SEGMENTS), math.sin(2 * math.pi * j / _GLOW_SEGMENTS)) for j in range(_GLOW_SEGMENTS)]
-  edge = [math.hypot(rx * c, ry * s) for c, s in dirs]
-  rl.rl_begin(rl.RL_TRIANGLES)
-  for k in range(len(_GLOW_RINGS) - 1):
-    u0, u1 = _GLOW_RINGS[k], _GLOW_RINGS[k + 1]
-    for j in range(_GLOW_SEGMENTS):
-      j2 = (j + 1) % _GLOW_SEGMENTS
-      (c0, s0), (c1, s1) = dirs[j], dirs[j2]
-      p00 = (cx + u0 * rx * c0, cy + u0 * ry * s0)
-      p01 = (cx + u0 * rx * c1, cy + u0 * ry * s1)
-      p10 = (cx + u1 * rx * c0, cy + u1 * ry * s0)
-      p11 = (cx + u1 * rx * c1, cy + u1 * ry * s1)
-      k00 = _gradient_at(stops, u0 * edge[j] / radius)
-      k01 = _gradient_at(stops, u0 * edge[j2] / radius)
-      k10 = _gradient_at(stops, u1 * edge[j] / radius)
-      k11 = _gradient_at(stops, u1 * edge[j2] / radius)
-      if u0 > 0:
-        _emit((p00, p01, p11), (k00, k01, k11))
-      _emit((p00, p11, p10), (k00, k11, k10))
-  rl.rl_end()
+  tex = bake_radial_glow(w, h, radius, stops)
+  if tex is not None:
+    draw_texture_rect(tex, x, y, w, h)
+
+
+def bake_rounded_corner(radius: float, rgba: RGBA) -> rl.Texture:
+  r = int(round(radius))
+  return _baked_texture(("corner", r, tuple(rgba)), lambda: corner_rgba(r, rgba))
 
 
 def glow_stops(base: RGBA, inner: int, middle: int) -> tuple[tuple[float, RGBA], ...]:
@@ -174,23 +195,13 @@ def draw_polygon_outline(points: np.ndarray, rgba: RGBA, width: float) -> None:
     rl.draw_line_ex(rl.Vector2(float(x0), float(y0)), rl.Vector2(float(x1), float(y1)), width, c)
 
 
-def draw_rounded_corners(rect: tuple[float, float, float, float], radius: float, rgba: RGBA, segments: int = 16) -> None:
-  """Cover the four outside corners so the view reads as one rounded rectangle."""
+def draw_rounded_corners(rect: tuple[float, float, float, float], radius: float, rgba: RGBA) -> None:
+  """Cover the four outside corners so the area reads as one rounded rectangle."""
   x, y, w, h = rect
-  radius = min(radius, w / 2, h / 2)
-  if radius <= 0:
+  r = int(round(min(radius, w / 2, h / 2)))
+  if r <= 0:
     return
-  corners = (  # (corner point, arc centre, start angle in degrees; screen y points down)
-    ((x, y), (x + radius, y + radius), 180.0),
-    ((x + w, y), (x + w - radius, y + radius), 270.0),
-    ((x + w, y + h), (x + w - radius, y + h - radius), 0.0),
-    ((x, y + h), (x + radius, y + h - radius), 90.0),
-  )
-  c = (rgba, rgba, rgba)
-  rl.rl_begin(rl.RL_TRIANGLES)
-  for corner, (cx, cy), start in corners:
-    arc = [(cx + radius * math.cos(math.radians(start + 90.0 * i / segments)),
-            cy + radius * math.sin(math.radians(start + 90.0 * i / segments))) for i in range(segments + 1)]
-    for p0, p1 in zip(arc[:-1], arc[1:], strict=True):
-      _emit((corner, p0, p1), c)
-  rl.rl_end()
+  tex = bake_rounded_corner(r, rgba)
+  for cx, cy, flip_x, flip_y in ((x, y, 1, 1), (x + w - r, y, -1, 1), (x, y + h - r, 1, -1), (x + w - r, y + h - r, -1, -1)):
+    rl.draw_texture_pro(tex, rl.Rectangle(0, 0, flip_x * r, flip_y * r), rl.Rectangle(cx, cy, r, r), rl.Vector2(0, 0), 0.0,
+                        rl.WHITE)
