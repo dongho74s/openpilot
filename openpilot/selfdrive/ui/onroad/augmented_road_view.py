@@ -65,6 +65,10 @@ class AugmentedRoadView(CameraView):
     self.driver_state_renderer = DriverPreview()
     self._nui: NuiOnroad | None = None  # NewUi 1, created on first use
     self._nui_was_active = False
+    if nui_active():
+      # Started with NewUi 1 (offroad, at UI start): prepare its icons and glows now, not in the first drive frames.
+      self._nui = NuiOnroad(ui_state.params)
+      self._nui.prewarm(float('inf'))
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
@@ -218,6 +222,10 @@ class AugmentedRoadView(CameraView):
     self._publish_ui_debug(start_draw, cam_ms, parts.get('model', 0.0), parts.get('driver_state', 0.0),
                            parts.get('hud', 0.0), parts.get('alert', 0.0), 0.0)
     timing.finish()
+
+  def hide_event(self):
+    super().hide_event()
+    self._nui_was_active = False  # settings or home took the screen; NewUi 1 restarts its timers when it returns
 
   def _handle_mouse_press(self, _):
     if nui_active():

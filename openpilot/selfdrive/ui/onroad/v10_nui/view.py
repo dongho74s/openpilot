@@ -16,6 +16,7 @@ FOOTER_GRADIENT = ((0.0, (0x05, 0x09, 0x0F, 0x00)), (0.35, (0x05, 0x09, 0x0F, 0x
 HUD_GRADIENT = ((0.0, (0x03, 0x05, 0x09, 0x00)), (0.22, (0x03, 0x05, 0x09, 0x30)), (0.58, (0x03, 0x05, 0x09, 0x88)),
                 (1.0, (0x03, 0x05, 0x09, 0xE8)))
 BLINDSPOT_W, BLINDSPOT_H = 196, 224
+PREWARM_BUDGET_S = 0.004  # per drawn frame while icons and glows are still being prepared
 SCREEN_CORNER_RADIUS = 60  # the stock C3 border's inner rounding (roundness 0.12 of a 1080px screen)
 SCREEN_CORNER_COLOR: s.RGBA = (0, 0, 0, 255)
 BLINDSPOT_GLOW: s.RGBA = (0xFF, 0x67, 0x4A, 255)
@@ -49,6 +50,14 @@ class NuiOnroad:
     self._prewarm = (self.hud.prewarm_steps() + self.alerts.prewarm_steps() + self.dm.prewarm_steps() +
                      [lambda n=n: d.bake_radial_glow(*blindspot_icon(n)[1:]) for n in ("blindspot_left", "blindspot_right")] +
                      [lambda: d.bake_rounded_corner(SCREEN_CORNER_RADIUS, SCREEN_CORNER_COLOR)])
+
+  def prewarm(self, budget_s: float) -> None:
+    """Prepare queued textures until the budget is spent (at least one step)."""
+    deadline = time.monotonic() + budget_s
+    while self._prewarm:
+      self._prewarm.pop(0)()
+      if time.monotonic() >= deadline:
+        break
 
   def reset(self) -> None:
     """Back from another NewUi value: drop timers and smoothing that kept running only while this was drawn."""
@@ -98,8 +107,7 @@ class NuiOnroad:
     alert = self.alerts.get_alert(sm, ui.started_frame, ui.started_time, now)
     self.alerts.render(rect, alert, now)
     timings['alert'] = (time.monotonic() - t) * 1000.0
-    if self._prewarm:
-      self._prewarm.pop(0)()
+    self.prewarm(PREWARM_BUDGET_S)
     return timings
 
   @staticmethod

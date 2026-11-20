@@ -101,9 +101,9 @@ class NuiAlerts:
     return steps
 
   def get_alert(self, sm, started_frame: int, started_time: float, now: float) -> NuiAlert | None:
-    if started_frame != self._started_frame:
+    if started_frame != self._started_frame:  # a new drive: nothing from the last one carries over
       self._started_frame = started_frame
-      self._lead_depart.reset()
+      self.reset()
     ss = sm['selfdriveState']
     recv_frame = sm.recv_frame['selfdriveState']
     alert = None

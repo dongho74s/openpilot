@@ -772,3 +772,37 @@ def test_returning_to_new_ui_1_restarts_its_timers(nui):
   assert "elif not self._nui_was_active:\n        self._nui.reset()" in nui_body
   render = [ast.unparse(n) for n in _function(tree, "_render", "AugmentedRoadView").body]
   assert render.index("self._nui_was_active = False") < next(i for i, n in enumerate(render) if n.startswith("timing ="))
+
+
+def test_auto_hold_time_does_not_carry_into_the_next_drive(nui):
+  alerts = nui.m["alerts"].NuiAlerts()
+  sm = make_sm()
+  ss = sm["selfdriveState"]
+  ss.alertType, ss.alertSize, ss.alertStatus, ss.alertText1 = "resumeRequired/warning", "small", "userPrompt", "Press Resume"
+  alerts.render(nui.rect, alerts.get_alert(sm, STARTED, 0.0, 10.0), 10.0)
+  next_drive = STARTED + 1000
+  for svc in sm.recv_frame:
+    sm.recv_frame[svc] = next_drive + 5
+  alert = alerts.get_alert(sm, next_drive, 0.0, 300.0)  # first frame of the next drive shows auto-hold again
+  nui.calls.clear()
+  alerts.render(nui.rect, alert, 300.0)
+  assert "0:00" in texts(nui.calls)
+
+
+def test_prewarm_spends_a_budget_per_frame_and_everything_at_ui_start(nui):
+  view = nui.m["view"].NuiOnroad(nui.params)
+  done = []
+  view._prewarm = [lambda i=i: done.append(i) for i in range(5)]
+  view.prewarm(0.0)
+  assert done == [0]  # at least one step per frame
+  view.prewarm(float("inf"))
+  assert done == [0, 1, 2, 3, 4] and view._prewarm == []
+  tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
+  init = ast.unparse(_function(tree, "__init__", "AugmentedRoadView"))
+  assert "if nui_active():" in init and "self._nui.prewarm(float('inf'))" in init
+
+
+def test_leaving_the_road_view_restarts_new_ui_timers_on_return():
+  tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
+  hide = [ast.unparse(n) for n in _function(tree, "hide_event", "AugmentedRoadView").body]
+  assert hide == ["super().hide_event()", "self._nui_was_active = False"]
