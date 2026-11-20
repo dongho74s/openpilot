@@ -313,8 +313,9 @@ class MochiSaver:
     elif expr == EXPR_AUTOHOLD:
       breathe = 1.0 + 0.02 * math.sin(t * math.pi * 2.0 / 4.0)
 
-    # 신호등·깜빡이 표정일 때만 맨 위 신호 자리 확보, 나머지는 얼굴 가운데
-    face_shift = 60.0 * s if expr in (EXPR_TRAFFIC, EXPR_BLINKER) else 0.0
+    # 신호등 표정일 때만 맨 위 신호 자리 확보 (깜빡이 화살표는 눈 옆이라
+    # 얼굴을 내릴 필요 없음), 나머지는 얼굴 가운데
+    face_shift = 60.0 * s if expr == EXPR_TRAFFIC else 0.0
     face_cy = cy + bounce + face_shift
     eye_r = 165.0 * s * breathe
     eye_dx = 250.0 * s * breathe
@@ -383,11 +384,11 @@ class MochiSaver:
     elif expr == EXPR_AUTOHOLD:
       self._draw_hold_badge(cx, face_cy - 380.0 * s, s)
 
-    # 신호등·깜빡이 표정: 신호를 얼굴 위 맨 위에 크게 그림
+    # 신호등·깜빡이 표정: 신호등은 얼굴 위 맨 위에, 깜빡이는 눈 옆에 그림
     if expr == EXPR_TRAFFIC:
       self._draw_traffic_light(cx, rect.y + 96.0 * s, s)
     elif expr == EXPR_BLINKER:
-      self._draw_blinker_arrows(cx, rect.y + 96.0 * s, s, t)
+      self._draw_blinker_arrows(cx, face_cy + eye_y, s, t)
 
   def _blink_scale(self, t: float, period: float = 2.3) -> float:
     """깜빡임: 2.3초 주기로 0.12초간 감았다 뜬다. 1=활짝."""
@@ -467,10 +468,12 @@ class MochiSaver:
     for lx, color, lit in lamps:
       rl.draw_circle(int(lx), int(cy), int(lamp_r), color if lit else rl.Color(70, 70, 70, 255))
 
-  def _draw_blinker_arrows(self, cx: float, cy: float, s: float, t: float) -> None:
-    """깜빡이 표정: 켜진 쪽 큰 이중 화살표 + 알약 배경 (켜진 구간에 깜빡임).
+  def _draw_blinker_arrows(self, cx: float, eye_y: float, s: float, t: float) -> None:
+    """깜빡이 표정: 눈 옆 큰 이중 화살표 + 알약 배경 (켜진 구간에 깜빡임).
 
-    한쪽만 켜지면 가운데에 크게, 양쪽(비상)이면 좌우로 벌려서 그림.
+    왼쪽 깜빡이는 왼쪽 눈 바깥쪽, 오른쪽 깜빡이는 오른쪽 눈 바깥쪽에
+    눈 높이로 그림. 가운데가 아니라 눈 좌우라 방향이 바로 느껴짐.
+    양쪽(비상)이면 둘 다 그림.
     """
     on = int(t * 1.4) % 2 == 0
     color = C_YELLOW if on else rl.Color(150, 105, 25, 255)
@@ -482,12 +485,12 @@ class MochiSaver:
     if self._blink_right:
       sides.append(1)
     for side in sides:
-      ax = cx if len(sides) == 1 else cx + side * 170.0 * s
-      rl.draw_rectangle_rounded(rl.Rectangle(ax - pw / 2.0, cy - ph / 2.0, pw, ph), 0.5, 12, C_DARK)
+      ax = cx + side * 600.0 * s
+      rl.draw_rectangle_rounded(rl.Rectangle(ax - pw / 2.0, eye_y - ph / 2.0, pw, ph), 0.5, 12, C_DARK)
       for k in (0, 1):
         acx = ax + side * (k - 0.5) * 65.0 * s
-        pts = [(acx - side * arrow / 2.0, cy - arrow / 2.0), (acx - side * arrow / 2.0, cy + arrow / 2.0),
-               (acx + side * arrow / 2.0, cy)]
+        pts = [(acx - side * arrow / 2.0, eye_y - arrow / 2.0), (acx - side * arrow / 2.0, eye_y + arrow / 2.0),
+               (acx + side * arrow / 2.0, eye_y)]
         rl.draw_triangle(rl.Vector2(*pts[0]), rl.Vector2(*pts[1]), rl.Vector2(*pts[2]), color)
 
   def _draw_hold_badge(self, cx: float, y: float, s: float) -> None:
