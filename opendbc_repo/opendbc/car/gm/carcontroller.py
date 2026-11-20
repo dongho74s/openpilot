@@ -244,6 +244,11 @@ class CarController(CarControllerBase):
       # Trailblazer changes the 0x2CB counter phase between cold/inactive and
       # active ACC states, so follow that stock command rather than ASCM_2CD.
       longitudinal_command_due, idx = gmcan.get_longitudinal_command_timing(self.CP, CS, self.frame)
+      # Every frame, not only those that send: an inactive or non-pid frame between two commands still ends the side
+      # (Codex review 2026-11-20 R3).
+      if self.gas_brake_hysteresis is not None and (not CC.longActive or CS.out.softHoldActive > 0 or
+                                                    actuators.longControlState != LongCtrlState.pid):
+        self.gas_brake_hysteresis.reset()
       if longitudinal_command_due:
         # GM: softHold
         stopping = actuators.longControlState == LongCtrlState.stopping or CS.out.softHoldActive > 0
@@ -280,10 +285,10 @@ class CarController(CarControllerBase):
           else:
             self.apply_gas = int(round(np.interp(accel if self.long_pitch else actuators.accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
             self.apply_brake = int(round(np.interp(brake_accel if self.long_pitch else actuators.accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
-            if self.gas_brake_hysteresis is not None and not stopping:
+            if self.gas_brake_hysteresis is not None and not stopping and actuators.longControlState == LongCtrlState.pid:
               self.apply_gas, self.apply_brake = self.gas_brake_hysteresis.update(
-                accel if self.long_pitch else actuators.accel, self.apply_gas, self.apply_brake,
-                self.params.ZERO_GAS, self.params.MAX_ACC_REGEN)
+                accel if self.long_pitch else actuators.accel, brake_accel if self.long_pitch else actuators.accel,
+                self.apply_gas, self.apply_brake, self.params.ZERO_GAS, self.params.MAX_ACC_REGEN)
               gas_brake_hysteresis_active = True
           # Don't allow any gas above inactive regen while stopping
           # FIXME: brakes aren't applied immediately when enabling at a stop
@@ -300,8 +305,11 @@ class CarController(CarControllerBase):
         if self.bolt_acc_pedal_sng:
           # Only while LongControl is starting and the car has not rolled past vEgoStarting either way (a rollback has
           # negative vEgo): if the ECM still reports standstill once the car moves, stop tapping instead of holding the
-          # pedal while 0x2CB and the brake are overridden (Codex review 2026-11-18).
-          sng_tap = sng_tap and actuators.longControlState == LongCtrlState.starting and abs(CS.out.vEgo) <= self.CP.vEgoStarting
+          # pedal while 0x2CB and the brake are overridden (Codex review 2026-11-18). LongControl's own (positive) start
+          # request decides, not the pitch-compensated gas: this car's start can be as low as 0.15 m/s^2, which a
+          # downhill turns into regen, and the ECM then never left its standstill (Codex review 2026-11-20 R2).
+          sng_tap = (self.CP.enableGasInterceptorDEPRECATED and CS.out.cruiseState.standstill and actuators.accel > 0. and
+                     actuators.longControlState == LongCtrlState.starting and abs(CS.out.vEgo) <= self.CP.vEgoStarting)
         if sng_tap:
           # "Tap" the accelerator pedal to re-engage ACC
           interceptor_gas_cmd = self.params.SNG_INTERCEPTOR_GAS
@@ -345,6 +353,7 @@ class CarController(CarControllerBase):
           else:
             acc_engaged = CC.enabled
 
+          gated_from = (self.apply_gas, self.apply_brake)
           self.apply_gas, self.apply_brake, at_full_stop, near_stop = gmcan.apply_driver_gas_override(
             self.CP.carFingerprint, CS.out.gasPressed, self.params.INACTIVE_REGEN,
             self.apply_gas, self.apply_brake, at_full_stop, near_stop,
@@ -353,6 +362,9 @@ class CarController(CarControllerBase):
             self.CP.carFingerprint, CS.cam_stock_long_active, self.params.INACTIVE_REGEN,
             self.apply_gas, self.apply_brake, at_full_stop, near_stop, acc_engaged,
           )
+          if self.gas_brake_hysteresis is not None and (self.apply_gas, self.apply_brake) != gated_from:
+            # the stock gate or the driver's gas replaced the command: the side it picked was never sent (Codex R4)
+            self.gas_brake_hysteresis.reset()
 
           send_gas = self.apply_gas
           if self.traverse_long:

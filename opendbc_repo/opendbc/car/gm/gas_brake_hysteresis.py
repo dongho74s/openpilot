@@ -10,7 +10,10 @@ step but the same switching.
 
 This keeps the side it is on while the command stays near 0: the gas side coasts (ZERO_GAS, no brake) down to
 BRAKE_ENTER and the brake side holds MAX_ACC_REGEN up to GAS_ENTER; after a switch the new side is held for HOLD_FRAMES
-commands unless the command passes BRAKE_NOW or GAS_NOW, which switch at once. Stops and inactive frames bypass it.
+commands unless the command passes BRAKE_NOW or GAS_NOW, which switch at once. The brake side is judged on both the
+gas lookup's and the brake lookup's input: with LongPitch on they differ (below 10 m/s the brake keeps less of the
+pitch), and a strong raw brake request must not be lost to a pitch-compensated gas input near 0 (Codex review
+2026-11-20 R1). Only pid commands use it; the CarController resets it on every other frame.
 """
 
 BRAKE_ENTER = -0.2  # m/s^2: leave the gas side below this (after HOLD_FRAMES)
@@ -33,9 +36,11 @@ class GasBrakeHysteresis:
     self.gas_side = None
     self.frames = 0
 
-  def update(self, accel: float, apply_gas: int, apply_brake: int, zero_gas: float, max_acc_regen: float):
-    """accel is the gas lookup's input; apply_gas/apply_brake are what the lookups gave for it."""
+  def update(self, accel: float, brake_accel: float, apply_gas: int, apply_brake: int, zero_gas: float,
+             max_acc_regen: float):
+    """accel and brake_accel are the gas and brake lookups' inputs; apply_gas/apply_brake are what they gave."""
     want_gas = accel >= 0.
+    brake_request = min(accel, brake_accel)
     if self.gas_side is None:
       self.gas_side = want_gas
       self.frames = 0
@@ -45,7 +50,7 @@ class GasBrakeHysteresis:
       if want_gas:
         switch = accel > GAS_NOW or (accel > GAS_ENTER and self.frames >= HOLD_FRAMES)
       else:
-        switch = accel < BRAKE_NOW or (accel < BRAKE_ENTER and self.frames >= HOLD_FRAMES)
+        switch = brake_request < BRAKE_NOW or (brake_request < BRAKE_ENTER and self.frames >= HOLD_FRAMES)
       if switch:
         self.gas_side = want_gas
         self.frames = 0

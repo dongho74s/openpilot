@@ -121,10 +121,10 @@ Default `-50`, range `-100 to -1`, step `1`. `-50` means `-0.50 m/s²`, `-100` m
 
 The original behavior enters stopping after `shouldStop` when actual acceleration exceeds the setting. Existing state-transition exceptions, including a nearby lead, remain. During stopping, requests weaker than the target become more negative at the vehicle's stopping rate; stronger requests are retained. Soft hold uses the vehicle-specific stationary-hold acceleration.
 
-- **Raise it (toward −1):** requests weaker deceleration and delays the ordinary acceleration-based handover to stopping. Very close to 0, stopping starts only once the car is barely decelerating and the last deceleration is weak, so on some cars the final braking can feel short.
+- **Raise it (toward −1):** requests weaker deceleration and delays the ordinary acceleration-based handover to stopping. Very close to 0, stopping starts only once the car is barely decelerating and the last deceleration is weak, so on some cars the final braking can feel short. On Hyundai/Kia CANFD the stop request (StopReq) also comes on that much later.
 - **Lower it (toward −100):** requests stronger deceleration and advances that handover. It can increase stopping impact.
 
-Changes apply within about one second, including while driving. Stronger output already reached during a stop is retained, so selecting a weaker target does not immediately reduce braking. Control clamps old or directly written out-of-range values to the range endpoints; unreadable values and values of 0 or above use the default. The Bolt ACC w Pedal in mode 1 never targets a stop stronger than -0.25 m/s² (see the `ACC w Pedal` paragraph in [Settings](settings.md)).
+Changes apply within about one second, including while driving. Stronger output already reached during a stop is retained, so selecting a weaker target does not immediately reduce braking. Control clamps old or directly written out-of-range values to the range endpoints; unreadable values and values of 0 or above use the default. Carrot Web, however, clamps a value into the range (-100 to -1) when saving it, so 0 or above entered there is stored as `-1` (-0.01 m/s²). The Bolt ACC w Pedal in mode 1 never targets a stop stronger than -0.25 m/s² (see the `ACC w Pedal` paragraph in [Settings](settings.md)).
 
 The description above concerns upstream control. The final CANFD request override is described below.
 
