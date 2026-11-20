@@ -7,7 +7,6 @@ from openpilot.common.params import Params
 from openpilot.common.api import comma_connect_enabled
 from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
-from openpilot.system.hylink import runtime as hylink
 
 try:
   BODYTELEOP_AVAILABLE = importlib.util.find_spec("openpilot.tools.bodyteleop.web") is not None
@@ -124,18 +123,6 @@ def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid", enabled=comma_connect_enabled()),
 
-  # Hylink is opt-in and isolated from Athena, vehicle control, and Panda safety.
-  PythonProcess("hylink_guard", "openpilot.system.hylink.guard", only_offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
-  PythonProcess("hylink_connect", "openpilot.system.hylink.connect_server", only_offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
-  PythonProcess("hylink_telemetry", "openpilot.system.hylink.telemetry", hylink.enabled, enabled=not PC, restart_if_crash=True),
-  # Heavy workers are killed on the offroad -> onroad edge, including upload threads.
-  PythonProcess("hylink_worker", "openpilot.system.hylink.worker", hylink.offroad, enabled=not PC, sigkill=True, restart_if_crash=True),
-  PythonProcess("hylink_impact", "openpilot.system.hylink.impactd", hylink.impact_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
-  PythonProcess("hylink_live", "openpilot.system.hylink.live", hylink.media_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
-  PythonProcess("hylink_relay", "openpilot.system.hylink.relay", hylink.media_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
-  PythonProcess("hylink_remote", "openpilot.system.hylink.remote", hylink.remote_ready, enabled=not PC, sigkill=True, restart_if_crash=True),
-  NativeProcess("hylink_encoderd", "openpilot/system/loggerd", ["./encoderd", "--stream"], hylink.stream_requested, enabled=not PC, sigkill=True),
-
   NativeProcess("loggerd", "openpilot/system/loggerd", ["./loggerd"], logging),
   NativeProcess("encoderd", "openpilot/system/loggerd", ["./encoderd"], only_onroad),
   # Preserve generic multi-camera WebRTC for notCar users. Carrot Vision on a
@@ -146,7 +133,7 @@ procs = [
   NativeProcess("carrot_vision_encoderd", "openpilot/system/loggerd", ["./encoderd", "--carrot-vision-road"], and_(or_(iscar, enable_parked_vision), enable_webrtc)),
   PythonProcess("logmessaged", "openpilot.system.logmessaged", always_run),
 
-  NativeProcess("camerad", "openpilot/system/camerad", ["./camerad"], or_(driverview, hylink.camera_requested, enable_parked_vision), enabled=not WEBCAM),
+  NativeProcess("camerad", "openpilot/system/camerad", ["./camerad"], or_(driverview, enable_parked_vision), enabled=not WEBCAM),
   PythonProcess("webcamerad", "openpilot.tools.webcam.camerad", driverview, enabled=WEBCAM),
   PythonProcess("proclogd", "openpilot.system.proclogd", only_onroad, enabled=platform.system() != "Darwin"),
   PythonProcess("journald", "openpilot.system.journald", only_onroad, platform.system() != "Darwin"),
@@ -157,7 +144,7 @@ procs = [
   PythonProcess("signalcolord", "openpilot.selfdrive.modeld.signal_color_shadow", signal_color_observer, spawn=True),
   PythonProcess("jetlinkd", "openpilot.selfdrive.modeld.jetlink.daemon", always_run, enabled=TICI, restart_if_crash=True),
   PythonProcess("dmonitoringmodeld", "openpilot.selfdrive.modeld.dmonitoringmodeld", enable_dm_model, enabled=(WEBCAM or not PC)),
-  PythonProcess("sensord", "openpilot.system.sensord.sensord", or_(only_onroad, hylink.impact_ready), enabled=not PC),
+  PythonProcess("sensord", "openpilot.system.sensord.sensord", only_onroad, enabled=not PC),
   PythonProcess("ui", "openpilot.selfdrive.ui.ui", always_run, restart_if_crash=True),
   PythonProcess("soundd", "openpilot.selfdrive.ui.soundd", driverview),
   PythonProcess("locationd", "openpilot.selfdrive.locationd.locationd", only_onroad),

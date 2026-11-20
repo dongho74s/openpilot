@@ -469,15 +469,6 @@ The 12 system settings cover recording, power, network, maps, sound, and softwar
 
 Check storage use for recording and network use, heat, and privacy before enabling live streaming.
 
-### Hylink parking features — `leehyuk1108/carrotpilot:wip` only
-
-From 2026-09-15, Hylink no longer applies its additional 11.5 V parking-feature cutoff.
-Voltage alone does not stop live viewing, automatic photos, impact detection, history uploads,
-or the Hylink remote terminal. Ignition, communication-state, and thermal guards remain.
-The comma device's own low-voltage shutdown code and power settings are unchanged; their
-existing delays and conditions still apply, so this is not an immediate shutdown guarantee.
-Install the vehicle's `wip` software update for this change; an app update is not required.
-
 `SoundVolumeAdjust` changes general sound volume. DM's first audible warning has a 70% minimum output gain; its final warning always uses 100%, regardless of volume settings or ambient-noise attenuation. The preceding visual-only notice remains silent. See [driver monitoring](driver-monitoring.md) for details.
 
 Experimental DM switches to standard monitoring for 20 seconds only when moving traffic first appears after an absence. Additional vehicles do not extend it; experimental monitoring then resumes, with no empty-road bonus while traffic remains.
