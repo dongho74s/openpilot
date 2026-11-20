@@ -247,7 +247,7 @@ async def get_stream(request: web.Request):
     await prune_ended_stream_sessions(stream_dict)
     device_id = body.device_id or body.client_id
     client_key = webrtcd._stream_client_key(device_id, request.remote)
-    road_requested = "road" in body.cameras
+    road_requested = webrtcd._uses_road_camera(body.cameras)
     if road_requested:
       old_sessions, foreign_sessions = webrtcd._carrot_vision_road_sessions(stream_dict, client_key)
     else:

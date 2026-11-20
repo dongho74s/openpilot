@@ -33,6 +33,15 @@ _carrot_vision_active: bool | None = None
 _carrot_vision_mode = False
 
 
+def _uses_road_camera(cameras: list[str]) -> bool:
+  # A session "uses the road camera" if it streams the forward view,
+  # whether the narrow road camera or the wide road camera (the 360 live
+  # view uses the wide one, which is the only front camera that shows
+  # the A-pillars). This drives the CarrotVisionActive flag and the road
+  # session takeover logic.
+  return "road" in cameras or "wideRoad" in cameras
+
+
 def _set_carrot_vision_active(active: bool) -> None:
   global _carrot_vision_active
   if not _carrot_vision_mode or _carrot_vision_params is None:
@@ -189,7 +198,7 @@ class StreamSession:
 
     self._video_tracks = []
     self.carrot_state = _carrot_vision_mode and bool(carrot_state)
-    self.uses_road_camera = "road" in cameras
+    self.uses_road_camera = _uses_road_camera(cameras)
     assert len(cameras) == config.n_expected_camera_tracks, "Incoming stream has misconfigured number of video tracks"
     for cam in cameras:
       try:
@@ -393,7 +402,7 @@ async def get_stream(request: 'web.Request'):
   )
   async with request.app['stream_lock']:
     client_key = _stream_client_key(body.client_id, request.remote)
-    road_requested = _carrot_vision_mode and "road" in body.cameras
+    road_requested = _carrot_vision_mode and _uses_road_camera(body.cameras)
     if road_requested:
       old_sessions, foreign_sessions = _carrot_vision_road_sessions(stream_dict, client_key)
     elif _carrot_vision_mode:
