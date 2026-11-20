@@ -43,6 +43,18 @@ def web_upload_settings(settings: Mapping[str, Any] | None = None) -> tuple[str,
   return normalize_base_url(base_url), token
 
 
+def tmux_upload_settings(settings: Mapping[str, Any] | None = None) -> tuple[str, str]:
+  """Server for the DSM copy of tmux diagnostics (sent automatically after drives and exceptions).
+
+  WIP-FR's dashcam receiver takes dashcam uploads only, so while it is the configured target the
+  diagnostics keep going to the Carrot server, as before the default changed.
+  """
+  base_url, token = web_upload_settings(settings)
+  if base_url.casefold() == normalize_base_url(DEFAULT_WEB_UPLOAD_URL).casefold():
+    return normalize_base_url(CARROT_WEB_UPLOAD_URL), token
+  return base_url, token
+
+
 def api_url(base_url: str, *parts: str) -> str:
   base_url = normalize_base_url(base_url)
   if not base_url:
@@ -55,7 +67,7 @@ def tmux_web_target(
   settings: Mapping[str, Any] | None = None,
   session_token: str = "",
 ) -> tuple[str, dict[str, str]]:
-  base_url, token = web_upload_settings(settings)
+  base_url, token = tmux_upload_settings(settings)
   token = str(session_token or token).strip()
   if token:
     return api_url(base_url, "tmux", "upload"), {"Authorization": f"Bearer {token}"}

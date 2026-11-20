@@ -330,14 +330,16 @@ def _normalize_kmap_url(value: Any) -> str:
   return url or "https://jominki354.github.io/kmap/"
 
 
+WIP_FR_UPLOAD_MIGRATED_KEY = "web_upload_wipfr_migrated"
+
+
 def _normalize_web_upload_url(value: Any) -> str:
   try:
     url = normalize_base_url(value, DEFAULT_WEB_UPLOAD_URL)
     # Migrate defaults used before the upload receiver moved to its dedicated
     # HTTPS virtual host. The main shind0 host serves Carrot Web and returns an
     # HTML 404 for upload API paths.
-    # WIP-FR: the Carrot server's own default, saved by earlier versions, moves to this branch's receiver.
-    if url.casefold() in {"https://op.wjcloud.kr", "https://shind0.synology.me", CARROT_WEB_UPLOAD_URL.casefold()}:
+    if url.casefold() in {"https://op.wjcloud.kr", "https://shind0.synology.me"}:
       return DEFAULT_WEB_UPLOAD_URL
     return url
   except ValueError:
@@ -449,6 +451,8 @@ WEB_SETTINGS_SPEC: List[_Field] = [
   _Field("kmap_overlay_curvature_color", "bool", False),
   _Field("kmap_map_type", "enum", "roadmap", choices={"roadmap", "satellite", "hybrid"}),
   _Field("web_upload_url", "str", DEFAULT_WEB_UPLOAD_URL, normalize=_normalize_web_upload_url),
+  # Set once the WIP-FR default migration below has run on this device's settings.
+  _Field(WIP_FR_UPLOAD_MIGRATED_KEY, "bool", False, hidden=True),
   # Remote support last-used settings, persisted so the owner's choices survive a
   # reload. Stored as strings via the enum type (numeric values are parsed back
   # to ints client-side). Command permission defaults to "approve_each" so a
@@ -478,6 +482,12 @@ def sanitize_web_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     else:
       value = field.default
     settings[field.key] = _normalize_content_id(value) if field.key in _DRIVE_LAYOUT_CONTENT_KEYS else field.coerce(value)
+  # WIP-FR, once per device: the Carrot server's own default saved by earlier versions moves to this
+  # branch's receiver. The marker then keeps a Carrot address the owner enters later.
+  if not settings[WIP_FR_UPLOAD_MIGRATED_KEY]:
+    if settings["web_upload_url"].casefold() == CARROT_WEB_UPLOAD_URL.casefold():
+      settings["web_upload_url"] = DEFAULT_WEB_UPLOAD_URL
+    settings[WIP_FR_UPLOAD_MIGRATED_KEY] = True
   catalog = load_drive_content_catalog()
   for orientation in ("horizontal", "vertical"):
     area_1_key = f"carrot_navi_{orientation}_area_1"

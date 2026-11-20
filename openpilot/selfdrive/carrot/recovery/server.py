@@ -116,6 +116,8 @@ TOOL_ACTIONS = {
 TMUX_LOG_PATH = "/data/media/tmux.log"
 PARAMS_DIR = "/data/params"
 DEFAULT_WEB_UPLOAD_URL = "https://upload.shind0.synology.me"
+# WIP-FR's dashcam receiver (web_upload.DEFAULT_WEB_UPLOAD_URL) takes no tmux diagnostics.
+WIP_FR_DASHCAM_RECEIVER = "https://hyuklee-server.tail815b6e.ts.net/carrot-upload"
 DEFAULT_TMUX_WEB_UPLOAD_URL = "https://tmux.carrotpilot.app/upload"
 CWP_RECOVERY_BOOT_PARAM = "CwebPushRecoveryBoot"
 CWP_REPORT_URL_KEY = 23
@@ -1070,6 +1072,8 @@ def _web_upload_base_url() -> str:
     except Exception:
       configured = ""
   url = (configured or DEFAULT_WEB_UPLOAD_URL).rstrip("/")
+  if url.casefold() == WIP_FR_DASHCAM_RECEIVER.casefold():
+    url = DEFAULT_WEB_UPLOAD_URL
   if not url.startswith(("http://", "https://")):
     raise ValueError("web upload URL must start with http:// or https://")
   return url

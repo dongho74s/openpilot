@@ -847,3 +847,46 @@ def test_wip_fr_default_upload_server_is_the_branch_receiver(monkeypatch):
   # A deliberately chosen other server is kept.
   assert web_settings.sanitize_web_settings({"web_upload_url": "http://192.0.2.10:8771"})["web_upload_url"] == \
     "http://192.0.2.10:8771"
+
+
+def test_wip_fr_migration_runs_once_then_keeps_an_entered_carrot_address():
+  carrot = web_upload.CARROT_WEB_UPLOAD_URL
+  key = web_settings.WIP_FR_UPLOAD_MIGRATED_KEY
+  migrated = web_settings.sanitize_web_settings({"web_upload_url": carrot})   # saved by an earlier version
+  assert migrated["web_upload_url"] == web_upload.DEFAULT_WEB_UPLOAD_URL
+  assert migrated[key] is True
+  # After the migration was stored, an owner who enters the Carrot server keeps it.
+  kept = web_settings.sanitize_web_settings({**migrated, "web_upload_url": carrot})
+  assert kept["web_upload_url"] == carrot
+  assert web_settings.sanitize_web_settings({})[key] is True
+  assert key not in {entry["key"] for entry in web_settings.web_settings_client_spec()}
+
+
+def test_wip_fr_migration_through_the_settings_file(monkeypatch, tmp_path):
+  path = tmp_path / "web_settings.json"
+  path.write_text(json.dumps({"web_upload_url": web_upload.CARROT_WEB_UPLOAD_URL}), encoding="utf-8")
+  monkeypatch.setattr(web_settings, "CARROT_WEB_SETTINGS_PATH", str(path))
+  assert web_settings.read_web_settings()["web_upload_url"] == web_upload.DEFAULT_WEB_UPLOAD_URL
+  web_settings.update_web_settings({"web_upload_url": web_upload.CARROT_WEB_UPLOAD_URL})   # owner's choice
+  assert web_settings.read_web_settings()["web_upload_url"] == web_upload.CARROT_WEB_UPLOAD_URL
+
+
+def test_tmux_diagnostics_keep_going_to_carrot_while_dashcam_goes_to_the_receiver(monkeypatch):
+  clear_upload_env(monkeypatch)
+  assert web_upload.tmux_upload_settings({}) == (web_upload.CARROT_WEB_UPLOAD_URL, "")
+  url, headers = web_upload.tmux_web_target({}, "session")
+  assert url == f"{web_upload.CARROT_WEB_UPLOAD_URL}/api/v1/tmux/upload"
+  assert web_upload.tmux_upload_settings({"web_upload_url": "https://upload.example"})[0] == "https://upload.example"
+
+
+def test_recovery_tmux_copy_skips_the_dashcam_receiver(monkeypatch, tmp_path):
+  from openpilot.selfdrive.carrot.recovery import server as recovery
+  monkeypatch.delenv("CARROT_WEB_UPLOAD_URL", raising=False)
+  state = tmp_path / "state"
+  state.mkdir()
+  monkeypatch.setenv("CARROT_DATA_DIR", str(tmp_path))
+  (state / "web_settings.json").write_text(json.dumps({"web_upload_url": web_upload.DEFAULT_WEB_UPLOAD_URL}))
+  assert recovery.WIP_FR_DASHCAM_RECEIVER == web_upload.DEFAULT_WEB_UPLOAD_URL
+  assert recovery._web_upload_base_url() == web_upload.CARROT_WEB_UPLOAD_URL
+  (state / "web_settings.json").write_text(json.dumps({"web_upload_url": "https://upload.example"}))
+  assert recovery._web_upload_base_url() == "https://upload.example"

@@ -42,8 +42,8 @@ from openpilot.selfdrive.carrot.web_upload import (
   carrot_logs_web_target,
   create_web_upload_session_sync,
   post_tmux_web,
+  tmux_upload_settings,
   tmux_web_target,
-  web_upload_settings,
 )
 
 from openpilot.common.gps import get_gps_location_service
@@ -914,7 +914,7 @@ class CarrotMan:
       except Exception:
         upload_settings = {}
       payload = self._tmux_upload_payload(tmux_why)
-      base_url, configured_token = web_upload_settings(upload_settings)
+      base_url, configured_token = tmux_upload_settings(upload_settings)
       session_token = configured_token or create_web_upload_session_sync(
         base_url, payload, requests.post, "tmux",
       )
