@@ -534,3 +534,92 @@ def test_screen_corners_round_the_whole_screen_after_the_sidebar():
   assert not any("draw_rounded_corners" in line for line in body)
   view = ast.unparse(_function(ast.parse((UI_DIR / "onroad" / "v10_nui" / "view.py").read_text(encoding="utf-8")), "render", "NuiOnroad"))
   assert "corner" not in view  # never per camera view: with the sidebar open its inner corners stay square
+
+
+MAIN_LAYOUT = UI_DIR / "layouts" / "main.py"
+
+
+@pytest.fixture
+def sidebar_layout():
+  """The real MainLayout sidebar methods with stand-in UI state, sidebar and touches."""
+  tree = ast.parse(MAIN_LAYOUT.read_text(encoding="utf-8"))
+  methods = [_function(tree, name, "MainLayout") for name in ("_on_onroad_clicked", "_auto_hide_sidebar")]
+  clock = NS(now=100.0)
+  ui = NS(started=True, new_ui_mode=1)
+  gui = NS(mouse_events=[])
+  ns = {"time": NS(monotonic=lambda: clock.now), "ui_state": ui, "gui_app": gui, "NEW_UI_WAYON": 1,
+        "SIDEBAR_AUTO_HIDE_S": 10.0, "MainState": NS(ONROAD=2)}
+  exec(compile(ast.Module(body=methods, type_ignores=[]), str(MAIN_LAYOUT), "exec"), ns)
+
+  class Sidebar:
+    is_visible = False
+    def set_visible(self, visible):
+      self.is_visible = visible
+
+  layout = NS(_sidebar=Sidebar(), _sidebar_hide_at=None, _current_mode=2, _sidebar_rect=NS(x=0, width=300))
+  layout.click = lambda: ns["_on_onroad_clicked"](layout)
+  layout.tick = lambda: ns["_auto_hide_sidebar"](layout, clock.now)
+  return NS(layout=layout, clock=clock, ui=ui, gui=gui)
+
+
+def test_new_ui_1_sidebar_closes_ten_seconds_after_opening(sidebar_layout):
+  t = sidebar_layout
+  t.layout.click()
+  assert t.layout._sidebar.is_visible
+  t.clock.now = 109.9
+  t.layout.tick()
+  assert t.layout._sidebar.is_visible
+  t.clock.now = 110.0
+  t.layout.tick()
+  assert not t.layout._sidebar.is_visible
+  t.layout.click()  # a tap opens it again, with a fresh ten seconds
+  t.clock.now = 119.0
+  t.layout.tick()
+  assert t.layout._sidebar.is_visible
+  t.layout.click()  # tapping the road view while open still closes it at once
+  assert not t.layout._sidebar.is_visible and t.layout._sidebar_hide_at is None
+
+
+def test_touching_the_sidebar_keeps_it_open(sidebar_layout):
+  t = sidebar_layout
+  t.layout.click()
+  t.clock.now = 108.0
+  t.gui.mouse_events = [NS(pos=NS(x=150, y=500))]
+  t.layout.tick()
+  t.gui.mouse_events = []
+  t.clock.now = 117.9
+  t.layout.tick()
+  assert t.layout._sidebar.is_visible
+  t.clock.now = 118.0
+  t.layout.tick()
+  assert not t.layout._sidebar.is_visible
+
+
+@pytest.mark.parametrize("mode", [0, 2, 3])
+def test_other_new_ui_modes_keep_the_sidebar_until_tapped(sidebar_layout, mode):
+  t = sidebar_layout
+  t.ui.new_ui_mode = mode
+  t.layout.click()
+  t.clock.now = 1000.0
+  t.layout.tick()
+  assert t.layout._sidebar.is_visible
+
+
+def test_auto_hide_stops_when_leaving_onroad_or_new_ui_1(sidebar_layout):
+  t = sidebar_layout
+  t.layout.click()
+  t.ui.new_ui_mode = 0  # switched off while open: back to the stock behaviour
+  t.clock.now = 200.0
+  t.layout.tick()
+  assert t.layout._sidebar.is_visible and t.layout._sidebar_hide_at is None
+  t.ui.new_ui_mode = 1
+  t.layout._sidebar.set_visible(False)
+  t.layout.click()
+  t.layout._current_mode = 1  # settings opened from the sidebar
+  t.layout.tick()
+  assert t.layout._sidebar_hide_at is None
+
+
+def test_main_layout_checks_the_sidebar_deadline_every_frame_before_drawing():
+  body = [ast.unparse(n) for n in _function(ast.parse(MAIN_LAYOUT.read_text(encoding="utf-8")), "_render", "MainLayout").body]
+  assert body.index("self._auto_hide_sidebar(time.monotonic())") < body.index("self._render_main_content()")

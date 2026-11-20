@@ -7,10 +7,13 @@ from openpilot.selfdrive.ui.layouts.home import HomeLayout
 from openpilot.selfdrive.ui.layouts.settings.settings import SettingsLayout, PanelType
 from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.carrot_param_cache import TimedSnapshotCache, read_screen_record
-from openpilot.selfdrive.ui.ui_state import device, ui_state
+from openpilot.selfdrive.ui.ui_state import device, ui_state, NEW_UI_WAYON
 from openpilot.selfdrive.ui.widgets.carrot_web_dialog import CarrotWebDialog
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.layouts.onboarding import OnboardingWindow
+
+
+SIDEBAR_AUTO_HIDE_S = 10.0  # NewUi 1: a sidebar opened onroad closes itself after this long without a touch on it
 
 
 class MainState(IntEnum):
@@ -31,6 +34,7 @@ class MainLayout(Widget):
     self._layouts = {MainState.HOME: HomeLayout(), MainState.SETTINGS: SettingsLayout(), MainState.ONROAD: AugmentedRoadView()}
 
     self._sidebar_rect = rl.Rectangle(0, 0, 0, 0)
+    self._sidebar_hide_at: float | None = None  # NewUi 1 onroad auto-hide deadline
     self._content_rect = rl.Rectangle(0, 0, 0, 0)
 
     # Set callbacks
@@ -104,6 +108,7 @@ class MainLayout(Widget):
         cluster_hud_connected,
         ui_state.show_camera_with_cluster,
       )
+    self._auto_hide_sidebar(time.monotonic())
     self._render_main_content()
     self._handle_carrot_record_cmd(ui_state.sm)
 
@@ -155,6 +160,22 @@ class MainLayout(Widget):
 
   def _on_onroad_clicked(self):
     self._sidebar.set_visible(not self._sidebar.is_visible)
+    self._sidebar_hide_at = (time.monotonic() + SIDEBAR_AUTO_HIDE_S
+                             if self._sidebar.is_visible and ui_state.new_ui_mode == NEW_UI_WAYON else None)
+
+  def _auto_hide_sidebar(self, now: float) -> None:
+    """NewUi 1: close the onroad sidebar 10 s after it was opened or last touched; a tap opens it again."""
+    if self._sidebar_hide_at is None:
+      return
+    if not (ui_state.started and self._current_mode == MainState.ONROAD and self._sidebar.is_visible and
+            ui_state.new_ui_mode == NEW_UI_WAYON):
+      self._sidebar_hide_at = None
+      return
+    if any(event.pos.x < self._sidebar_rect.x + self._sidebar_rect.width for event in gui_app.mouse_events):
+      self._sidebar_hide_at = now + SIDEBAR_AUTO_HIDE_S  # still using it
+    elif now >= self._sidebar_hide_at:
+      self._sidebar.set_visible(False)
+      self._sidebar_hide_at = None
 
   def _render_main_content(self):
     # Render sidebar

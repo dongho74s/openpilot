@@ -101,6 +101,7 @@ def main_layout_module(monkeypatch):
     "openpilot.selfdrive.ui.ui_state": SimpleNamespace(
       device=SimpleNamespace(add_interactive_timeout_callback=lambda callback: None),
       ui_state=fake_ui_state,
+      NEW_UI_WAYON=1,
     ),
     "openpilot.system.ui.lib.application": SimpleNamespace(gui_app=gui_app),
     "openpilot.system.ui.widgets": SimpleNamespace(Widget=Widget),
