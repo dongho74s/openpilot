@@ -11,7 +11,11 @@ from typing import Any
 from aiohttp import ClientSession, ClientTimeout
 
 
-DEFAULT_WEB_UPLOAD_URL = "https://upload.shind0.synology.me"
+# WIP-FR: every comma on this branch uploads dashcam logs to the branch maintainer's receiver (Tailscale Funnel
+# upload door; nothing can be read back through it). The Carrot server stays selectable by URL only through
+# CARROT_WEB_UPLOAD_URL, since its old saved default is migrated here.
+DEFAULT_WEB_UPLOAD_URL = "https://hyuklee-server.tail815b6e.ts.net/carrot-upload"
+CARROT_WEB_UPLOAD_URL = "https://upload.shind0.synology.me"
 DEFAULT_TMUX_WEB_UPLOAD_URL = "https://tmux.carrotpilot.app/upload"
 
 

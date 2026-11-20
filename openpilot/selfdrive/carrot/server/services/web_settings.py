@@ -6,7 +6,7 @@ import re
 import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from openpilot.selfdrive.carrot.web_upload import DEFAULT_WEB_UPLOAD_URL, normalize_base_url
+from openpilot.selfdrive.carrot.web_upload import CARROT_WEB_UPLOAD_URL, DEFAULT_WEB_UPLOAD_URL, normalize_base_url
 
 from ..config import CARROT_WEB_SETTINGS_PATH, WEB_DIR
 from .web_capabilities import is_known_web_capability
@@ -336,7 +336,8 @@ def _normalize_web_upload_url(value: Any) -> str:
     # Migrate defaults used before the upload receiver moved to its dedicated
     # HTTPS virtual host. The main shind0 host serves Carrot Web and returns an
     # HTML 404 for upload API paths.
-    if url.casefold() in {"https://op.wjcloud.kr", "https://shind0.synology.me"}:
+    # WIP-FR: the Carrot server's own default, saved by earlier versions, moves to this branch's receiver.
+    if url.casefold() in {"https://op.wjcloud.kr", "https://shind0.synology.me", CARROT_WEB_UPLOAD_URL.casefold()}:
       return DEFAULT_WEB_UPLOAD_URL
     return url
   except ValueError:

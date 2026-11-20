@@ -364,13 +364,14 @@ def clear_discord_env(monkeypatch):
 
 def test_builtin_discord_webhook_only_reports_carrot_server_uploads(monkeypatch):
   clear_discord_env(monkeypatch)
-  builtin = upload.discord_webhook_url(None)
+  builtin = upload.discord_webhook_url(None, base_url=web_upload.CARROT_WEB_UPLOAD_URL)
   assert builtin.startswith("https://discord.com/api/webhooks/")
-  assert upload.discord_webhook_url(None, base_url=web_upload.DEFAULT_WEB_UPLOAD_URL) == builtin
-  assert upload.discord_webhook_url(None, base_url=web_upload.DEFAULT_WEB_UPLOAD_URL.replace("upload.", "UPLOAD.") + "/") == builtin
-  # A private upload server notifies on its own; its links must not go to the Carrot Discord.
+  assert upload.discord_webhook_url(None, base_url=web_upload.CARROT_WEB_UPLOAD_URL.replace("upload.", "UPLOAD.") + "/") == builtin
+  # Any other receiver, WIP-FR's default included, notifies on its own; its links must not go to the Carrot Discord.
+  assert upload.discord_webhook_url(None, base_url=web_upload.DEFAULT_WEB_UPLOAD_URL) == ""
   assert upload.discord_webhook_url(None, base_url="http://192.0.2.10:8771") == ""
   assert upload.discord_webhook_url(None, base_url="not a url") == ""
+  assert upload.discord_webhook_url(None) == ""
 
 
 def test_explicit_discord_webhook_still_reports_private_server_uploads(monkeypatch):
@@ -614,6 +615,8 @@ def test_web_settings_migrate_previous_upload_keys():
   "https://op.wjcloud.kr",
   "https://shind0.synology.me",
   "https://SHIND0.synology.me",
+  "https://upload.shind0.synology.me",
+  "https://upload.shind0.synology.me/",
 ])
 def test_web_settings_migrate_previous_default_server(previous_url):
   settings = web_settings.sanitize_web_settings({"web_upload_url": previous_url})
@@ -832,3 +835,15 @@ def test_dashcam_web_upload_honors_cancellation_before_network(tmp_path: Path, m
       lambda: True,
     ))
   assert FakeSession.instances == []
+
+
+def test_wip_fr_default_upload_server_is_the_branch_receiver(monkeypatch):
+  clear_upload_env(monkeypatch)
+  assert web_upload.DEFAULT_WEB_UPLOAD_URL == "https://hyuklee-server.tail815b6e.ts.net/carrot-upload"
+  assert web_upload.web_upload_settings({}) == (web_upload.DEFAULT_WEB_UPLOAD_URL, "")
+  assert web_upload.api_url(web_upload.DEFAULT_WEB_UPLOAD_URL, "session") == \
+    "https://hyuklee-server.tail815b6e.ts.net/carrot-upload/api/v1/session"
+  assert web_settings.sanitize_web_settings({})["web_upload_url"] == web_upload.DEFAULT_WEB_UPLOAD_URL
+  # A deliberately chosen other server is kept.
+  assert web_settings.sanitize_web_settings({"web_upload_url": "http://192.0.2.10:8771"})["web_upload_url"] == \
+    "http://192.0.2.10:8771"
