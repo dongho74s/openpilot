@@ -459,7 +459,9 @@ def test_only_new_ui_1_takes_the_v10_path_before_any_carrot_drawing():
   assert ast.unparse(compare) == "ui_state.new_ui_mode == NEW_UI_WAYON"
   render = _function(tree, "_render", "AugmentedRoadView")
   branch = next(n for n in render.body if isinstance(n, ast.If) and ast.unparse(n.test) == "nui_active()")
-  assert ast.unparse(branch.body[0]) == "self._render_nui(rect, start_draw)" and isinstance(branch.body[1], ast.Return)
+  ready = branch.body[0]
+  assert ast.unparse(ready.test) == "self.prewarm_nui()"  # not ready yet: this frame keeps the Carrot screen
+  assert ast.unparse(ready.body[0]) == "self._render_nui(rect, start_draw)" and isinstance(ready.body[1], ast.Return)
   first_carrot_line = next(i for i, n in enumerate(render.body) if "timing" in ast.unparse(n))
   assert render.body.index(branch) < first_carrot_line
   assert ast.unparse(render.body[render.body.index(branch) + 1]) == "self.set_frame_filter(0.0, 0.0)"
@@ -693,7 +695,7 @@ def _camera_layout(device: str, sensor: str, nui_on: bool, x: float = 0.0, width
                str(ROAD_VIEW), "exec"), ns)
   camera = DEVICE_CAMERAS[(device, sensor)]
   got = {}
-  view = NS(device_camera=camera, stream_type=0, view_from_calib=view_frame_from_device_frame,
+  view = NS(device_camera=camera, stream_type=0, view_from_calib=view_frame_from_device_frame, _drawing_nui=nui_on,
             view_from_wide_calib=view_frame_from_device_frame, _content_rect=NS(x=x, y=0.0, width=width, height=1080.0),
             _matrix_cache_key=None, _cached_matrix=None, model_renderer=NS(set_transform=lambda t: got.update(model=t)),
             _nui=NS(set_transform=lambda t: got.update(nui=t)))
@@ -806,3 +808,17 @@ def test_leaving_the_road_view_restarts_new_ui_timers_on_return():
   tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
   hide = [ast.unparse(n) for n in _function(tree, "hide_event", "AugmentedRoadView").body]
   assert hide == ["super().hide_event()", "self._nui_was_active = False"]
+
+
+def test_new_ui_1_is_prepared_offroad_and_only_drawn_once_ready(nui):
+  view = nui.m["view"].NuiOnroad(nui.params)
+  assert not view.ready
+  assert view.prewarm(float("inf")) and view.ready
+  main = [ast.unparse(n) for n in _function(ast.parse(MAIN_LAYOUT.read_text(encoding="utf-8")), "_render", "MainLayout").body]
+  started = next(n for n in main if n.startswith("if ui_state.started:"))
+  assert "elif ui_state.new_ui_mode == NEW_UI_WAYON:" in started and "prewarm_nui()" in started
+  tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
+  render_nui = [ast.unparse(n) for n in _function(tree, "_render_nui", "AugmentedRoadView").body]
+  assert "self._drawing_nui = True" in render_nui
+  render = [ast.unparse(n) for n in _function(tree, "_render", "AugmentedRoadView").body]
+  assert "self._drawing_nui = False" in render  # warm-up frames draw the Carrot screen with its own camera zoom

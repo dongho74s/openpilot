@@ -13,7 +13,7 @@ from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.render_diagnostics import RenderDiagnostics
 from openpilot.selfdrive.ui.overlay_state import OverlayState
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
-from openpilot.selfdrive.ui.onroad.v10_nui.view import NuiOnroad
+from openpilot.selfdrive.ui.onroad.v10_nui.view import NuiOnroad, PREWARM_BUDGET_S
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.text_draw import draw_text_ui_style
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
@@ -65,6 +65,7 @@ class AugmentedRoadView(CameraView):
     self.driver_state_renderer = DriverPreview()
     self._nui: NuiOnroad | None = None  # NewUi 1, created on first use
     self._nui_was_active = False
+    self._drawing_nui = False  # the frame being drawn uses the NewUi 1 layout (camera zoom follows it)
     if nui_active():
       # Started with NewUi 1 (offroad, at UI start): prepare its icons and glows now, not in the first drive frames.
       self._nui = NuiOnroad(ui_state.params)
@@ -100,10 +101,14 @@ class AugmentedRoadView(CameraView):
     if not ui_state.started:
       return
     if nui_active():
-      self._render_nui(rect, start_draw)
-      return
+      if self.prewarm_nui():
+        self._render_nui(rect, start_draw)
+        return
+      # NewUi 1 was just selected while driving: until its icons are prepared (a few frames), keep the Carrot
+      # screen rather than decoding them in the middle of a frame.
     self.set_frame_filter(0.0, 0.0)
     self._nui_was_active = False
+    self._drawing_nui = False
     timing = self._render_diagnostics
     timing.start()
     # Preserve uiDebug wall timers and draw order; runtimeTiming also measures
@@ -188,6 +193,12 @@ class AugmentedRoadView(CameraView):
     ud.recording = gui_app.is_recording()
     self._pm.send('uiDebug', msg)
 
+  def prewarm_nui(self, budget_s: float = PREWARM_BUDGET_S) -> bool:
+    """Prepare NewUi 1 (also called offroad by MainLayout); True once it can be drawn without loading anything."""
+    if self._nui is None:
+      self._nui = NuiOnroad(ui_state.params)
+    return self._nui.prewarm(budget_s)
+
   def _render_nui(self, rect: rl.Rectangle, start_draw: float) -> None:
     """NewUi 1: full-bleed v10-nui screen (no border, Carrot HUD/model/alerts replaced)."""
     if self._nui is None:
@@ -195,6 +206,7 @@ class AugmentedRoadView(CameraView):
     elif not self._nui_was_active:
       self._nui.reset()  # timers must not count the time another NewUi value was on screen
     self._nui_was_active = True
+    self._drawing_nui = True
     nui = self._nui
     timing = self._render_diagnostics
     timing.start()
@@ -297,7 +309,7 @@ class AugmentedRoadView(CameraView):
 
   def _calc_frame_matrix(self, rect: rl.Rectangle) -> np.ndarray:
     # Check if we can use cached matrix
-    nui = nui_active()
+    nui = self._drawing_nui
     cache_key = (
       ui_state.sm.recv_frame['liveCalibration'],
       self._content_rect.width,

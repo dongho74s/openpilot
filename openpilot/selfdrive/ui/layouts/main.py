@@ -108,6 +108,8 @@ class MainLayout(Widget):
         cluster_hud_connected,
         ui_state.show_camera_with_cluster,
       )
+    elif ui_state.new_ui_mode == NEW_UI_WAYON:
+      self._layouts[MainState.ONROAD].prewarm_nui()  # NewUi 1 picked offroad: ready before driving
     self._auto_hide_sidebar(time.monotonic())
     self._render_main_content()
     self._handle_carrot_record_cmd(ui_state.sm)

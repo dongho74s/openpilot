@@ -51,13 +51,19 @@ class NuiOnroad:
                      [lambda n=n: d.bake_radial_glow(*blindspot_icon(n)[1:]) for n in ("blindspot_left", "blindspot_right")] +
                      [lambda: d.bake_rounded_corner(SCREEN_CORNER_RADIUS, SCREEN_CORNER_COLOR)])
 
-  def prewarm(self, budget_s: float) -> None:
-    """Prepare queued textures until the budget is spent (at least one step)."""
+  @property
+  def ready(self) -> bool:
+    """Every icon and glow this screen can draw is prepared."""
+    return not self._prewarm
+
+  def prewarm(self, budget_s: float) -> bool:
+    """Prepare queued textures until the budget is spent (at least one step); True once everything is ready."""
     deadline = time.monotonic() + budget_s
     while self._prewarm:
       self._prewarm.pop(0)()
       if time.monotonic() >= deadline:
         break
+    return self.ready
 
   def reset(self) -> None:
     """Back from another NewUi value: drop timers and smoothing that kept running only while this was drawn."""
@@ -107,7 +113,6 @@ class NuiOnroad:
     alert = self.alerts.get_alert(sm, ui.started_frame, ui.started_time, now)
     self.alerts.render(rect, alert, now)
     timings['alert'] = (time.monotonic() - t) * 1000.0
-    self.prewarm(PREWARM_BUDGET_S)
     return timings
 
   @staticmethod
