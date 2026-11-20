@@ -34,9 +34,6 @@ BORDER_COLORS = {
 WIDE_CAM_MAX_SPEED = 10.0  # m/s (22 mph)
 ROAD_CAM_MIN_SPEED = 15.0  # m/s (34 mph)
 INF_POINT = np.array([1000.0, 0.0, 0.0])
-# NewUi 1 (v10-nui annotated_camera.cc calcFrameMatrix): slight horizontal overscan, nudged left.
-NUI_HORIZONTAL_OVERSCAN = 1.035
-NUI_LEFT_BIAS = -0.016
 
 
 def nui_active() -> bool:
@@ -67,6 +64,7 @@ class AugmentedRoadView(CameraView):
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverPreview()
     self._nui: NuiOnroad | None = None  # NewUi 1, created on first use
+    self._nui_was_active = False
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
@@ -101,6 +99,7 @@ class AugmentedRoadView(CameraView):
       self._render_nui(rect, start_draw)
       return
     self.set_frame_filter(0.0, 0.0)
+    self._nui_was_active = False
     timing = self._render_diagnostics
     timing.start()
     # Preserve uiDebug wall timers and draw order; runtimeTiming also measures
@@ -189,6 +188,9 @@ class AugmentedRoadView(CameraView):
     """NewUi 1: full-bleed v10-nui screen (no border, Carrot HUD/model/alerts replaced)."""
     if self._nui is None:
       self._nui = NuiOnroad(ui_state.params)
+    elif not self._nui_was_active:
+      self._nui.reset()  # timers must not count the time another NewUi value was on screen
+    self._nui_was_active = True
     nui = self._nui
     timing = self._render_diagnostics
     timing.start()
@@ -316,6 +318,10 @@ class AugmentedRoadView(CameraView):
 
     # Calculate max allowed offsets with margins
     margin = 5
+    if nui:
+      # Full-bleed screen: the frame must cover the view. C3X's road frame is 1344x760, so 1.1x would leave the
+      # left and top third empty. The same zoom goes to the model transform below, so overlays stay on the video.
+      zoom = max(zoom, (w / 2 + margin) / cx, (h / 2 + margin) / cy)
     max_x_offset = cx * zoom - w / 2 - margin
     max_y_offset = cy * zoom - h / 2 - margin
 
@@ -336,9 +342,6 @@ class AugmentedRoadView(CameraView):
       [0, zoom * 2 * cy / h, -y_offset / h * 2],
       [0, 0, 1.0]
     ])
-    if nui:
-      self._cached_matrix[0, 0] *= NUI_HORIZONTAL_OVERSCAN
-      self._cached_matrix[0, 2] += NUI_LEFT_BIAS
 
     video_transform = np.array([
       [zoom, 0.0, (w / 2 + x - x_offset) - (cx * zoom)],

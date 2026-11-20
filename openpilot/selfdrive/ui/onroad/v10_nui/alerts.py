@@ -88,6 +88,10 @@ class NuiAlerts:
     self._full_subtitle = Label("", font_size=88, text_alignment=TextAlignment.CENTER,
                                 text_alignment_vertical=TextAlignmentVertical.TOP, text_color=rl.WHITE)
 
+  def reset(self) -> None:
+    self._resume_timer = s.ElapsedTimer()
+    self._lead_depart.reset()
+
   def prewarm_steps(self) -> list:
     steps = [lambda: d.texture("lead_depart", LEAD_DEPART_ICON, LEAD_DEPART_ICON, keep_aspect=True),
              lambda: d.texture("autohold", AUTOHOLD_ICON, AUTOHOLD_ICON, keep_aspect=True)]
@@ -107,7 +111,9 @@ class NuiAlerts:
       alert = NuiAlert(str(ss.alertText1), str(ss.alertText2), str(ss.alertType), int(ss.alertSize.raw), int(ss.alertStatus.raw))
 
     departing = False
-    if sm.recv_frame['carState'] >= started_frame and sm.recv_frame['radarState'] >= started_frame:
+    # Only a fresh radar sample may start or extend the notice; a stalled or invalid service must let it expire.
+    if (all(sm.recv_frame[svc] >= started_frame and sm.alive[svc] and sm.valid[svc] for svc in ('carState', 'radarState')) and
+        sm.updated['radarState']):
       cs, lead = sm['carState'], sm['radarState'].leadOne
       standstill = bool(cs.standstill) and cs.gearShifter != REVERSE
       departing = s.lead_departing_detected(standstill, bool(lead.status), float(lead.dRel), float(lead.vRel),

@@ -681,3 +681,94 @@ def test_modules_import_with_the_real_pyray(name, monkeypatch):
   importlib.import_module(f"openpilot.selfdrive.ui.onroad.v10_nui.{name}")
   for module in [m for m in sys.modules if m.startswith("openpilot.selfdrive.ui.onroad.v10_nui.") and not m.endswith(".state")]:
     monkeypatch.delitem(sys.modules, module)
+
+
+def _camera_layout(device: str, sensor: str, nui_on: bool, x: float = 0.0, width: float = 2160.0):
+  """The real _calc_frame_matrix, then CameraView._render's placement of the frame on screen."""
+  from openpilot.common.transformations.camera import DEVICE_CAMERAS, view_frame_from_device_frame
+  tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
+  ns = {"np": np, "nui_active": lambda: nui_on, "WIDE_CAM": 2, "INF_POINT": np.array([1000.0, 0.0, 0.0]),
+        "DEFAULT_DEVICE_CAMERA": None, "ui_state": NS(sm=NS(recv_frame={"liveCalibration": 1})), "rl": NS(Rectangle=object)}
+  exec(compile(ast.Module(body=[_function(tree, "_calc_frame_matrix", "AugmentedRoadView")], type_ignores=[]),
+               str(ROAD_VIEW), "exec"), ns)
+  camera = DEVICE_CAMERAS[(device, sensor)]
+  got = {}
+  view = NS(device_camera=camera, stream_type=0, view_from_calib=view_frame_from_device_frame,
+            view_from_wide_calib=view_frame_from_device_frame, _content_rect=NS(x=x, y=0.0, width=width, height=1080.0),
+            _matrix_cache_key=None, _cached_matrix=None, model_renderer=NS(set_transform=lambda t: got.update(model=t)),
+            _nui=NS(set_transform=lambda t: got.update(nui=t)))
+  m = ns["_calc_frame_matrix"](view, None)
+  scale_x, scale_y = width * m[0, 0], 1080.0 * m[1, 1]
+  left = x + (width - scale_x) / 2 + m[0, 2] * width / 2
+  top = (1080.0 - scale_y) / 2 + m[1, 2] * 1080 / 2
+  return NS(left=left, top=top, right=left + scale_x, bottom=top + scale_y, camera=camera.fcam, model=got["model"],
+            nui=got["nui"], frame_to_screen=lambda u, v: (left + u * scale_x / camera.fcam.width, top + v * scale_y / camera.fcam.height),
+            calib=camera.fcam.intrinsics @ view_frame_from_device_frame)
+
+
+@pytest.mark.parametrize(("device", "sensor"), [("tici", "ar0231"), ("tizi", "os04c10")])
+@pytest.mark.parametrize(("x", "width"), [(0.0, 2160.0), (300.0, 1860.0)])
+def test_new_ui_1_camera_fills_the_view_and_overlays_stay_on_the_video(device, sensor, x, width):
+  layout = _camera_layout(device, sensor, True, x, width)
+  assert layout.left <= x and layout.right >= x + width and layout.top <= 0 and layout.bottom >= 1080  # no empty band
+  assert np.allclose(layout.model, layout.nui)
+  for point in ([12.0, -1.8, 1.2], [40.0, 1.8, 1.2], [80.0, 0.0, 1.5]):  # device frame: ahead, left, up
+    p = layout.calib @ np.array(point)
+    camera_xy = layout.frame_to_screen(p[0] / p[2], p[1] / p[2])
+    q = layout.model @ np.array(point)
+    assert np.allclose(camera_xy, (q[0] / q[2], q[1] / q[2]), atol=0.5)
+
+
+def test_c3x_road_frame_is_zoomed_like_v10_and_c3_barely_changes():
+  c3x, c3 = _camera_layout("tizi", "os04c10", True), _camera_layout("tici", "ar0231", True)
+  assert (c3x.right - c3x.left) / 1344 == pytest.approx((1080 + 5) / 672)  # v10 Qt drew C3X at about 1.63x
+  assert (c3.right - c3.left) / 1928 == pytest.approx((1080 + 5) / 964)  # just enough to cover the borderless view
+
+
+def test_lead_departed_needs_a_fresh_radar_sample(nui):
+  alerts = nui.m["alerts"].NuiAlerts()
+  sm = make_sm()
+  sm["carState"].standstill = True
+  lead = sm["radarState"].leadOne
+  lead.status, lead.dRel, lead.vRel = True, 8.0, 1.5
+  assert alerts.get_alert(sm, STARTED, 0.0, 50.0).alert_type == "leadDepartingUi"
+  sm.updated["radarState"] = False  # radar stopped; its last sample still says departing
+  assert alerts.get_alert(sm, STARTED, 0.0, 52.9).alert_type == "leadDepartingUi"
+  assert alerts.get_alert(sm, STARTED, 0.0, 53.1) is None
+  sm.updated["radarState"], sm.alive["radarState"] = True, False
+  assert alerts.get_alert(sm, STARTED, 0.0, 60.0) is None
+  sm.alive["radarState"], sm.valid["carState"] = True, False
+  assert alerts.get_alert(sm, STARTED, 0.0, 61.0) is None
+
+
+def test_sidebar_opened_before_switching_to_new_ui_1_still_closes(sidebar_layout):
+  t = sidebar_layout
+  t.ui.new_ui_mode = 0
+  t.layout.click()
+  assert t.layout._sidebar.is_visible and t.layout._sidebar_hide_at is None
+  t.ui.new_ui_mode = 1
+  t.clock.now = 101.0
+  t.layout.tick()
+  t.clock.now = 110.9
+  t.layout.tick()
+  assert t.layout._sidebar.is_visible
+  t.clock.now = 111.0
+  t.layout.tick()
+  assert not t.layout._sidebar.is_visible
+
+
+def test_returning_to_new_ui_1_restarts_its_timers(nui):
+  view = nui.m["view"].NuiOnroad(nui.params)
+  sm = make_sm()
+  sm["carState"].standstill = True
+  view.hud.update(sm, STARTED, s.STATUS_ENGAGED, True, 100.0)
+  view.hud.update(sm, STARTED, s.STATUS_ENGAGED, True, 175.0)
+  assert view.hud.standstill_seconds == 75
+  view.reset()  # NewUi was 0, 2 or 3 for a while
+  view.hud.update(sm, STARTED, s.STATUS_ENGAGED, True, 300.0)
+  assert view.hud.standstill_seconds == 0
+  tree = ast.parse(ROAD_VIEW.read_text(encoding="utf-8"))
+  nui_body = ast.unparse(_function(tree, "_render_nui", "AugmentedRoadView"))
+  assert "elif not self._nui_was_active:\n        self._nui.reset()" in nui_body
+  render = [ast.unparse(n) for n in _function(tree, "_render", "AugmentedRoadView").body]
+  assert render.index("self._nui_was_active = False") < next(i for i, n in enumerate(render) if n.startswith("timing ="))

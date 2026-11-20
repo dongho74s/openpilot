@@ -165,12 +165,12 @@ class MainLayout(Widget):
 
   def _auto_hide_sidebar(self, now: float) -> None:
     """NewUi 1: close the onroad sidebar 10 s after it was opened or last touched; a tap opens it again."""
-    if self._sidebar_hide_at is None:
-      return
     if not (ui_state.started and self._current_mode == MainState.ONROAD and self._sidebar.is_visible and
             ui_state.new_ui_mode == NEW_UI_WAYON):
       self._sidebar_hide_at = None
       return
+    if self._sidebar_hide_at is None:  # opened under another NewUi value before switching to 1
+      self._sidebar_hide_at = now + SIDEBAR_AUTO_HIDE_S
     if any(event.pos.x < self._sidebar_rect.x + self._sidebar_rect.width for event in gui_app.mouse_events):
       self._sidebar_hide_at = now + SIDEBAR_AUTO_HIDE_S  # still using it
     elif now >= self._sidebar_hide_at:

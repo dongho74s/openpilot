@@ -5,8 +5,11 @@ Draws the real AugmentedRoadView (camera shader, Carrot or v10-nui overlays) at 
   --frame  the matching road camera frame as NV12 (width x height from --frame-size)
 Only messaging, visionipc, Params and ui_state are replaced by in-process stand-ins.
 
-  BIG=1 SCALE=1 python preview_tici_new_ui.py --scene scene.bin --frame frame.nv12 --frame-size 1344x760 \\
+  SCALE=1 python preview_tici_new_ui.py --scene scene.bin --frame frame.nv12 --frame-size 1344x760 \\
     --output out/ --case nui-engaged --case carrot-engaged
+
+Fonts follow a real C3/C3X: the device type reads as tici (big layout) while BIG stays unset, which is how the
+device starts the UI (Pretendard, FONT_SCALE 1.16). Set BIG=1 to preview the Inter fonts instead.
 """
 import argparse
 import enum
@@ -15,7 +18,6 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
-os.environ.setdefault("BIG", "1")
 os.environ.setdefault("SCALE", "1")
 
 import numpy as np
@@ -292,6 +294,8 @@ def main():
   time.monotonic = clock.monotonic
 
   import pyray as rl
+  from openpilot.system.hardware import HARDWARE
+  HARDWARE.get_device_type = lambda: 'tici'  # big C3 layout; fonts still follow the BIG environment variable as on device
   from openpilot.system.ui.lib.application import FontWeight, gui_app
   from openpilot.system.ui.lib.multilang import multilang
   multilang._language = args.language

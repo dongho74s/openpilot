@@ -50,6 +50,12 @@ class NuiOnroad:
                      [lambda n=n: d.bake_radial_glow(*blindspot_icon(n)[1:]) for n in ("blindspot_left", "blindspot_right")] +
                      [lambda: d.bake_rounded_corner(SCREEN_CORNER_RADIUS, SCREEN_CORNER_COLOR)])
 
+  def reset(self) -> None:
+    """Back from another NewUi value: drop timers and smoothing that kept running only while this was drawn."""
+    self.hud.reset()
+    self.alerts.reset()
+    self.model.reset()
+
   def set_transform(self, transform) -> None:
     self.model.set_transform(transform)
 
