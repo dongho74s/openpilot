@@ -3,26 +3,38 @@
 // 360 live view for the Log section (Logs > Live).
 //
 // One rotatable panoramic viewer over a single WebRTC session (cameras:
-// ["road", "driver"]), with the previous side-by-side front + indoor
+// ["wideRoad", "driver"]), with the previous side-by-side front + indoor
 // windows kept below it. The server sends one video track per camera; the
-// track order follows the cameras list, so transceiver mid "0" is road and
-// "1" is driver. Both the panoramic viewer and the side-by-side windows
-// show the same tracks, so both layouts are live at the same time with no
-// second WebRTC session.
+// track order follows the cameras list, so transceiver mid "0" is the wide
+// road camera and "1" is driver. Both the panoramic viewer and the
+// side-by-side windows show the same tracks, so both layouts are live at
+// the same time with no second WebRTC session.
 //
 // The viewer is a real panorama, not a crossfade: the two camera feeds are
-// laid out as one circular strip (road 0-180 deg, driver 180-360 deg) and
-// drawn onto a canvas with a cylindrical (perspective) projection, the way
-// a 360 video player pans across an equirectangular image. Dragging left
-// or right pans the view continuously around the circle and it wraps, so
-// you can keep rotating in either direction; the view stays where you
-// leave it, with no snap to a fixed view. The compass strip shows the
-// facing direction across the full 360 degrees.
+// laid out as one circular strip and drawn onto a canvas with a cylindrical
+// (perspective) projection, the way a 360 video player pans across an
+// equirectangular image. Dragging left or right pans the view continuously
+// around the circle and it wraps, so you can keep rotating in either
+// direction; the view stays where you leave it, with no snap to a fixed
+// view. The compass strip shows the facing direction across the full 360
+// degrees.
 //
-// Honest hardware limit: the C4 has only two cameras (front wide-angle
-// road + indoor driver), no rear or side outward camera, so a true stitched
-// 360 panorama is impossible. The panorama is built from the two real
-// views, so the seam between them is visible, but the rotation itself is
+// The strip is a true compass: 0 deg is forward (the wide road camera's
+// centre), 180 deg is the cabin (the driver camera's centre). Each camera
+// occupies only its real horizontal field of view (wide road and driver
+// are both fisheye, about 120 deg), so the wide road camera covers
+// -60..+60 deg and the driver camera covers 120..240 deg. The A-pillars
+// sit at the wide camera's left and right edges, so they land at -60 and
+// +60 deg on the strip — right where the forward view meets the sides.
+// The narrow road camera is NOT used: it is only about 40 deg wide, so
+// the A-pillars are outside its frame entirely and no remapping can
+// bring them back.
+//
+// Honest hardware limit: the C4 has only two cameras that look outward
+// or at the cabin (front wide-angle road + indoor driver), no rear or
+// side outward camera, so a true stitched 360 panorama is impossible.
+// The sides no camera covers (60..120 and 240..300 deg) stay black.
+// The seam between the cameras is visible, but the rotation itself is
 // continuous like a 360 video.
 //
 // The session starts when the Live tab becomes active and stops when the
@@ -32,12 +44,11 @@
 // which is also offered right here in the panel.
 //
 // "360° 전체" mode shows the whole circle in one frame instead of a
-// rotating 100-degree viewport: the road camera already spans 180 degrees
-// of the strip (0-180), so the full circle is just both halves side by
-// side — road on the left, driver on the right. Dragging and the compass
-// stops only apply to the rotating view.
+// rotating 100-degree viewport: both camera halves side by side — wide
+// road on the left, driver on the right. Dragging and the compass stops
+// only apply to the rotating view.
 
-const LIVE360_CAMERAS = Object.freeze(["road", "driver"]);
+const LIVE360_CAMERAS = Object.freeze(["wideRoad", "driver"]);
 const LIVE360_BUSY_CODE = "carrot_vision_busy";
 const LIVE360_ICE_TIMEOUT_MS = 1500;
 const LIVE360_FETCH_TIMEOUT_MS = 10000;
@@ -46,6 +57,14 @@ const LIVE360_ROTATE_MS = 400;
 // Horizontal field of view of the panorama viewport, in degrees. A wide
 // viewport like this is what makes the rotation feel like a 360 video.
 const LIVE360_FOV_DEG = 100;
+// Real horizontal field of view of each camera, in degrees (TICI device
+// camera config: the wide road and driver cameras are fisheye, about
+// 120 deg each). The panorama is a true compass, so each camera occupies
+// only its real span: wide road -60..+60 deg (centre 0, forward),
+// driver 120..240 deg (centre 180, cabin). The sides no camera covers
+// stay black.
+const LIVE360_ROAD_FOV_DEG = 120;
+const LIVE360_DRIVER_FOV_DEG = 120;
 // Vertical slices per frame for the cylindrical projection. More slices
 // make the curve smoother; 48 is a good balance on a phone.
 const LIVE360_SLICES = 48;
@@ -119,8 +138,13 @@ function live360ShowRetry(show) {
 // Draw the panorama viewport onto the canvas with a cylindrical
 // (perspective) projection: each output column is a ray at a given angle,
 // so straight lines bend the way they do in a 360 video and the view pans
-// continuously across the road + driver strip. The panorama is circular:
-// road covers 0-180 deg, driver covers 180-360 deg.
+// continuously across the road + driver strip. The panorama is circular
+// and a true compass: the wide road camera covers -60..+60 deg (its
+// centre is forward, 0 deg) and the driver camera covers 120..240 deg
+// (its centre is the cabin, 180 deg). Each camera is drawn at its real
+// field of view — no stretching to 180 deg — so the A-pillars, which sit
+// at the wide camera's left and right edges, land at -60 and +60 deg.
+// The sides no camera covers stay black (the canvas is pre-filled).
 function live360DrawFrame() {
   const canvas = live360Els.canvas;
   const road = live360Els.roadVideo;
@@ -157,15 +181,32 @@ function live360DrawFrame() {
     // Ray angle for the slice center.
     const phi = live360Angle + (Math.atan((xc - W / 2) / f) * 180) / Math.PI;
     const norm = ((phi % 360) + 360) % 360;
-    const isDriver = norm >= 180;
-    const video = isDriver ? driver : road;
+    // Which camera owns this ray, at its real field of view. Wide road:
+    // within half its FOV of forward (0 deg); driver: within half its
+    // FOV of the cabin (180 deg). Anything else is a side no camera
+    // covers — leave it black.
+    const distFront = Math.min(norm, 360 - norm);
+    let video = null;
+    let frac = 0;
+    let span = 0;
+    if (distFront <= LIVE360_ROAD_FOV_DEG / 2) {
+      video = road;
+      span = LIVE360_ROAD_FOV_DEG;
+      frac = ((norm + LIVE360_ROAD_FOV_DEG / 2) % 360) / LIVE360_ROAD_FOV_DEG;
+    } else if (norm >= 180 - LIVE360_DRIVER_FOV_DEG / 2 && norm <= 180 + LIVE360_DRIVER_FOV_DEG / 2) {
+      video = driver;
+      span = LIVE360_DRIVER_FOV_DEG;
+      frac = (norm - (180 - LIVE360_DRIVER_FOV_DEG / 2)) / LIVE360_DRIVER_FOV_DEG;
+    } else {
+      continue;
+    }
     if (!video || !video.videoWidth || video.readyState < 2) continue;
-    const frac = isDriver ? (norm - 180) / 180 : norm / 180;
-    // Source width for this slice: it spans dPhi degrees of the panorama.
+    // Source width for this slice: it spans dPhi degrees of the panorama,
+    // and this camera's full frame spans `span` degrees.
     const phi0 = live360Angle + (Math.atan((x0 - W / 2) / f) * 180) / Math.PI;
     const phi1 = live360Angle + (Math.atan((x0 + sliceW - W / 2) / f) * 180) / Math.PI;
     const dPhi = Math.abs(phi1 - phi0);
-    const sw = Math.max(1, (dPhi / 180) * video.videoWidth);
+    const sw = Math.max(1, (dPhi / span) * video.videoWidth);
     let sx = frac * video.videoWidth - sw / 2;
     sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
     ctx.drawImage(video, sx, 0, sw, video.videoHeight, x0, 0, sliceW + 1, H);
@@ -185,9 +226,10 @@ function live360DrawCover(ctx, video, x, y, w, h) {
   return true;
 }
 
-// Flat full-strip view: the road camera already spans 180 degrees of the
-// strip (0-180), so the whole circle is both halves side by side — road
-// on the left, driver on the right — with a seam line between them.
+// Flat full-strip view: both camera halves side by side — wide road on
+// the left, driver on the right — with a seam line between them. (Cover
+// fit crops the wide camera's far left and right edges here, so the
+// A-pillars show in the rotating view, not in this overview.)
 function live360DrawFlatFrame(ctx, W, H) {
   const half = W / 2;
   live360DrawCover(ctx, live360Els.roadVideo, 0, 0, half, H);
