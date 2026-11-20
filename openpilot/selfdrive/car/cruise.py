@@ -10,8 +10,9 @@ from openpilot.selfdrive.car.toyota_pcm_speed import ToyotaPcmSetSpeedSync
 
 from opendbc.car import structs
 from opendbc.car.gm.values import CAR as GM_CAR
-STOCK_SET_SPEED_DISPLAY_CARS = (GM_CAR.CHEVROLET_TRAVERSE, GM_CAR.CHEVROLET_MALIBU, GM_CAR.CHEVROLET_MALIBU_CC,
-                                GM_CAR.CHEVROLET_MALIBU_ASCM)
+# Stock-ACC cars whose cluster set speed is always shown. Not the Malibu CC: openpilot drives it with cruise buttons
+# while it reports pcmCruise, so its own target must stay on screen (Codex review 2026-11-20).
+STOCK_SET_SPEED_DISPLAY_CARS = (GM_CAR.CHEVROLET_TRAVERSE, GM_CAR.CHEVROLET_MALIBU_ASCM)
 GearShifter = structs.CarState.GearShifter
 
 

@@ -423,6 +423,27 @@ def test_stock_acc_malibu_shows_the_stock_set_speed_in_every_mode(runtime, mode,
   assert helper.v_cruise_kph == pytest.approx(95 if mode == 1 else 80)  # the control target is not rescaled
 
 
+@pytest.mark.parametrize("mode", [0, 2, 3])
+def test_malibu_cc_keeps_showing_its_own_target(runtime, mode):
+  # openpilot drives the Malibu CC with cruise buttons while it reports pcmCruise: its target stays on screen
+  cp = build_cp(runtime, CAR.CHEVROLET_MALIBU_CC)
+  helper = runtime.cruise.VCruiseCarrot(cp)
+  helper.params.values["SpeedFromPCM"] = mode
+  helper.v_cruise_kph = helper.v_cruise_cluster_kph = 100.
+  helper.cruise_state_available_last = True
+  helper._gas_pressed_count = helper._brake_pressed_count = -2
+  cs = structs.CarState(gearShifter="drive", vEgo=60/3.6, vEgoCluster=62.76/3.6,
+                       cruiseState={"available": True, "enabled": True, "speed": 65/3.6, "speedCluster": 67.99/3.6})
+  sm = {"carControl": structs.CarControl(enabled=True), "carrotMan": NS()}
+  class Messages(dict):
+    alive = dict.fromkeys(("carrotMan", "longitudinalPlan", "radarState", "drivingModelData"), False)
+    valid = alive
+    seen = alive
+  helper.update_v_cruise(cs, Messages(sm), True)
+  assert helper.v_cruise_cluster_kph == pytest.approx(100.)
+  assert helper.v_cruise_kph == pytest.approx(100.)
+
+
 def test_controlsd_hud_shows_the_malibu_set_speed():
   root = Path(__file__).resolve().parents[5]
   tree = ast.parse((root / "openpilot/selfdrive/controls/controlsd.py").read_text())
