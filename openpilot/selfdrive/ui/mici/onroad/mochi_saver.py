@@ -64,6 +64,8 @@ EXPR_REVERSE = "reverse"  # 후진
 EXPR_PARK = "park"  # 주차
 EXPR_START = "start"  # 정지 중 출발
 EXPR_AUTOHOLD = "autohold"  # 오토홀드
+EXPR_TRAFFIC = "traffic"  # 신호등 (빨간불/초록불 확인될 때만)
+EXPR_BLINKER = "blinker"  # 깜빡이 (켜져 있을 때만)
 
 # 신호등 상태 (longitudinalPlan.trafficState, TrafficState enum):
 # 0=없음, 1=빨간불, 2=초록불
@@ -96,8 +98,8 @@ class MochiSaver:
     self._press_fired = False
 
     self._expr = EXPR_DRIVING
-    self._traffic_state = TRAFFIC_OFF  # 머리 위 신호등 (확인된 값만)
-    self._blink_left = False  # 머리 위 깜빡이 화살표
+    self._traffic_state = TRAFFIC_OFF  # 신호등 표정용 (확인된 값만)
+    self._blink_left = False  # 깜빡이 표정용
     self._blink_right = False
     self._prev_v_ego = 0.0
     self._prev_brake = False
@@ -182,7 +184,6 @@ class MochiSaver:
     rl.draw_rectangle(int(rect.x), int(rect.y), int(rect.width), int(rect.height), rl.BLACK)
     t = rl.get_time()
     self._draw_face(rect, t)
-    self._draw_status_strip(rect, t)
 
   # ---------------------------------------------------------------
   # 표정 선택
@@ -245,10 +246,15 @@ class MochiSaver:
     except Exception:
       self._blink_left, self._blink_right = False, False
 
-    # 우선순위 순으로 얼굴 표정 결정 (신호등·깜빡이는 머리 위 표시줄이라
-    # 얼굴 표정에 안 들어감 — 신호대기 중에도 깜빡이가 따로 보임)
+    # 우선순위 순으로 얼굴 표정 결정. 신호등·깜빡이는 별도 표정이라
+    # 켜져 있을 때만 그 표정으로 바뀌고, 꺼지면 원래 얼굴로 돌아감.
+    # (긴급제동은 안전 상태라 신호등·깜빡이보다 위에 둠)
     if a_ego <= EMERGENCY_DECEL:
       expr = EXPR_EMERGENCY
+    elif self._traffic_state != TRAFFIC_OFF:
+      expr = EXPR_TRAFFIC
+    elif self._blink_left or self._blink_right:
+      expr = EXPR_BLINKER
     elif a_ego <= DECEL:
       expr = EXPR_DECEL
     elif a_ego >= ACCEL:
@@ -307,7 +313,9 @@ class MochiSaver:
     elif expr == EXPR_AUTOHOLD:
       breathe = 1.0 + 0.02 * math.sin(t * math.pi * 2.0 / 4.0)
 
-    face_cy = cy + bounce + 60.0 * s  # 2배 신호등 표시줄 자리 확보 (맨 위)
+    # 신호등·깜빡이 표정일 때만 맨 위 신호 자리 확보, 나머지는 얼굴 가운데
+    face_shift = 60.0 * s if expr in (EXPR_TRAFFIC, EXPR_BLINKER) else 0.0
+    face_cy = cy + bounce + face_shift
     eye_r = 165.0 * s * breathe
     eye_dx = 250.0 * s * breathe
     eye_y = -70.0 * s * breathe
@@ -318,7 +326,18 @@ class MochiSaver:
     pupil_dx = pupil_dy = 0.0
     lid = 1.0  # 1=활짝, 0.45=반쯤 감음
     mouth = "smile"
-    if expr == EXPR_REVERSE:
+    if expr == EXPR_TRAFFIC:
+      # 신호등을 올려다봄 — 빨간불은 가만히, 초록불은 미소
+      pupil_dy = -45.0 * s
+      mouth = "smile" if self._traffic_state == TRAFFIC_GREEN else "calm"
+    elif expr == EXPR_BLINKER:
+      # 켜진 깜빡이 쪽으로 눈동자 이동 (비상은 양쪽이라 가운데)
+      if self._blink_left and not self._blink_right:
+        pupil_dx = -55.0 * s
+      elif self._blink_right and not self._blink_left:
+        pupil_dx = 55.0 * s
+      mouth = "smile"
+    elif expr == EXPR_REVERSE:
       pupil_dx, pupil_dy = 30.0 * s, -50.0 * s
     elif expr == EXPR_AUTOHOLD or expr == EXPR_PARK:
       pupil_dy = 40.0 * s
@@ -363,6 +382,12 @@ class MochiSaver:
       self._draw_gear_badge(cx + 640.0 * s, face_cy - 360.0 * s, s, "P")
     elif expr == EXPR_AUTOHOLD:
       self._draw_hold_badge(cx, face_cy - 380.0 * s, s)
+
+    # 신호등·깜빡이 표정: 신호를 얼굴 위 맨 위에 크게 그림
+    if expr == EXPR_TRAFFIC:
+      self._draw_traffic_light(cx, rect.y + 96.0 * s, s)
+    elif expr == EXPR_BLINKER:
+      self._draw_blinker_arrows(cx, rect.y + 96.0 * s, s, t)
 
   def _blink_scale(self, t: float, period: float = 2.3) -> float:
     """깜빡임: 2.3초 주기로 0.12초간 감았다 뜬다. 1=활짝."""
@@ -427,48 +452,40 @@ class MochiSaver:
     pos = rl.Vector2(x + (w - size_vec.x) / 2.0, y + (h - size_vec.y) / 2.0 - 8 * s)
     rl.draw_text_ex(font, letter, pos, int(150 * s), 0, rl.BLACK)
 
-  def _draw_status_strip(self, rect: rl.Rectangle, t: float) -> None:
-    """머리 위 상태 표시줄: 가로 신호등(2배) + 양옆 큰 깜빡이 화살표.
+  def _draw_traffic_light(self, cx: float, cy: float, s: float) -> None:
+    """신호등 표정: 가로 신호등 2배 (빨·노·초 3등, 켜진 등만 밝게).
 
-    신호등은 빨간불/초록불이 확인될 때만 보이고, 깜빡이는 켜져 있을 때
-    크게 깜빡인다. 둘 다 얼굴 표정과 별개라 신호대기 중에도 깜빡이가 보임.
-    화면 맨 위 배지 줄(얼굴 중심 -380)과 안 겹치게 맨 위에 둠.
+    노란불은 이 신호원(longitudinalPlan)에는 없어서 항상 어둡게.
     """
-    if self._traffic_state == TRAFFIC_OFF and not self._blink_left and not self._blink_right:
-      return
-    s = min(rect.width / 2160.0, rect.height / 1080.0)
-    cx = rect.x + rect.width / 2.0
-    cy = rect.y + 96.0 * s  # 표시줄 중심 (함체 168·s, 위 12·s부터)
-
-    # 신호등 2배: 램프 반지름 60·s, 간격 168·s
     lamp_r = 60.0 * s
     gap = 168.0 * s
-    if self._traffic_state != TRAFFIC_OFF:
-      # 가로 신호등: 검은 함체에 빨·노·초 3등, 켜진 등만 밝게
-      w, h = (gap * 2.0 + lamp_r * 2.0 + 72.0 * s), 168.0 * s
-      rl.draw_rectangle_rounded(rl.Rectangle(cx - w / 2.0, cy - h / 2.0, w, h), 0.3, 12, C_DARK)
-      lamps = ((cx - gap, C_RED, self._traffic_state == TRAFFIC_RED),
-               (cx, rl.Color(230, 180, 40, 255), False),
-               (cx + gap, rl.Color(60, 220, 90, 255), self._traffic_state == TRAFFIC_GREEN))
-      for lx, color, lit in lamps:
-        rl.draw_circle(int(lx), int(cy), int(lamp_r), color if lit else rl.Color(70, 70, 70, 255))
+    w, h = (gap * 2.0 + lamp_r * 2.0 + 72.0 * s), 168.0 * s
+    rl.draw_rectangle_rounded(rl.Rectangle(cx - w / 2.0, cy - h / 2.0, w, h), 0.3, 12, C_DARK)
+    lamps = ((cx - gap, C_RED, self._traffic_state == TRAFFIC_RED),
+             (cx, rl.Color(230, 180, 40, 255), False),
+             (cx + gap, rl.Color(60, 220, 90, 255), self._traffic_state == TRAFFIC_GREEN))
+    for lx, color, lit in lamps:
+      rl.draw_circle(int(lx), int(cy), int(lamp_r), color if lit else rl.Color(70, 70, 70, 255))
 
-    # 깜빡이 화살표: 신호등 양옆, 이중 화살표 + 배경 알약이라 꺼진
-    # 구간에도 형태가 보이고 켜진 구간에는 밝은 노란색으로 펄스
+  def _draw_blinker_arrows(self, cx: float, cy: float, s: float, t: float) -> None:
+    """깜빡이 표정: 켜진 쪽 큰 이중 화살표 + 알약 배경 (켜진 구간에 깜빡임).
+
+    한쪽만 켜지면 가운데에 크게, 양쪽(비상)이면 좌우로 벌려서 그림.
+    """
     on = int(t * 1.4) % 2 == 0
-    strip_half = (gap + lamp_r + 36.0 * s) if self._traffic_state != TRAFFIC_OFF else 0.0
-    for side, active in ((-1, self._blink_left), (1, self._blink_right)):
-      if not active:
-        continue
-      ax = cx + side * (strip_half + 150.0 * s)
-      # 배경 알약 (항상 보임)
-      pw, ph = 220.0 * s, 150.0 * s
+    color = C_YELLOW if on else rl.Color(150, 105, 25, 255)
+    arrow = 110.0 * s
+    pw, ph = 260.0 * s, 180.0 * s
+    sides = []
+    if self._blink_left:
+      sides.append(-1)
+    if self._blink_right:
+      sides.append(1)
+    for side in sides:
+      ax = cx if len(sides) == 1 else cx + side * 170.0 * s
       rl.draw_rectangle_rounded(rl.Rectangle(ax - pw / 2.0, cy - ph / 2.0, pw, ph), 0.5, 12, C_DARK)
-      color = C_YELLOW if on else rl.Color(150, 105, 25, 255)
-      # 이중 화살표 (두 개의 삼각형, 중심 기준 대칭)
-      arrow = 90.0 * s
       for k in (0, 1):
-        acx = ax + side * (k - 0.5) * 55.0 * s
+        acx = ax + side * (k - 0.5) * 65.0 * s
         pts = [(acx - side * arrow / 2.0, cy - arrow / 2.0), (acx - side * arrow / 2.0, cy + arrow / 2.0),
                (acx + side * arrow / 2.0, cy)]
         rl.draw_triangle(rl.Vector2(*pts[0]), rl.Vector2(*pts[1]), rl.Vector2(*pts[2]), color)
