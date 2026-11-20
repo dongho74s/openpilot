@@ -6,7 +6,7 @@ from typing import Any
 from aiohttp import ClientSession, ClientTimeout
 
 from openpilot.system.hardware import HARDWARE
-from openpilot.selfdrive.carrot.web_upload import web_upload_settings
+from openpilot.selfdrive.carrot.web_upload import DEFAULT_WEB_UPLOAD_URL, normalize_base_url, web_upload_settings
 
 from ...config import DASHCAM_DEFAULT_DISCORD_KEY, DASHCAM_DEFAULT_DISCORD_WEBHOOK
 from ...services.dashcam_upload_report import (
@@ -100,7 +100,17 @@ def decode_obfuscated(value: str, key: str) -> str:
     return ""
 
 
-def discord_webhook_url(params: Any) -> str:
+def uses_carrot_upload_server(base_url: str | None) -> bool:
+  """True when the logs went to the Carrot upload server (or the caller did not say where)."""
+  if base_url is None:
+    return True
+  try:
+    return normalize_base_url(base_url).casefold() == normalize_base_url(DEFAULT_WEB_UPLOAD_URL).casefold()
+  except ValueError:
+    return False
+
+
+def discord_webhook_url(params: Any, base_url: str | None = None) -> str:
   for key in ("CARROT_DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL"):
     value = os.environ.get(key, "").strip()
     if value:
@@ -110,6 +120,11 @@ def discord_webhook_url(params: Any) -> str:
     if value:
       return value
   if os.environ.get("CARROT_DISCORD_WEBHOOK_DISABLE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    return ""
+  # The built-in webhook reports to the Carrot Discord with links into the Carrot upload server.
+  # When the logs went to a private upload server those links are useless there and the report
+  # would only hand the device's identity to a third party, so the private server notifies instead.
+  if not uses_carrot_upload_server(base_url):
     return ""
   return decode_obfuscated(DASHCAM_DEFAULT_DISCORD_WEBHOOK, DASHCAM_DEFAULT_DISCORD_KEY)
 

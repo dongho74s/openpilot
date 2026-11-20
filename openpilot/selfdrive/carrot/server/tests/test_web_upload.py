@@ -357,6 +357,35 @@ def test_dashcam_upload_report_does_not_merge_nonconsecutive_segments():
   assert "### Open & Analyze" not in report
 
 
+def clear_discord_env(monkeypatch):
+  for key in ("CARROT_DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL", "CARROT_DISCORD_WEBHOOK_DISABLE"):
+    monkeypatch.delenv(key, raising=False)
+
+
+def test_builtin_discord_webhook_only_reports_carrot_server_uploads(monkeypatch):
+  clear_discord_env(monkeypatch)
+  builtin = upload.discord_webhook_url(None)
+  assert builtin.startswith("https://discord.com/api/webhooks/")
+  assert upload.discord_webhook_url(None, base_url=web_upload.DEFAULT_WEB_UPLOAD_URL) == builtin
+  assert upload.discord_webhook_url(None, base_url=web_upload.DEFAULT_WEB_UPLOAD_URL.replace("upload.", "UPLOAD.") + "/") == builtin
+  # A private upload server notifies on its own; its links must not go to the Carrot Discord.
+  assert upload.discord_webhook_url(None, base_url="http://192.0.2.10:8771") == ""
+  assert upload.discord_webhook_url(None, base_url="not a url") == ""
+
+
+def test_explicit_discord_webhook_still_reports_private_server_uploads(monkeypatch):
+  clear_discord_env(monkeypatch)
+  monkeypatch.setenv("CARROT_DISCORD_WEBHOOK_URL", "https://discord.example/mine")
+  assert upload.discord_webhook_url(None, base_url="http://192.0.2.10:8771") == "https://discord.example/mine"
+
+  class FakeParams:
+    def get(self, key):
+      return b"https://discord.example/param" if key == "CarrotDiscordWebhookUrl" else None
+
+  monkeypatch.delenv("CARROT_DISCORD_WEBHOOK_URL")
+  assert upload.discord_webhook_url(FakeParams(), base_url="http://192.0.2.10:8771") == "https://discord.example/param"
+
+
 @pytest.mark.parametrize("include_all_files", [False, True])
 def test_dashcam_upload_completion_notifies_web_server_and_discord(monkeypatch, tmp_path, include_all_files):
   segment = "00000cfb--69588de3d7--10"
@@ -392,7 +421,9 @@ def test_dashcam_upload_completion_notifies_web_server_and_discord(monkeypatch, 
     "dongleId": "0123456789abcdef",
   })
   monkeypatch.setattr(upload, "upload_share_text", lambda payload: "shared upload report")
-  monkeypatch.setattr(upload, "discord_webhook_url", lambda params: "https://discord.example/webhook")
+  discord_targets = []
+  monkeypatch.setattr(upload, "discord_webhook_url",
+                      lambda params, base_url=None: discord_targets.append(base_url) or "https://discord.example/webhook")
   monkeypatch.setattr(upload, "send_discord_webhook", fake_discord)
   monkeypatch.setattr(upload_jobs, "segment_dir", lambda value: str(tmp_path))
   monkeypatch.setattr(upload_jobs, "upload_folder_to_web", fake_upload_folder)
@@ -418,6 +449,7 @@ def test_dashcam_upload_completion_notifies_web_server_and_discord(monkeypatch, 
     ("discord", "https://discord.example/webhook", "shared upload report"),
   ]
   assert uploaded_files == expected_files
+  assert discord_targets == ["https://upload.example"]
   assert [item["name"] for item in result["results"][0]["files"]] == expected_files
   snapshot = upload_jobs.snapshot(job)
   assert snapshot["includeAllFiles"] is include_all_files

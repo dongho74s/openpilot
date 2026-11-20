@@ -610,7 +610,7 @@ async def run_upload_segments(
       phase_total=2,
     )
   response_payload["discord"] = await upload.send_discord_webhook(
-    upload.discord_webhook_url(params),
+    upload.discord_webhook_url(params, base_url=base_url),
     response_payload,
   )
   if job:
