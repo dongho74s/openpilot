@@ -890,3 +890,11 @@ def test_recovery_tmux_copy_skips_the_dashcam_receiver(monkeypatch, tmp_path):
   assert recovery._web_upload_base_url() == web_upload.CARROT_WEB_UPLOAD_URL
   (state / "web_settings.json").write_text(json.dumps({"web_upload_url": "https://upload.example"}))
   assert recovery._web_upload_base_url() == "https://upload.example"
+
+
+def test_first_choice_on_a_device_without_settings_is_kept(monkeypatch, tmp_path):
+  path = tmp_path / "web_settings.json"          # never written
+  monkeypatch.setattr(web_settings, "CARROT_WEB_SETTINGS_PATH", str(path))
+  assert web_settings.read_web_settings()["web_upload_url"] == web_upload.DEFAULT_WEB_UPLOAD_URL
+  web_settings.update_web_settings({"web_upload_url": web_upload.CARROT_WEB_UPLOAD_URL})
+  assert web_settings.read_web_settings()["web_upload_url"] == web_upload.CARROT_WEB_UPLOAD_URL

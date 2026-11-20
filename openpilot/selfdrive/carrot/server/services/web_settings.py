@@ -528,14 +528,22 @@ def web_setting_defaults_for_capability(capability_id: str) -> Dict[str, Any]:
   }
 
 
+def _fresh_web_settings() -> Dict[str, Any]:
+  """Defaults for a device with no saved settings: nothing to migrate, so the WIP-FR migration counts as done
+  and the owner's first choice of upload server is kept."""
+  settings = dict(DEFAULT_WEB_SETTINGS)
+  settings[WIP_FR_UPLOAD_MIGRATED_KEY] = True
+  return settings
+
+
 def read_web_settings() -> Dict[str, Any]:
   try:
     with open(CARROT_WEB_SETTINGS_PATH, "r", encoding="utf-8") as f:
       raw = json.load(f)
   except Exception:
-    return dict(DEFAULT_WEB_SETTINGS)
+    return _fresh_web_settings()
   if not isinstance(raw, dict):
-    return dict(DEFAULT_WEB_SETTINGS)
+    return _fresh_web_settings()
   for key, value in LEGACY_DRIVE_LAYOUT_DEFAULTS.items():
     raw.setdefault(key, value)
   return sanitize_web_settings(raw)
