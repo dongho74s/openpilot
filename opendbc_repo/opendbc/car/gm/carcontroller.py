@@ -16,6 +16,7 @@ from opendbc.car.gm.cluster_speed import gm_raw_display_kph_from_cluster_display
 from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
 from opendbc.car.gm.manual_auto_hold import manual_hold_supported
 from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
+from opendbc.car.gm.gas_brake_hysteresis import GasBrakeHysteresis, has_gas_brake_step
 from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR
 from opendbc.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
@@ -107,6 +108,9 @@ class CarController(CarControllerBase):
     # carrot's SET/RES button features, 0x2CB, 0x2CD or 0x3D1), and stock ACC is cancelled toward the camera.
     self.bolt_acc_pedal = BoltAccPedalLongController(CP, self.packer_pt, self.packer_ch) \
       if supports_bolt_acc_pedal_friction_experiment(CP) else None
+    # Camera ACC / SDGM openpilot long (gas and friction brake meet at 0): keep a side near 0 (gas_brake_hysteresis.py)
+    self.gas_brake_hysteresis = GasBrakeHysteresis() \
+      if CP.openpilotLongitudinalControl and self.bolt_acc_pedal is None and has_gas_brake_step(self.params) else None
     self.btn_rc_pt = -1
     # 오토스톱 자동 끄기(AutoStopOff, 기본 0). 판다는 오파 롱컨(pcmCruise=False)에서만 0x1E1 UNPRESS 송신을 허용
     self.auto_stop_off = AutoStopOff() if self.traverse_long and not CP.pcmCruise else None
@@ -256,6 +260,7 @@ class CarController(CarControllerBase):
         near_stop = CC.longActive and (abs(CS.out.vEgo) < self.params.NEAR_STOP_BRAKE_PHASE)
         interceptor_gas_cmd = 0
         press_regen_paddle = False
+        gas_brake_hysteresis_active = False
         if not CC.longActive:
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
@@ -275,6 +280,11 @@ class CarController(CarControllerBase):
           else:
             self.apply_gas = int(round(np.interp(accel if self.long_pitch else actuators.accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
             self.apply_brake = int(round(np.interp(brake_accel if self.long_pitch else actuators.accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            if self.gas_brake_hysteresis is not None and not stopping:
+              self.apply_gas, self.apply_brake = self.gas_brake_hysteresis.update(
+                accel if self.long_pitch else actuators.accel, self.apply_gas, self.apply_brake,
+                self.params.ZERO_GAS, self.params.MAX_ACC_REGEN)
+              gas_brake_hysteresis_active = True
           # Don't allow any gas above inactive regen while stopping
           # FIXME: brakes aren't applied immediately when enabling at a stop
           if stopping:
@@ -282,6 +292,9 @@ class CarController(CarControllerBase):
           if self.CP.carFingerprint in CC_ONLY_CAR:
             # gas interceptor only used for full long control on cars without ACC
             interceptor_gas_cmd, press_regen_paddle = self.calc_pedal_command(actuators.accel, CC.longActive, CS.out.vEgo)
+
+        if self.gas_brake_hysteresis is not None and not gas_brake_hysteresis_active:
+          self.gas_brake_hysteresis.reset()
 
         sng_tap = self.CP.enableGasInterceptorDEPRECATED and self.apply_gas > self.params.INACTIVE_REGEN and CS.out.cruiseState.standstill
         if self.bolt_acc_pedal_sng:

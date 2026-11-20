@@ -227,12 +227,29 @@ BASELINE_DIGESTS = {
 }
 
 
+# 2026-11-20: the gas/brake side hysteresis of the camera ACC cars (gas_brake_hysteresis.py, user request for every
+# Chevrolet) changes these two streams, both with LongPitch on: at ticks 388-396 a 0.0 command on the -0.02 rad pitch
+# coasts (0x2CB ZERO_GAS) instead of sending MAX_ACC_REGEN; no other frame or message changes. With the hysteresis off
+# every stream is still the frozen one (test_..._without_the_gas_brake_hysteresis).
+HYSTERESIS_DIGESTS = {
+  "ctrl:CHEVROLET_BOLT_EUV/True/False/1": "caa24addf9e2f44b1aaf5eab8f916d044c1e814945d5b784b4adb556b97c3e89",
+  "ctrl:CHEVROLET_BOLT_EUV/False/True/1": "054965a6a46d0ce267f6aecf6ae8552e706e0081ccfbb815e87b3d20fdde63c3",
+}
+
+
 def digest(stream):
   return hashlib.sha256(json.dumps(stream).encode()).hexdigest()
 
 
 @pytest.mark.parametrize("key", BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
 def test_other_bolt_controller_streams_unchanged(runtime, monkeypatch, key):
+  name = "ctrl:" + "/".join(map(str, key))
+  assert digest(controller_stream(runtime, monkeypatch, *key)) == HYSTERESIS_DIGESTS.get(name, BASELINE_DIGESTS[name])
+
+
+@pytest.mark.parametrize("key", BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
+def test_other_bolt_controller_streams_unchanged_without_the_gas_brake_hysteresis(runtime, monkeypatch, key):
+  monkeypatch.setattr(runtime.controller, "has_gas_brake_step", lambda params: False)
   assert digest(controller_stream(runtime, monkeypatch, *key)) == BASELINE_DIGESTS["ctrl:" + "/".join(map(str, key))]
 
 
@@ -266,7 +283,11 @@ def long_view(cp):
 
 @pytest.mark.parametrize("pedal,alpha", [(True, False), (True, True), (False, True), (False, False)])
 def test_longitudinal_car_params_are_the_bolt_euvs(runtime, pedal, alpha):
-  assert long_view(bolt_cp(runtime, BOLT, pedal, alpha)) == long_view(bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, pedal, alpha))
+  bolt = long_view(bolt_cp(runtime, BOLT, pedal, alpha))
+  euv = long_view(bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, pedal, alpha))
+  if pedal:  # mode 1 starts as StarPilot drives this car (rlog 00000028--02c4808d1b--21, 2026-11-20)
+    assert (float(bolt.pop("startAccel")), float(euv.pop("startAccel"))) == (pytest.approx(0.55), 1.0)
+  assert bolt == euv
 
 
 @pytest.mark.parametrize("alpha", [False, True])
@@ -630,3 +651,76 @@ def test_other_cars_still_wait_on_cruise_standstill(runtime, monkeypatch):
     lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
     lc_step(runtime, loc, cp, 0.5, 0.0, 0.0, standstill=True)
     assert loc.long_control_state == LongCtrlState.stopping, key
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Mode 1 starts and stops as StarPilot drives this car (rlogs 00000028--02c4808d1b--18/21, 2026-11-20)
+
+
+def stop_from(runtime, loc, cp, output, frames=60, a_ego=-0.2):
+  """From pid with the given last output, shouldStop at 0.3 m/s; returns the outputs while stopping."""
+  loc.long_control_state = LongCtrlState.pid
+  loc.last_output_accel = output
+  outs = [lc_step(runtime, loc, cp, -0.2, 0.3, a_ego, stop=True) for _ in range(frames)]
+  assert loc.long_control_state == LongCtrlState.stopping
+  return outs
+
+
+def test_mode_1_stop_ramps_only_to_a_quarter(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch)
+  assert loc.stopping_accel == pytest.approx(-0.5)  # carrot's default StoppingAccel
+  outs = stop_from(runtime, loc, cp, -0.05)
+  assert loc.long_control_state == LongCtrlState.stopping
+  assert -0.25 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.25
+  assert all(b <= a for a, b in zip(outs, outs[1:], strict=False))  # one-way ramp
+  # what the log had at the stop entry (-0.28, -0.31) stays, instead of growing to -0.5
+  for entry in (-0.28, -0.31):
+    assert all(x == pytest.approx(entry) for x in stop_from(runtime, loc, cp, entry)), entry
+  # stronger braking already in effect is never unwound
+  assert all(x == pytest.approx(-0.8) for x in stop_from(runtime, loc, cp, -0.8))
+
+
+def test_mode_1_stop_takes_a_weaker_stopping_accel(runtime, monkeypatch):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch, memory_params(StoppingAccel=-10))
+  outs = stop_from(runtime, loc, cp, 0.0, a_ego=-0.05)  # entering a stop also waits for aEgo above -0.1 then
+  assert -0.1 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.1
+
+
+def test_other_cars_still_stop_at_stopping_accel(runtime, monkeypatch):
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(longcontrol, "Params", MemoryParams)
+  for cp in (bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True), bolt_cp(runtime, BOLT, False, True),
+             runtime.interface.CarInterface.get_params(CAR.CHEVROLET_TRAVERSE, bolt_fingerprint(CAR.CHEVROLET_BOLT_EUV, False),
+                                                       [], True, True, False)):
+    loc = longcontrol.LongControl(cp)
+    outs = stop_from(runtime, loc, cp, -0.05, frames=120)
+    assert -0.5 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.5, cp.carFingerprint
+
+
+def start_from_stop(runtime, loc, cp, a_target, lead):
+  lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
+  assert loc.long_control_state == LongCtrlState.stopping
+  out = lc_step(runtime, loc, cp, a_target, 0.0, 0.0, lead=lead, standstill=True)
+  assert loc.long_control_state == LongCtrlState.starting
+  return out
+
+
+@pytest.mark.parametrize("a_target,lead,expected", [
+  (0.21, True, 0.21),   # rlog --21: plan 0.21 behind a lead; it was startAccel 1.0 (gas 673) before
+  (0.25, True, 0.25), (0.1, True, 0.15), (-0.1, True, 0.15),  # at least 0.15: the stop hold is already released
+  (0.26, True, 0.55),   # a faster plan, or no lead: StarPilot's startAccel for this car
+  (0.1, False, 0.55),
+])
+def test_mode_1_start_follows_a_slow_plan_behind_a_lead(runtime, monkeypatch, a_target, lead, expected):
+  loc, cp = bolt_longcontrol(runtime, monkeypatch)
+  assert cp.startAccel == pytest.approx(0.55)
+  assert start_from_stop(runtime, loc, cp, a_target, lead) == pytest.approx(expected)
+
+
+def test_other_cars_still_start_at_start_accel(runtime, monkeypatch):
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(longcontrol, "Params", MemoryParams)
+  cp = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True)
+  loc = longcontrol.LongControl(cp)
+  lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True)
+  assert lc_step(runtime, loc, cp, 0.21, 0.0, 0.0, lead=True) == pytest.approx(cp.startAccel) == pytest.approx(1.0)

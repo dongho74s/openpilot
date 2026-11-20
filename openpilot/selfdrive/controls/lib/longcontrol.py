@@ -18,7 +18,20 @@ HYUNDAI_LONGITUDINAL_KI = 0.0
 HYUNDAI_LONGITUDINAL_KF = 1.0
 STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
-STOPPING_ACCEL_MAX = -50
+STOPPING_ACCEL_MAX = -1
+
+# Bolt ACC with pedal, BoltPedalLongMode 1 (camera long through the ECM), as StarPilot drives this car in mode 2:
+# - a stop ramps only to -0.25 m/s^2 (StarPilot's stopAccel here), not carrot's StoppingAccel (default -0.5); a
+#   weaker StoppingAccel still applies. In rlogs 00000028--02c4808d1b--18 and --21 the ramp to -0.5 raised the
+#   brake from about 25-33 to 40-51 at 0.16-0.38 m/s, just before the stop.
+# - a start behind a lead that the plan wants slower than 0.25 m/s^2 follows the plan (StarPilot's lead gap settle),
+#   but with at least 0.15 m/s^2: starting already lets go of the stop hold, so a plan of 0 would leave the car on no
+#   torque at all (StarPilot's own floor of 0 has the one-pedal regen hold behind it); otherwise CP.startAccel. In the
+#   same rlog the fixed startAccel 1.0 held gas 673 for 0.7 s while the ECM let go of its hold, and the car then
+#   jumped at 1.4 m/s^2 against a plan of 0.21.
+BOLT_MODE_1_STOP_ACCEL = -0.25
+BOLT_MODE_1_PLAN_START_MAX_ACCEL = 0.25
+BOLT_MODE_1_PLAN_START_MIN_ACCEL = 0.15
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -99,13 +112,15 @@ class LongControl:
     # it, which needs a starting request; so the standstill must not hold off starting here (gas interceptor rule).
     self.ignore_cruise_standstill = (getattr(CP, "carFingerprint", "") == "CHEVROLET_BOLT_ACC_PEDAL" and
                                      bool(getattr(CP, "enableGasInterceptorDEPRECATED", False)))
+    self.bolt_acc_pedal_mode_1 = self.ignore_cruise_standstill and self.bolt_acc_pedal is None
 
   def _refresh_stopping_accel(self):
     try:
       value = float(self.params.get_float("StoppingAccel"))
     except (TypeError, ValueError):
       value = STOPPING_ACCEL_DEFAULT
-    if not math.isfinite(value):
+    # 0 or above is not a deceleration (the menu stops at -1): treat it like a broken value.
+    if not math.isfinite(value) or value >= 0:
       value = STOPPING_ACCEL_DEFAULT
     # Enforce the menu bounds even for stale Params or direct writes.
     self.stopping_accel = min(STOPPING_ACCEL_MAX, max(STOPPING_ACCEL_MIN, value)) * 0.01
@@ -187,14 +202,18 @@ class LongControl:
 
       if soft_hold_active:
         output_accel = self.CP.stopAccel
+      stop_target = max(self.stopping_accel, BOLT_MODE_1_STOP_ACCEL) if self.bolt_acc_pedal_mode_1 else self.stopping_accel
       # Restore the original one-way ramp. Do not unwind stronger braking.
-      if output_accel > self.stopping_accel:
+      if output_accel > stop_target:
         output_accel = min(output_accel, 0.0)
         output_accel -= self.CP.stoppingDecelRate * DT_CTRL
       self.reset()
 
     elif self.long_control_state == LongCtrlState.starting:
       output_accel = self.CP.startAccel
+      if self.bolt_acc_pedal_mode_1 and getattr(long_plan, 'hasLead', False) and \
+         a_target_ff <= BOLT_MODE_1_PLAN_START_MAX_ACCEL:
+        output_accel = float(np.clip(a_target_ff, BOLT_MODE_1_PLAN_START_MIN_ACCEL, self.CP.startAccel))
       self.reset()
 
     else:  # LongCtrlState.pid

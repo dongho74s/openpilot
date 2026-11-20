@@ -451,6 +451,11 @@ class CarInterface(CarInterfaceBase):
         ret.startingState = True
         ret.vEgoStopping = 0.25
         ret.vEgoStarting = 0.25
+        if candidate == CAR.CHEVROLET_BOLT_ACC_PEDAL:
+          # StarPilot's start for this car (as in mode 2 below): 1.0 held gas 673 for 0.7 s while the ECM let go of its
+          # hold, and the car then jumped at 1.4 m/s^2 (rlog 00000028--02c4808d1b--21, 2026-11-20). LongControl also
+          # follows a slow plan behind a lead here (longcontrol.py BOLT_MODE_1_PLAN_START_MAX_ACCEL).
+          ret.startAccel = 0.55
 
     elif candidate in CC_ONLY_CAR:
       ret.flags |= GMFlags.CC_LONG.value
