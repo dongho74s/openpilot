@@ -128,17 +128,17 @@ class Drive:
     self.frame = 0
 
   def run(self, accel, seconds=0.0, state="pid", v=12.0, long_active=True, pitch=0.0, frames=None,
-          cruise_standstill=False, stock_active=True):
+          cruise_standstill=False, stock_active=True, soft_hold=0, raw_state=False):
     """Returns (gas, brake) of every 0x2CB/0x315 pair sent, decoded from the CAN frames; self.taps gets the pedal."""
     pairs, self.taps = [], []
     for _ in range(int(round(seconds * 100)) if frames is None else frames):
       cc = structs.CarControl(enabled=True, longActive=long_active, latActive=True)
       cc.actuators.accel = accel
-      cc.actuators.longControlState = state if long_active else "off"
+      cc.actuators.longControlState = state if long_active or raw_state else "off"
       cc.hudControl.setSpeed = 20.0
       cc.orientationNED = [0.0, pitch, 0.0]
       cs = controller_state()
-      cs.out = structs.CarState(vEgo=v, aEgo=0.0, standstill=v < 0.05)
+      cs.out = structs.CarState(vEgo=v, aEgo=0.0, standstill=v < 0.05, softHoldActive=soft_hold)
       cs.out.cruiseState.available = True
       cs.out.cruiseState.enabled = True
       cs.out.gearShifter = "drive"
@@ -161,6 +161,7 @@ class Drive:
         raw = ((gas[0][1] & 7) << 16) | (gas[0][2] << 8) | gas[0][3]
         pairs.append((round((raw - 180272) / 8), friction_brake(brake[0])))
         self.taps.append(pedal(sends))
+        self.brake_modes = getattr(self, "brake_modes", []) + [brake[0][0] >> 4]
     return pairs
 
 
@@ -250,3 +251,21 @@ def test_a_command_the_stock_gate_blocked_is_not_remembered(runtime, monkeypatch
   gated = d.run(-0.5, frames=4, stock_active=False)
   assert gated == [(-500, 0)]
   assert d.run(0.2, frames=4)[0] == (135, 0)
+
+
+@pytest.mark.parametrize("soft_hold", [1, 2])
+def test_bolt_mode_1_soft_hold_keeps_the_hold_over_a_start_request(runtime, monkeypatch, soft_hold):
+  """Codex review 2026-11-20 N1: a starting request with soft hold active must not tap the pedal or lift the hold."""
+  d = Drive(runtime, monkeypatch, bolt_cp(runtime, CAR.CHEVROLET_BOLT_ACC_PEDAL, True, False))
+  d.run(-0.4, 1.0, v=0.0, state="stopping", cruise_standstill=True)
+  d.brake_modes = []
+  held = d.run(0.15, 0.5, v=0.0, state="starting", cruise_standstill=True, soft_hold=soft_hold)
+  assert held and set(held) == {(-500, 40)} and set(d.brake_modes) == {0xD}
+  assert set(d.taps) == {0.0}
+
+
+def test_bolt_mode_1_does_not_tap_while_long_is_inactive(runtime, monkeypatch):
+  """Codex review 2026-11-20 N1: longActive off with a starting state and a positive accel left in the actuators."""
+  d = Drive(runtime, monkeypatch, bolt_cp(runtime, CAR.CHEVROLET_BOLT_ACC_PEDAL, True, False))
+  d.run(0.15, 0.5, v=0.0, state="starting", cruise_standstill=True, long_active=False, raw_state=True)
+  assert d.taps and set(d.taps) == {0.0}

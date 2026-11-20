@@ -307,8 +307,10 @@ class CarController(CarControllerBase):
           # negative vEgo): if the ECM still reports standstill once the car moves, stop tapping instead of holding the
           # pedal while 0x2CB and the brake are overridden (Codex review 2026-11-18). LongControl's own (positive) start
           # request decides, not the pitch-compensated gas: this car's start can be as low as 0.15 m/s^2, which a
-          # downhill turns into regen, and the ECM then never left its standstill (Codex review 2026-11-20 R2).
-          sng_tap = (self.CP.enableGasInterceptorDEPRECATED and CS.out.cruiseState.standstill and actuators.accel > 0. and
+          # downhill turns into regen, and the ECM then never left its standstill (Codex review 2026-11-20 R2). Inactive
+          # and soft hold frames keep blocking it, as INACTIVE_REGEN did before (Codex review 2026-11-20 N1).
+          sng_tap = (self.CP.enableGasInterceptorDEPRECATED and CC.longActive and not stopping and
+                     CS.out.cruiseState.standstill and actuators.accel > 0. and
                      actuators.longControlState == LongCtrlState.starting and abs(CS.out.vEgo) <= self.CP.vEgoStarting)
         if sng_tap:
           # "Tap" the accelerator pedal to re-engage ACC
