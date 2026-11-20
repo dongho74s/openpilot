@@ -65,6 +65,29 @@ else:
     """
 
 
+# Same frame shaders plus an optional grey/dim step, compiled only when a view asks for it (NewUi 1 on tici).
+# The shaders above stay untouched, so views that never filter draw exactly as before.
+_FILTER_UNIFORMS = """
+    uniform float uGrayscaleMix;
+    uniform float uDim;
+"""
+_FILTER_STEP = """
+      float luminance = dot(fragColor.rgb, vec3(0.299, 0.587, 0.114));
+      fragColor.rgb = mix(fragColor.rgb, vec3(luminance), uGrayscaleMix) * (1.0 - uDim);
+    }
+"""
+
+
+def _with_filter(fragment_shader: str) -> str:
+  head, body = fragment_shader.split("out vec4 fragColor;", 1)
+  body = body.rstrip()
+  assert body.endswith('}')
+  return head + "out vec4 fragColor;" + _FILTER_UNIFORMS + body[:-1] + _FILTER_STEP
+
+
+FRAME_FILTER_FRAGMENT_SHADER = _with_filter(FRAME_FRAGMENT_SHADER)
+
+
 class CameraView(Widget):
   def __init__(self, name: str, stream_type: VisionStreamType):
     super().__init__()
@@ -83,6 +106,11 @@ class CameraView(Widget):
     self.last_connection_attempt: float = 0.0
     self.shader = rl.load_shader_from_memory(VERTEX_SHADER, FRAME_FRAGMENT_SHADER)
     self._texture1_loc: int = rl.get_shader_location(self.shader, "texture1") if not TICI else -1
+    self._frame_filter = (0.0, 0.0)
+    self._filter_shader: rl.Shader | None = None
+    self._filter_failed = False
+    self._applied_frame_filter: tuple[float, float] | None = None
+    self._filter_value = rl.ffi.new("float[]", [0.0])
 
     self.frame: VisionBuf | None = None
     self.texture_y: rl.Texture | None = None
@@ -117,6 +145,36 @@ class CameraView(Widget):
       if self.client:
         del self.client
       self.client = VisionIpcClient(self._name, self._stream_type, conflate=True)
+
+  def set_frame_filter(self, grayscale_mix: float, dim: float) -> None:
+    """Grey out (0..1) and darken (0..1) the camera frame; (0, 0) draws with the normal shader."""
+    self._frame_filter = (float(grayscale_mix), float(dim))
+
+  @property
+  def frame_filter_failed(self) -> bool:
+    """True when the filter shader did not compile here; callers may dim with an overlay instead."""
+    return self._filter_failed
+
+  def _frame_shader(self) -> tuple[rl.Shader, int]:
+    """(shader, texture1 location) for this frame."""
+    if self._frame_filter == (0.0, 0.0) or self._filter_failed:
+      return self.shader, self._texture1_loc
+    if self._filter_shader is None:
+      shader = rl.load_shader_from_memory(VERTEX_SHADER, FRAME_FILTER_FRAGMENT_SHADER)
+      if not shader.id or shader.id == rl.rl_get_shader_id_default():
+        cloudlog.error("camera filter shader failed to compile; drawing unfiltered")
+        self._filter_failed = True
+        return self.shader, self._texture1_loc
+      self._filter_shader = shader
+      self._filter_locs = (rl.get_shader_location(shader, "uGrayscaleMix"), rl.get_shader_location(shader, "uDim"))
+      self._filter_texture1_loc = rl.get_shader_location(shader, "texture1") if not TICI else -1
+    if self._applied_frame_filter != self._frame_filter:
+      for loc, value in zip(self._filter_locs, self._frame_filter, strict=True):
+        if loc >= 0:
+          self._filter_value[0] = value
+          rl.set_shader_value(self._filter_shader, loc, self._filter_value, rl.ShaderUniformDataType.SHADER_UNIFORM_FLOAT)
+      self._applied_frame_filter = self._frame_filter
+    return self._filter_shader, self._filter_texture1_loc
 
   def _set_placeholder_color(self, color: rl.Color):
     """Set a placeholder color to be drawn when no frame is available."""
@@ -153,6 +211,9 @@ class CameraView(Widget):
     # Clean up shader
     if self.shader and self.shader.id:
       rl.unload_shader(self.shader)
+    if self._filter_shader is not None:
+      rl.unload_shader(self._filter_shader)
+      self._filter_shader = None
 
     self.frame = None
     self.available_streams.clear()
@@ -253,7 +314,8 @@ class CameraView(Widget):
     bind_egl_image_to_texture(self.egl_texture.id, egl_image)
 
     # Render with shader
-    rl.begin_shader_mode(self.shader)
+    shader, _ = self._frame_shader()
+    rl.begin_shader_mode(shader)
     rl.draw_texture_pro(self.egl_texture, src_rect, dst_rect, rl.Vector2(0, 0), 0.0, rl.WHITE)
     rl.end_shader_mode()
 
@@ -272,8 +334,9 @@ class CameraView(Widget):
       self._texture_needs_update = False
 
     # Render with shader
-    rl.begin_shader_mode(self.shader)
-    rl.set_shader_value_texture(self.shader, self._texture1_loc, self.texture_uv)
+    shader, texture1_loc = self._frame_shader()
+    rl.begin_shader_mode(shader)
+    rl.set_shader_value_texture(shader, texture1_loc, self.texture_uv)
     rl.draw_texture_pro(self.texture_y, src_rect, dst_rect, rl.Vector2(0, 0), 0.0, rl.WHITE)
     rl.end_shader_mode()
 

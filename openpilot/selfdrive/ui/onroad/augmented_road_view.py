@@ -5,7 +5,7 @@ from openpilot.cereal import log, messaging
 from msgq.visionipc import VisionStreamType
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
 from openpilot.selfdrive.ui.carrot_param_cache import BorderParamSnapshot, TimedSnapshotCache, read_border_params
-from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
+from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus, NEW_UI_WAYON
 from openpilot.selfdrive.ui.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.onroad.driver_preview import DriverPreview
 from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
@@ -13,6 +13,7 @@ from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.render_diagnostics import RenderDiagnostics
 from openpilot.selfdrive.ui.overlay_state import OverlayState
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
+from openpilot.selfdrive.ui.onroad.v10_nui.view import NuiOnroad
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.text_draw import draw_text_ui_style
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
@@ -33,6 +34,14 @@ BORDER_COLORS = {
 WIDE_CAM_MAX_SPEED = 10.0  # m/s (22 mph)
 ROAD_CAM_MIN_SPEED = 15.0  # m/s (34 mph)
 INF_POINT = np.array([1000.0, 0.0, 0.0])
+# NewUi 1 (v10-nui annotated_camera.cc calcFrameMatrix): slight horizontal overscan, nudged left.
+NUI_HORIZONTAL_OVERSCAN = 1.035
+NUI_LEFT_BIAS = -0.016
+
+
+def nui_active() -> bool:
+  """NewUi 1 shows the v10-nui screen on C3/C3X. 0, 2 and 3 keep the Carrot screen here."""
+  return ui_state.new_ui_mode == NEW_UI_WAYON
 
 
 class AugmentedRoadView(CameraView):
@@ -57,6 +66,7 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer._overlay_state = self._overlay_state
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverPreview()
+    self._nui: NuiOnroad | None = None  # NewUi 1, created on first use
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
@@ -87,6 +97,10 @@ class AugmentedRoadView(CameraView):
     start_draw = time.monotonic()
     if not ui_state.started:
       return
+    if nui_active():
+      self._render_nui(rect, start_draw)
+      return
+    self.set_frame_filter(0.0, 0.0)
     timing = self._render_diagnostics
     timing.start()
     # Preserve uiDebug wall timers and draw order; runtimeTiming also measures
@@ -153,7 +167,11 @@ class AugmentedRoadView(CameraView):
     timing.call('border', self._draw_border_carrot, rect)
     extras_ms = (time.monotonic() - _t) * 1000.0
 
-    # publish uiDebug
+    self._publish_ui_debug(start_draw, cam_ms, model_ms, ds_ms, hud_ms, alert_ms, extras_ms)
+    timing.finish()
+
+  def _publish_ui_debug(self, start_draw: float, cam_ms: float, model_ms: float, ds_ms: float, hud_ms: float,
+                        alert_ms: float, extras_ms: float) -> None:
     msg = messaging.new_message('uiDebug', valid=True)
     ud = msg.uiDebug
     ud.drawTimeMillis = (time.monotonic() - start_draw) * 1000
@@ -166,13 +184,50 @@ class AugmentedRoadView(CameraView):
     ud.plotMode = self._plot_mode
     ud.recording = gui_app.is_recording()
     self._pm.send('uiDebug', msg)
+
+  def _render_nui(self, rect: rl.Rectangle, start_draw: float) -> None:
+    """NewUi 1: full-bleed v10-nui screen (no border, Carrot HUD/model/alerts replaced)."""
+    if self._nui is None:
+      self._nui = NuiOnroad(ui_state.params)
+    nui = self._nui
+    timing = self._render_diagnostics
+    timing.start()
+    if not self._suppress_camera_for_cluster:
+      self._switch_stream_if_needed(ui_state.sm)
+      self._update_calibration()
+    self._content_rect = rl.Rectangle(rect.x, rect.y, rect.width, rect.height)
+    rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
+
+    _t = time.monotonic()
+    if self._suppress_camera_for_cluster:
+      rl.draw_rectangle_rec(rect, rl.BLACK)
+    else:
+      grayscale, dim = nui.camera_filter(ui_state)
+      self.set_frame_filter(grayscale, dim)
+      timing.call('camera', super()._render, rect)
+      if dim > 0 and self.frame_filter_failed:
+        rl.draw_rectangle_rec(rect, rl.Color(0, 0, 0, int(dim * 255)))  # no filter shader here: dim only
+    cam_ms = (time.monotonic() - _t) * 1000.0
+    parts = timing.call('nui', nui.render, self._content_rect, ui_state, not self._suppress_camera_for_cluster)
+    rl.end_scissor_mode()
+    # The sidebar is already drawn to our left, so this rounds the screen, not just the camera view.
+    nui.draw_screen_corners(rl.Rectangle(0, 0, gui_app.width, gui_app.height))
+
+    self._publish_ui_debug(start_draw, cam_ms, parts.get('model', 0.0), parts.get('driver_state', 0.0),
+                           parts.get('hud', 0.0), parts.get('alert', 0.0), 0.0)
     timing.finish()
 
   def _handle_mouse_press(self, _):
+    if nui_active():
+      if self._click_callback is not None:
+        self._click_callback()
+      return
     if not self._hud_renderer.user_interacting() and self._click_callback is not None:
       self._click_callback()
 
   def close(self):
+    if self._nui is not None:
+      self._nui.close()
     self.model_renderer._overlay.close()
     self._hud_renderer._overlay.close()
     if preview := getattr(self, 'driver_state_renderer', None):
@@ -232,11 +287,13 @@ class AugmentedRoadView(CameraView):
 
   def _calc_frame_matrix(self, rect: rl.Rectangle) -> np.ndarray:
     # Check if we can use cached matrix
+    nui = nui_active()
     cache_key = (
       ui_state.sm.recv_frame['liveCalibration'],
       self._content_rect.width,
       self._content_rect.height,
-      self.stream_type
+      self.stream_type,
+      nui,
     )
     if cache_key == self._matrix_cache_key and self._cached_matrix is not None:
       return self._cached_matrix
@@ -279,6 +336,9 @@ class AugmentedRoadView(CameraView):
       [0, zoom * 2 * cy / h, -y_offset / h * 2],
       [0, 0, 1.0]
     ])
+    if nui:
+      self._cached_matrix[0, 0] *= NUI_HORIZONTAL_OVERSCAN
+      self._cached_matrix[0, 2] += NUI_LEFT_BIAS
 
     video_transform = np.array([
       [zoom, 0.0, (w / 2 + x - x_offset) - (cx * zoom)],
@@ -286,6 +346,8 @@ class AugmentedRoadView(CameraView):
       [0.0, 0.0, 1.0]
     ])
     self.model_renderer.set_transform(video_transform @ calib_transform)
+    if self._nui is not None:
+      self._nui.set_transform(video_transform @ calib_transform)
 
     return self._cached_matrix
 

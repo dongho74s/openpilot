@@ -2471,15 +2471,15 @@
       "group": "화면",
       "name": "NewUi",
       "title": "new ui",
-      "descr": "C4 온로드 화면을 고릅니다.\n0: 기존 당근 UI\n1: Wayon/sunnypilot 스타일\n2: 시계. 카메라·차선·속도 패널을 모두 끄고 아날로그 시계만 표시합니다. 왼쪽에 조향 상태·속도, 오른쪽에 요일·날짜가 나오며, 어두우면 빨간 야간 모드로 바뀌고 초침을 숨깁니다. 정차·오토홀드 타이머는 표시하지 않고, 다른 경고는 시계 위에 그대로 뜹니다.\n3: 로봇 얼굴. 빛나는 두 눈이 차 상태에 따라 표정을 바꿉니다(인게이지, 깜빡이, 급감속, 운전자 감시 경고, 오래 정차, 출발, 밤). 다른 경고는 얼굴 위에 그대로 뜹니다.\n재부팅 없이 적용되며 주행 제어·운전자 감시 판단은 바뀌지 않습니다.",
+      "descr": "온로드 화면을 고릅니다(C4, C3·C3X).\n0: 기존 당근 UI\n1: C4는 Wayon/sunnypilot 스타일. C3·C3X는 v10-nui 화면으로, 테두리와 당근 패널 없이 아래쪽에 현재 속도·SET·차간·LFA·핸들을 표시하고, 해제 상태에서는 카메라를 흑백으로 어둡게 합니다.\n2: 시계(C4). 카메라·차선·속도 패널을 모두 끄고 아날로그 시계만 표시합니다. 왼쪽에 조향 상태·속도, 오른쪽에 요일·날짜가 나오며, 어두우면 빨간 야간 모드로 바뀌고 초침을 숨깁니다. 정차·오토홀드 타이머는 표시하지 않고, 다른 경고는 시계 위에 그대로 뜹니다.\n3: 로봇 얼굴(C4). 빛나는 두 눈이 차 상태에 따라 표정을 바꿉니다(인게이지, 깜빡이, 급감속, 운전자 감시 경고, 오래 정차, 출발, 밤). 다른 경고는 얼굴 위에 그대로 뜹니다.\nC3·C3X는 1일 때만 바뀌고 0·2·3이면 기존 당근 화면입니다.\n재부팅 없이 적용되며 주행 제어·운전자 감시 판단은 바뀌지 않습니다.",
 
       "egroup": "DISP",
       "etitle": "new ui",
-      "edescr": "Choose the C4 onroad display.\n0: Carrot UI\n1: Wayon/sunnypilot style\n2: Clock. Camera, lanes and the speed panel are turned off and only an analog clock is shown, with steering state and speed on the left and weekday and date on the right. In the dark it switches to a red night mode without the second hand. Parking and hold timers are hidden; other alerts still appear over the clock.\n3: Robot face. Two glowing eyes change expression with the car state (engagement, turn signals, hard braking, driver-monitoring alerts, long stops, pulling away, night). Other alerts still appear over the face.\nApplies without rebooting; driving control and driver monitoring are unchanged.",
+      "edescr": "Choose the onroad display (C4, C3/C3X).\n0: Carrot UI\n1: Wayon/sunnypilot style on C4. On C3/C3X, the v10-nui screen: no border or Carrot panel; current speed, SET, following gap, LFA and steering wheel along the bottom, and a grey, dimmed camera while disengaged.\n2: Clock (C4). Camera, lanes and the speed panel are turned off and only an analog clock is shown, with steering state and speed on the left and weekday and date on the right. In the dark it switches to a red night mode without the second hand. Parking and hold timers are hidden; other alerts still appear over the clock.\n3: Robot face (C4). Two glowing eyes change expression with the car state (engagement, turn signals, hard braking, driver-monitoring alerts, long stops, pulling away, night). Other alerts still appear over the face.\nC3/C3X change only with 1; 0, 2 and 3 keep the Carrot screen there.\nApplies without rebooting; driving control and driver monitoring are unchanged.",
 
       "cgroup": "显示设置",
       "ctitle": "new ui",
-      "cdescr": "选择 C4 行车界面。\n0：原界面\n1：Wayon/sunnypilot 风格\n2：时钟。关闭摄像头、车道和速度面板，只显示模拟时钟；左侧为转向状态和车速，右侧为星期和日期；天黑时切换为红色夜间模式并隐藏秒针。不显示停车和自动驻车计时；其他警告仍显示在时钟上方。\n3：机器人表情。两只发光的眼睛随车辆状态变化表情（接管、转向灯、急减速、驾驶员监控警告、长时间停车、起步、夜间）。其他警告仍显示在上方。\n无需重启，不改变车辆控制或驾驶员监控。",
+      "cdescr": "选择行车界面（C4、C3/C3X）。\n0：原界面\n1：C4 为 Wayon/sunnypilot 风格；C3/C3X 为 v10-nui 界面：无边框和原面板，底部显示当前车速、SET、跟车距离、LFA 和方向盘，未接管时摄像头画面变为灰暗。\n2：时钟（C4）。关闭摄像头、车道和速度面板，只显示模拟时钟；左侧为转向状态和车速，右侧为星期和日期；天黑时切换为红色夜间模式并隐藏秒针。不显示停车和自动驻车计时；其他警告仍显示在时钟上方。\n3：机器人表情（C4）。两只发光的眼睛随车辆状态变化表情（接管、转向灯、急减速、驾驶员监控警告、长时间停车、起步、夜间）。其他警告仍显示在上方。\nC3/C3X 仅在 1 时改变，0、2、3 保持原界面。\n无需重启，不改变车辆控制或驾驶员监控。",
 
       "control": "select",
       "min": 0,

@@ -638,6 +638,10 @@ msgstr "차선이탈"
 msgid "Lateral Maneuver Mode"
 msgstr "조향 제어 모드"
 
+#: openpilot/selfdrive/ui/onroad/v10_nui/alerts.py
+msgid "Lead vehicle departed"
+msgstr "선행 차량이 출발하였습니다"
+
 #: openpilot/selfdrive/selfdrived/events.py
 msgid "Likely Hardware Issue"
 msgstr "장치를 점검하세요"

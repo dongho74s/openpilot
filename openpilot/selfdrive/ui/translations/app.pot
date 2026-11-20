@@ -1504,3 +1504,7 @@ msgstr ""
 #: openpilot/selfdrive/selfdrived/events.py
 msgid "Park safely before rebooting your device"
 msgstr ""
+
+#: openpilot/selfdrive/ui/onroad/v10_nui/alerts.py
+msgid "Lead vehicle departed"
+msgstr ""
