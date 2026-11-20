@@ -307,7 +307,7 @@ class MochiSaver:
     elif expr == EXPR_AUTOHOLD:
       breathe = 1.0 + 0.02 * math.sin(t * math.pi * 2.0 / 4.0)
 
-    face_cy = cy + bounce
+    face_cy = cy + bounce + 60.0 * s  # 2배 신호등 표시줄 자리 확보 (맨 위)
     eye_r = 165.0 * s * breathe
     eye_dx = 250.0 * s * breathe
     eye_y = -70.0 * s * breathe
@@ -351,18 +351,18 @@ class MochiSaver:
 
     # 표정별 배지·글자·소품
     if expr == EXPR_DECEL:
-      self._draw_badge_text("stop", cx, face_cy - 430.0 * s, 110, C_ORANGE, s)
+      self._draw_badge_text("stop", cx, face_cy - 380.0 * s, 110, C_ORANGE, s)
     elif expr == EXPR_EMERGENCY:
-      self._draw_badge_text("STOP", cx, face_cy - 430.0 * s, 130, C_RED, s)
+      self._draw_badge_text("STOP", cx, face_cy - 380.0 * s, 130, C_RED, s)
       self._draw_sweat(cx, face_cy, s, t)
     elif expr == EXPR_START:
-      self._draw_badge_text("GO~~", cx, face_cy - 430.0 * s, 130, C_YELLOW, s)
+      self._draw_badge_text("GO~~", cx, face_cy - 380.0 * s, 130, C_YELLOW, s)
     elif expr == EXPR_REVERSE:
-      self._draw_gear_badge(cx + 640.0 * s, face_cy - 400.0 * s, s, "R")
+      self._draw_gear_badge(cx + 640.0 * s, face_cy - 360.0 * s, s, "R")
     elif expr == EXPR_PARK:
-      self._draw_gear_badge(cx + 640.0 * s, face_cy - 400.0 * s, s, "P")
+      self._draw_gear_badge(cx + 640.0 * s, face_cy - 360.0 * s, s, "P")
     elif expr == EXPR_AUTOHOLD:
-      self._draw_hold_badge(cx, face_cy - 460.0 * s, s)
+      self._draw_hold_badge(cx, face_cy - 380.0 * s, s)
 
   def _blink_scale(self, t: float, period: float = 2.3) -> float:
     """깜빡임: 2.3초 주기로 0.12초간 감았다 뜬다. 1=활짝."""
@@ -428,23 +428,24 @@ class MochiSaver:
     rl.draw_text_ex(font, letter, pos, int(150 * s), 0, rl.BLACK)
 
   def _draw_status_strip(self, rect: rl.Rectangle, t: float) -> None:
-    """머리 위 상태 표시줄: 가로 신호등 + 양옆 깜빡이 화살표.
+    """머리 위 상태 표시줄: 가로 신호등(2배) + 양옆 큰 깜빡이 화살표.
 
     신호등은 빨간불/초록불이 확인될 때만 보이고, 깜빡이는 켜져 있을 때
-    깜빡인다. 둘 다 얼굴 표정과 별개라 신호대기 중에도 깜빡이가 보임.
-    화면 맨 위 배지 줄(얼굴 중심 -430)과 안 겹치게 맨 위에 둠.
+    크게 깜빡인다. 둘 다 얼굴 표정과 별개라 신호대기 중에도 깜빡이가 보임.
+    화면 맨 위 배지 줄(얼굴 중심 -380)과 안 겹치게 맨 위에 둠.
     """
     if self._traffic_state == TRAFFIC_OFF and not self._blink_left and not self._blink_right:
       return
     s = min(rect.width / 2160.0, rect.height / 1080.0)
     cx = rect.x + rect.width / 2.0
-    cy = rect.y + 24.0 * s + 42.0 * s  # 표시줄 중심
+    cy = rect.y + 96.0 * s  # 표시줄 중심 (함체 168·s, 위 12·s부터)
 
-    lamp_r = 30.0 * s
-    gap = 84.0 * s
+    # 신호등 2배: 램프 반지름 60·s, 간격 168·s
+    lamp_r = 60.0 * s
+    gap = 168.0 * s
     if self._traffic_state != TRAFFIC_OFF:
       # 가로 신호등: 검은 함체에 빨·노·초 3등, 켜진 등만 밝게
-      w, h = (gap * 2.0 + lamp_r * 2.0 + 36.0 * s), 84.0 * s
+      w, h = (gap * 2.0 + lamp_r * 2.0 + 72.0 * s), 168.0 * s
       rl.draw_rectangle_rounded(rl.Rectangle(cx - w / 2.0, cy - h / 2.0, w, h), 0.3, 12, C_DARK)
       lamps = ((cx - gap, C_RED, self._traffic_state == TRAFFIC_RED),
                (cx, rl.Color(230, 180, 40, 255), False),
@@ -452,18 +453,25 @@ class MochiSaver:
       for lx, color, lit in lamps:
         rl.draw_circle(int(lx), int(cy), int(lamp_r), color if lit else rl.Color(70, 70, 70, 255))
 
-    # 깜빡이 화살표: 신호등 양옆, 켜져 있을 때만 보이고 ~0.7초 간격으로 깜빡임
+    # 깜빡이 화살표: 신호등 양옆, 이중 화살표 + 배경 알약이라 꺼진
+    # 구간에도 형태가 보이고 켜진 구간에는 밝은 노란색으로 펄스
     on = int(t * 1.4) % 2 == 0
-    arrow = 46.0 * s
-    strip_half = (gap + lamp_r + 18.0 * s) if self._traffic_state != TRAFFIC_OFF else 0.0
+    strip_half = (gap + lamp_r + 36.0 * s) if self._traffic_state != TRAFFIC_OFF else 0.0
     for side, active in ((-1, self._blink_left), (1, self._blink_right)):
       if not active:
         continue
-      ax = cx + side * (strip_half + 70.0 * s)
-      color = C_YELLOW if on else rl.Color(70, 70, 60, 255)
-      pts = [(ax - side * arrow / 2.0, cy - arrow / 2.0), (ax - side * arrow / 2.0, cy + arrow / 2.0),
-             (ax + side * arrow / 2.0, cy)]
-      rl.draw_triangle(rl.Vector2(*pts[0]), rl.Vector2(*pts[1]), rl.Vector2(*pts[2]), color)
+      ax = cx + side * (strip_half + 150.0 * s)
+      # 배경 알약 (항상 보임)
+      pw, ph = 220.0 * s, 150.0 * s
+      rl.draw_rectangle_rounded(rl.Rectangle(ax - pw / 2.0, cy - ph / 2.0, pw, ph), 0.5, 12, C_DARK)
+      color = C_YELLOW if on else rl.Color(150, 105, 25, 255)
+      # 이중 화살표 (두 개의 삼각형, 중심 기준 대칭)
+      arrow = 90.0 * s
+      for k in (0, 1):
+        acx = ax + side * (k - 0.5) * 55.0 * s
+        pts = [(acx - side * arrow / 2.0, cy - arrow / 2.0), (acx - side * arrow / 2.0, cy + arrow / 2.0),
+               (acx + side * arrow / 2.0, cy)]
+        rl.draw_triangle(rl.Vector2(*pts[0]), rl.Vector2(*pts[1]), rl.Vector2(*pts[2]), color)
 
   def _draw_hold_badge(self, cx: float, y: float, s: float) -> None:
     """오토홀드: 초록 HOLD 알약 배지."""

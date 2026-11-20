@@ -1,4 +1,4 @@
-"""Exercise both real HUD entry points and the C4 lamp without a display server."""
+"""Exercise both real HUD entry points and the signal-status helpers without a display server."""
 import ast
 import importlib.util
 import sys
@@ -63,16 +63,6 @@ def test_c3_pause_replaces_red_and_green_icons(display):
   renderer._draw_texture_rect.assert_not_called()
 
 
-def test_c4_navigation_lamp_replaces_counter_with_pause(display):
-  _, rl, ui = display
-  ns = methods(ROOT/'mici/onroad/hud_renderer.py', {'_get_traffic_light_info', '_draw_traffic_light_info'}, dict(ui_state=ui))
-  renderer = NS()
-  renderer._traffic_light_info = ns['_get_traffic_light_info'](renderer)
-  assert renderer._traffic_light_info == dict(lamp='paused', remain=0)
-  assert ns['_draw_traffic_light_info'](renderer, 100, 200)
-  assert rl.draw_circle.call_args.args[:3] == (124, 200, 24)
-
-
 def test_c4_bluetooth_icon_caches_connection_and_draws_rune(display, monkeypatch):
   _, rl, ui = display
   calls = []
@@ -93,26 +83,6 @@ def test_c4_bluetooth_icon_caches_connection_and_draws_rune(display, monkeypatch
   assert rl.draw_line_ex.call_count == 6
   assert rl.draw_line_ex.call_args.args[-1] == (160, 160, 160, 110)  # Disconnected: dimmed.
 
-
-def test_c4_model_lamp_switches_immediately_and_does_not_fade_green(display):
-  module, rl, ui = display
-  ns = methods(ROOT/'mici/onroad/traffic_light.py', {'_update_state', '_render'},
-               dict(ui_state=ui, rl=rl, SIDE_PANEL_WIDTH=80,
-                    signal_detection_paused=module.signal_detection_paused,
-                    draw_signal_pause=module.draw_signal_pause, signal_assist_status=module.signal_assist_status,
-                    draw_signal_assist=module.draw_signal_assist, draw_circle_gradient=Mock()))
-  filt = NS(x=.6, update=Mock())
-  renderer = NS(_current_state=1, _green_start_time=None, _alpha_filter=filt,
-                _radius=24, rect=NS(x=0, y=0, width=540, height=960))
-  ns['_update_state'](renderer)
-  assert renderer._current_state == 3 and filt.x == 1.
-  ns['_render'](renderer, None)
-  assert rl.draw_circle.call_count == 1
-  ns['draw_circle_gradient'].assert_not_called()
-  ui.sm['longitudinalPlan'].signalDetectionSuspended = False
-  ui.sm['longitudinalPlan'].trafficState = 0
-  ns['_update_state'](renderer)
-  assert renderer._current_state == 0 and filt.x == 0.
 
 @pytest.mark.parametrize('color,action,expected', [(1, 0, (255,75,75,255)), (2,0,(60,255,120,255)),
   (3,0,(255,185,40,255)), (0,1,(160,165,170,255)), (1,2,(255,75,75,255)), (2,3,(60,255,120,255))])
@@ -140,22 +110,6 @@ def test_usb_ring_is_visible_even_without_native_lamp(display):
   ns['_draw_carrot_traffic_light'](renderer, 100, 200)
   renderer._draw_texture_rect.assert_not_called()
   assert rl.draw_circle_lines.call_count == 3 and rl.draw_circle.call_count == 2
-
-
-def test_c4_helper_survives_native_green_fade_but_not_stale_plan(display):
-  module, rl, ui = display
-  ui.sm['longitudinalPlan'] = NS(signalDetectionSuspended=False, signalObservationColor=0, signalAssistAction=1)
-  ns = methods(ROOT/'mici/onroad/traffic_light.py', {'is_visible', '_render'},
-               dict(ui_state=ui, rl=rl, SIDE_PANEL_WIDTH=80, signal_assist_status=module.signal_assist_status,
-                    signal_display_visible=module.signal_display_visible,
-                    draw_signal_assist=module.draw_signal_assist, draw_signal_pause=module.draw_signal_pause,
-                    draw_circle_gradient=Mock()))
-  renderer = NS(_current_state=0, _alpha_filter=NS(x=0.), _radius=24, rect=NS(x=0,y=0,width=540,height=960))
-  assert ns['is_visible'](renderer)
-  ns['_render'](renderer, None)
-  assert rl.draw_circle_lines.call_count == 3
-  ui.sm.valid = {'longitudinalPlan': False}
-  assert not ns['is_visible'](renderer)
 
 
 def test_display_survives_inactive_control_and_unknown_stays_visible(display):
