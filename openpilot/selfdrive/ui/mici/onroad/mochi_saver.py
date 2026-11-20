@@ -14,9 +14,15 @@
 - 홈 화면을 650ms 길게 누르면 모찌 화면으로 전환.
 
 표정 (우선순위 순):
-  긴급제동(aEgo <= -4) > 급감속(aEgo <= -2.5) > 급가속(aEgo >= 2)
+  긴급제동(aEgo <= -4) > 신호등(빨간불/초록불) > 좌측 깜빡이 > 우측 깜빡이
+  > 급감속(aEgo <= -2.5) > 급가속(aEgo >= 2)
   > 후진(R) > 주차(P, 기어가 진짜 P일 때만) > 오토홀드
   > 정지 중 출발 (출발 직후 3초) > 주행중(기본)
+
+주행중일 때는 얼굴이 4초마다 랜덤으로 바뀐다 (10가지 변형:
+  기본·왼쪽보기·오른쪽보기·위보기·아래보기·왼쪽윙크·오른쪽윙크·
+  졸림·놀람·활짝웃음). 상태 표정 10가지 + 변형 10가지 = 얼굴 20가지.
+  상태 표정이 뜨면 변형은 멈추고, 주행중으로 돌아오면 바로 새 얼굴이 나온다.
 
 머리 위 상태 표시줄 (얼굴 표정과 별개, 얼굴을 안 가림):
   신호등: 빨간불/초록불이 확인될 때만 머리 위에 가로 3등 표시.
@@ -35,6 +41,7 @@
 """
 
 import math
+import random
 import time
 
 import pyray as rl
@@ -67,6 +74,15 @@ EXPR_AUTOHOLD = "autohold"  # 오토홀드
 EXPR_TRAFFIC = "traffic"  # 신호등 (빨간불/초록불 확인될 때만)
 EXPR_BLINKER_LEFT = "blinker_left"  # 좌측 깜빡이 (켜져 있을 때만)
 EXPR_BLINKER_RIGHT = "blinker_right"  # 우측 깜빡이 (켜져 있을 때만)
+
+# 주행중(기본 표정)일 때 랜덤으로 바뀌는 얼굴 변형 — 10가지.
+# 상태 표정(신호등·깜빡이·급감속 등)이 아닐 때만 돌아간다.
+# 상태 표정 10가지(주행중 제외) + 이 변형 10가지 = 얼굴 20가지.
+IDLE_VARIANTS = (
+  "normal", "look_left", "look_right", "look_up", "look_down",
+  "wink_left", "wink_right", "sleepy", "surprised", "big_smile",
+)
+IDLE_VARIANT_S = 4.0  # 얼굴 변형이 바뀌는 간격(초)
 
 # 신호등 상태 (longitudinalPlan.trafficState, TrafficState enum):
 # 0=없음, 1=빨간불, 2=초록불
@@ -107,6 +123,8 @@ class MochiSaver:
     self._transient = ("", 0.0)  # (표정, 유지 종료 시각) — 출발 전용
     self._brake_held_stop = False
     self._hold_until = 0.0
+    self._idle_variant = "normal"  # 주행중 얼굴 변형 (랜덤 순환)
+    self._idle_variant_until = 0.0
 
     self._font_bold: rl.Font | None = None
     self._font_medium: rl.Font | None = None
@@ -274,6 +292,17 @@ class MochiSaver:
       expr = EXPR_DRIVING
     self._expr = expr
 
+    # 주행중(기본 표정)일 때만 얼굴 변형을 랜덤으로 바꿈 (4초마다,
+    # 직전 얼굴과 다른 것으로). 상태 표정일 때는 타이머를 리셋해서
+    # 주행중으로 돌아오면 바로 새 얼굴이 나온다.
+    if expr == EXPR_DRIVING:
+      if now >= self._idle_variant_until:
+        choices = [v for v in IDLE_VARIANTS if v != self._idle_variant]
+        self._idle_variant = random.choice(choices)
+        self._idle_variant_until = now + IDLE_VARIANT_S
+    else:
+      self._idle_variant_until = 0.0
+
   def _cancel_press(self) -> None:
     self._pressing = False
     self._press_fired = False
@@ -329,6 +358,7 @@ class MochiSaver:
     # 표정별 눈동자 위치·눈꺼풀·입 모양
     pupil_dx = pupil_dy = 0.0
     lid = 1.0  # 1=활짝, 0.45=반쯤 감음
+    lid_l = lid_r = None  # 한쪽 눈만 따로 감을 때(윙크) 사용, None이면 lid
     mouth = "smile"
     if expr == EXPR_TRAFFIC:
       # 신호등을 올려다봄 — 빨간불은 가만히, 초록불은 미소
@@ -342,6 +372,32 @@ class MochiSaver:
       # 오른쪽 깜빡이 쪽으로 눈동자 이동
       pupil_dx = 55.0 * s
       mouth = "smile"
+    elif expr == EXPR_DRIVING:
+      # 기본 주행 표정: 10가지 얼굴 변형 중 지금 뽑힌 것
+      v = self._idle_variant
+      if v == "look_left":
+        pupil_dx = -60.0 * s
+      elif v == "look_right":
+        pupil_dx = 60.0 * s
+      elif v == "look_up":
+        pupil_dy = -50.0 * s
+      elif v == "look_down":
+        pupil_dy = 40.0 * s
+        mouth = "calm"
+      elif v == "wink_left":
+        lid_l, lid_r = 0.1, 1.0
+      elif v == "wink_right":
+        lid_l, lid_r = 1.0, 0.1
+      elif v == "sleepy":
+        lid = 0.55
+        mouth = "calm"
+      elif v == "surprised":
+        pupil_dy = -20.0 * s
+        pupil_r = 75.0 * s
+        mouth = "o"
+      elif v == "big_smile":
+        mouth = "open"
+      # "normal"은 기본값 그대로 (눈동자 가운데, 미소)
     elif expr == EXPR_REVERSE:
       pupil_dx, pupil_dy = 30.0 * s, -50.0 * s
     elif expr == EXPR_AUTOHOLD or expr == EXPR_PARK:
@@ -363,6 +419,14 @@ class MochiSaver:
 
     blink = self._blink_scale(t)
     lid = min(lid, blink)
+    if lid_l is None:
+      lid_l = lid
+    else:
+      lid_l = min(lid_l, blink)
+    if lid_r is None:
+      lid_r = lid
+    else:
+      lid_r = min(lid_r, blink)
 
     # 눈 (좌·우) — 후진 R / 주차 P는 눈동자 대신 눈 안에 큰 글자
     eye_letter = None
@@ -373,7 +437,8 @@ class MochiSaver:
     for side in (-1, 1):
       ex = cx + side * eye_dx + jx
       ey = face_cy + eye_y + jy
-      self._draw_eye(ex, ey, eye_r, lid, pupil_dx, pupil_dy, pupil_r, t, expr, side, eye_letter)
+      eye_lid = lid_l if side < 0 else lid_r
+      self._draw_eye(ex, ey, eye_r, eye_lid, pupil_dx, pupil_dy, pupil_r, t, expr, side, eye_letter)
 
     # 입
     self._draw_mouth(cx, face_cy + mouth_y, mouth, s, t)
