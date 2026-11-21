@@ -344,6 +344,11 @@ class GMFlags(IntFlag):
   NO_CAMERA = 4
   NO_ACCELERATOR_POS_MSG = 8
   SPEED_RELATED_MSG = 16
+  # Carrot Web ChevroletSteerFF choice these CarParams were built with (opendbc.car.interfaces): at most one is set.
+  # Kept in CarParams so an interface rebuilt from saved CarParams (controlsd) always matches their lateral tuning.
+  STEER_FF_TRAILBLAZER_NNFF = 256
+  STEER_FF_VOLT_NNFF = 512
+  STEER_FF_VOLT_LINEAR = 1024
 
 
 # In a Data Module, an identifier is a string used to recognize an object,

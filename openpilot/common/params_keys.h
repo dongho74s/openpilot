@@ -437,6 +437,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DevicePosition", {CLEAR_ON_MANAGER_START, STRING}},
     {"NNFF", {PERSISTENT, INT, "0"}},
     {"NNFFLite", {PERSISTENT, INT, "0"}},
+    {"ChevroletSteerFF", {PERSISTENT, INT, "0"}},
     {"NNFFModelName", {CLEAR_ON_OFFROAD_TRANSITION, STRING}},
 
     {"HardwareC3xLite", {PERSISTENT, INT, "0"}},

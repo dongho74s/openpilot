@@ -35,6 +35,9 @@ class MemoryParams:
   def put_nonblocking(self, key, value):
     self.values[key] = value
 
+  def remove(self, key):
+    self.values.pop(key, None)
+
 
 class IsolatedGMInterface(gm_interface.CarInterface):
   # No CAN parsing, transmitting or device access in the integration fixture.

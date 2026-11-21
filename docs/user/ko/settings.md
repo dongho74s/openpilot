@@ -210,7 +210,7 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 | 조향감 | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate`, `LateralAccelLimit`, `LatJerkMax` | 조향 시점, 평활화, 일시중지 각도, 조향비, 횡가속도·횡저크 상한 |
 | [차로 변경](lane-change.md)·자동 턴 | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | 차로 변경 진입 조건과 ATC 동작 |
 | 레인모드 | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | 레인모드 MPC 가중치와 차선 사용 조건 |
-| 고급 토크·토크 계수 | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | 커스텀 토크 제어 계수 |
+| 고급 토크·토크 계수 | `ChevroletSteerFF`, `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | 커스텀 토크 제어 계수 |
 | 고급 토크·검색 전용 | `NNFF` | 토크 조향의 신경망 피드포워드 옵션 |
 | 고급 토크·조향 제한 | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | 최대 조향 토크와 토크 변화율 제한 |
 
@@ -298,6 +298,19 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 `NNFF`는 기본값이 꺼짐인 신경망 피드포워드 옵션입니다. 켜면 조향각 제어가 아닌 차량에 토크 제어 튜닝을 사용하며, 대응 모델이 있으면 NNFF를 적용합니다. comma 자체 NNFF 지원 차종은 기존 자체 경로가 우선하고(쉐보레 볼트 EUV·볼트 2017-18은 FrogPilot처럼 NNFF가 우선, 볼트 No-ACC는 볼트 EUV 모델로 NNFF가 우선), 조향각 제어 차량에는 적용되지 않습니다.
 
 끄면 이 NNFF 옵션을 사용하지 않으며 별도 `NNFFLite` 값은 바꾸지 않습니다. 변경은 다음 주행 시작 또는 기기 재부팅 후 적용되며, 주행 중 즉시 바뀌지 않습니다. 시작 안내 문구가 보이지 않는 것만으로 적용 여부를 판단하지 마세요.
+
+#### 쉐보레 조향 앞먹임 선택
+
+`ChevroletSteerFF`(고급 토크 › 토크 계수, 2026-11-21)는 쉐보레 차종(`CHEVROLET_` 지문)의 조향 토크 앞먹임을 고릅니다. 다른 브랜드에서는 메뉴에 보이지 않고, GMC·뷰익·캐딜락은 저장해도 아무것도 바뀌지 않습니다.
+
+- `0 기본`: 지금처럼 `NNFF` 토글과 차종별 모델(위 설명의 대체 모델 포함)을 따릅니다. 기본값입니다.
+- `1 트블 NNFF`: 트레일블레이저 NNFF 모델을 씁니다. 트래버스가 기본으로 쓰는 모델입니다.
+- `2 볼트 NNFF`: 볼트 2017-18 NNFF 모델을 씁니다.
+- `3 볼트 선형`: NNFF 없이 볼트 2017-18 토크 상수(횡가속 계수 1.596, 마찰 0.157)로 일반 토크 제어를 합니다. 업스트림과 StarPilot이 말리부에 쓰는 값입니다. 콤마 자체 NN과 볼트·실버라도용 곡선 근사도 쓰지 않습니다. NNFF가 아니므로 위의 FrogPilot NNFF 계산(학습 지연 반영, 마찰 보정 없음, 목표 횡가속 상한 3.0 등)도 쓰지 않고 일반 차량과 같은 토크 제어를 합니다. `NNFFLite`는 켜 두었으면 그대로 적용됩니다.
+
+1·2·3은 `NNFF` 토글과 관계없이 적용되고 콤마 자체 NN보다 우선합니다. 1·2를 고르면 시작 안내에 `CHEVROLET TRAILBLAZER (selected)`나 `CHEVROLET VOLT (selected)`가 나오고 3은 안내가 없습니다. 차량 설정을 시작할 때 읽으므로 바꾼 뒤 재부팅해야 적용됩니다. `LateralTorqueCustom`을 켜면 그 값이 횡가속 계수와 마찰을 덮어씁니다. 트레일블레이저만 쓰는 저속 오차 블렌드 조정은 어떤 모델을 골라도 트레일블레이저(CHEVROLET_TRAILBLAZER)에서 NNFF로 달릴 때 적용됩니다.
+
+이 설정을 만든 이유: 2026-11-21 말리부 ASCM 하네스 로그(85~94 km/h)에서 차가 차선 안에서 약 10초 주기로 좌우로 흔들렸습니다. 토크가 3초 동안 0.12에서 0.25로 올라도 핸들각이 그대로 있다가, 토크를 풀자 한 번에 넘어갔습니다. 두 모델을 같은 입력으로 돌려 보면 일정하게 꺾는 힘은 10% 안쪽으로 비슷하지만, 목표와 어긋났을 때 마찰을 넘기는 힘은 트블 모델이 볼트 모델의 1/4~1/6입니다. 같은 날 트래버스 고속 구간(77~98 km/h)도 핸들이 버티는 비율이 비슷했습니다(43~60%, 말리부 46%). 어느 선택이 각 차에 나은지는 실차로 비교하지 않았습니다.
 
 #### 운전자 개입 후 조향 복구
 

@@ -214,7 +214,7 @@ With `NavigationSetSpeed` enabled, `WIP-FR` SET engagement uses the greater of c
 | Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate`, `LateralAccelLimit`, `LatJerkMax` | Timing, smoothing, suspension angle, steering ratio, lateral acceleration and jerk limits |
 | [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
-| Advanced torque | `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
+| Advanced torque | `ChevroletSteerFF`, `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
 | Advanced torque, search only | `NNFF` | Neural-network feedforward for torque steering |
 | Steering limits | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | Maximum torque and torque-rate limits |
 
@@ -303,6 +303,19 @@ The car choice `Chevrolet Malibu ASCM Harness 2017-19` (CHEVROLET_MALIBU_ASCM) i
 `NNFF` is a neural-network feedforward option that defaults to off. Enabling selects torque-controller tuning on vehicles without angle control and uses NNFF when a matching model is available. Vehicles supported by comma's own NNFF retain that path's precedence, except the Chevrolet Bolt EUV and Volt 2017-18, where NNFF comes first as in FrogPilot, and the Bolt No-ACC, where NNFF comes first with the Bolt EUV model; angle-control vehicles are unaffected.
 
 Disabling turns off this NNFF option without changing the separate `NNFFLite` value. Changes apply at the next onroad start or after a device reboot, rather than immediately during a drive. An absent startup notice alone does not establish whether NNFF is active.
+
+#### Chevrolet steering feedforward
+
+`ChevroletSteerFF` (Advanced torque › Torque coefficients, 2026-11-21) chooses the steering torque feedforward on Chevrolets (`CHEVROLET_` fingerprints). Other brands do not see it in the menu, and on a GMC, Buick or Cadillac the saved value changes nothing.
+
+- `0 Default`: follows the `NNFF` toggle and each car's model (including the substitutes above), as before. This is the default.
+- `1 Trailblazer NNFF`: the Trailblazer NNFF model, the one the Traverse uses by default.
+- `2 Volt NNFF`: the Volt 2017-18 NNFF model.
+- `3 Volt linear`: no NNFF; plain torque control with the Volt 2017-18 torque values (lateral accel factor 1.596, friction 0.157), the values upstream and StarPilot use for the Malibu. It does not use comma's own NN or the Bolt/Silverado curve fits either. As it is not NNFF, the FrogPilot NNFF calculation above (learned delay, no friction term, the 3.0 lateral accel cap and so on) does not apply and the torque control is the same as on other cars. `NNFFLite` still applies when it is on.
+
+1, 2 and 3 apply whatever the `NNFF` toggle says and come before comma's own NN. With 1 or 2 the startup notice shows `CHEVROLET TRAILBLAZER (selected)` or `CHEVROLET VOLT (selected)`; 3 shows none. It is read when the car settings start, so reboot after changing it. With `LateralTorqueCustom` on, its values override the lateral accel factor and friction. The Trailblazer-only low-speed error blend still applies on the Trailblazer (CHEVROLET_TRAILBLAZER) running NNFF whichever model is chosen.
+
+Why: in a 2026-11-21 Malibu ASCM harness log (85-94 km/h) the car weaved in its lane with a period of about 10 s. The torque rose from 0.12 to 0.25 over 3 s while the wheel stayed put, then the wheel let go all at once when the torque eased. Run on the same inputs, the two models give steady steering torque within about 10% of each other, but when the car is off target the Trailblazer model pushes through friction with 1/4-1/6 of the Volt model's torque. Highway segments of the Traverse the same day held the wheel against torque about as often (43-60%, Malibu 46%). Which choice suits each car has not been compared on the road.
 
 #### Steering recovery after driver intervention
 

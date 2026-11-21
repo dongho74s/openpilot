@@ -205,6 +205,7 @@
                   "zh": "扭矩系数",
                   "params": [
                     "NNFF",
+                    "ChevroletSteerFF",
                     "LateralTorqueCustom",
                     "LateralTorqueAccelFactor",
                     "LateralTorqueFriction",
@@ -820,6 +821,26 @@
       "control": "toggle",
       "risk": "high",
       "search_only": true
+    },
+    {
+      "group": "조향토크",
+      "name": "ChevroletSteerFF",
+      "title": "쉐보레 조향 앞먹임 선택",
+      "descr": "쉐보레 차종의 조향 토크 앞먹임(피드포워드)을 고릅니다. 다른 차종은 저장해도 아무것도 바뀌지 않습니다.\n0: 기본 - 지금처럼 NNFF 토글과 차종별 모델을 따릅니다.\n1: 트블 NNFF - 트레일블레이저 NNFF 모델(트래버스가 쓰는 모델).\n2: 볼트 NNFF - 볼트 2017-18 NNFF 모델. 일정하게 꺾는 힘은 트블 모델과 10% 안쪽으로 비슷하고, 목표와 어긋났을 때 마찰을 넘기는 힘이 4~6배 셉니다.\n3: 볼트 선형 - NNFF 없이 볼트 2017-18 토크 상수(횡가속 계수 1.596, 마찰 0.157)로 일반 토크 제어를 합니다. 업스트림과 StarPilot이 말리부에 쓰는 값이며, FrogPilot과 같은 NNFF 계산(학습 지연 반영, 목표 횡가속 상한 3.0 등)도 쓰지 않습니다.\n1·2·3은 NNFF 토글과 관계없이 적용되고 콤마 자체 NN보다 우선합니다. 차량 설정을 시작할 때 읽으므로 바꾼 뒤 재부팅해야 적용됩니다. 어느 쪽이 나은지는 아직 실차로 비교하지 않았습니다.",
+      "egroup": "LAT_TQ",
+      "etitle": "Chevrolet steering feedforward",
+      "edescr": "Chooses the steering torque feedforward on Chevrolets; on other cars the saved value changes nothing.\n0: Default - follows the NNFF toggle and each car's model, as before.\n1: Trailblazer NNFF - the Trailblazer NNFF model (the one the Traverse uses).\n2: Volt NNFF - the Volt 2017-18 NNFF model. Its steady steering torque is within about 10% of the Trailblazer model's, and it pushes 4-6x harder through friction when the car is off target.\n3: Volt linear - no NNFF; plain torque control with the Volt 2017-18 torque values (lateral accel factor 1.596, friction 0.157), the values upstream and StarPilot use for the Malibu, without FrogPilot's NNFF calculation (learned delay, 3.0 lateral accel cap and so on).\n1, 2 and 3 apply whatever the NNFF toggle says and come before comma's own NN. Read when the car settings start, so reboot after changing it. Which works better has not been compared in a real car yet.",
+      "cgroup": "转向",
+      "ctitle": "雪佛兰转向前馈选择",
+      "cdescr": "选择雪佛兰车型的转向扭矩前馈；其他车型保存后不改变任何内容。\n0：默认 - 与以前相同，跟随 NNFF 开关和各车型的模型。\n1：Trailblazer NNFF - Trailblazer 的 NNFF 模型（Traverse 使用的模型）。\n2：Volt NNFF - Volt 2017-18 的 NNFF 模型。稳定转向扭矩与 Trailblazer 模型相差约 10% 以内，偏离目标时克服摩擦的力度强 4~6 倍。\n3：Volt 线性 - 不使用 NNFF，以 Volt 2017-18 扭矩常数（横向加速度系数 1.596，摩擦 0.157）进行普通扭矩控制，即上游和 StarPilot 用于 Malibu 的数值，也不使用 FrogPilot 的 NNFF 计算（学习延迟、目标横向加速度上限 3.0 等）。\n1、2、3 不受 NNFF 开关影响，并优先于 comma 自有 NN。在车辆设置启动时读取，修改后需重启生效。哪种更好尚未在实车上比较。",
+      "hidden_brands": ["body", "chrysler", "ford", "honda", "hyundai", "mazda", "nissan", "psa", "rivian", "subaru", "tesla", "toyota", "volkswagen"],
+      "min": 0,
+      "max": 3,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {"ko": ["0 기본", "1 트블 NNFF", "2 볼트 NNFF", "3 볼트 선형"], "en": ["0 Default", "1 Trailblazer NNFF", "2 Volt NNFF", "3 Volt linear"], "zh": ["0 默认", "1 Trailblazer NNFF", "2 Volt NNFF", "3 Volt 线性"]},
+      "risk": "high"
     },
     {
       "group": "조향토크",

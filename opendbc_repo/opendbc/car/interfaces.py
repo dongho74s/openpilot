@@ -19,6 +19,7 @@ from opendbc.car.common.basedir import BASEDIR
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.simple_kalman import KF1D, get_kalman_gain
 from opendbc.car.values import PLATFORMS
+from opendbc.car.gm.values import GMFlags
 from opendbc.car.radar_tracks import MyTrack as MyTrack, estimate_radar_jerk as estimate_radar_jerk
 from opendbc.can import CANParser
 
@@ -52,6 +53,41 @@ NNFF_MODEL_SUBSTITUTES = {**{car: "CHEVROLET_TRAILBLAZER" for car in TRAILBLAZER
 # NNFF whenever it has a model; user request 2026-11-15). Every other car with comma's NN keeps comma's path.
 # The Bolt CC and the Bolt ACC with pedal join them with their substitute model (user request 2026-11-17).
 NNFF_OVER_COMMA_NN = ("CHEVROLET_BOLT_EUV", "CHEVROLET_VOLT", "CHEVROLET_BOLT_CC", "CHEVROLET_BOLT_ACC_PEDAL")
+
+# Chevrolet steering feed-forward choice (Carrot Web ChevroletSteerFF, user request 2026-11-21). 0 keeps the NNFF toggle
+# and the per-car models above. 1 and 2 run NNFF with the Trailblazer or the Volt 2017-18 model whatever the NNFF toggle
+# says, ahead of comma's own NN. 3 runs the plain torque controller with the Volt 2017-18 torque values and no NNFF or
+# comma NN: the values upstream and StarPilot give the Malibus. Why: in a 2026-11-21 Malibu ASCM rlog the steering held
+# while the torque rose and then let go, and the Trailblazer model answers a lateral accel error with 1/4-1/6 of the
+# Volt model's friction torque (steady torque within about 10%). Only CHEVROLET_ platforms; read when the car starts.
+CHEVROLET_STEER_FF_PARAM = "ChevroletSteerFF"
+CHEVROLET_STEER_FF_NNFF_MODELS = {1: "CHEVROLET_TRAILBLAZER", 2: "CHEVROLET_VOLT"}
+CHEVROLET_STEER_FF_LINEAR = 3
+CHEVROLET_STEER_FF_LINEAR_TORQUE = "CHEVROLET_VOLT"
+# get_params() records the choice in CarParams.flags; the interface reads it back from there, never from the live
+# setting, because controlsd rebuilds the interface from the saved CarParams and the user may have changed the setting
+# since (Codex review 2026-11-21: 0 -> 3 left the Traverse torque values under the linear path).
+CHEVROLET_STEER_FF_FLAGS = {1: GMFlags.STEER_FF_TRAILBLAZER_NNFF, 2: GMFlags.STEER_FF_VOLT_NNFF,
+                            3: GMFlags.STEER_FF_VOLT_LINEAR}
+
+
+def get_chevrolet_steer_ff(car) -> int:
+  """The Carrot Web steering feed-forward choice that applies to this car: 0 (default) unless it is a Chevrolet."""
+  if not str(car).startswith("CHEVROLET_"):
+    return 0
+  try:
+    choice = Params().get_int(CHEVROLET_STEER_FF_PARAM)
+  except Exception:  # an unknown key (params not rebuilt yet) must never stop the car interface from starting
+    return 0
+  return choice if choice in (*CHEVROLET_STEER_FF_NNFF_MODELS, CHEVROLET_STEER_FF_LINEAR) else 0
+
+
+def chevrolet_steer_ff_from_cp(CP) -> int:
+  """The choice these CarParams were built with; 0 unless a Chevrolet carries exactly one choice flag."""
+  if not str(CP.carFingerprint).startswith("CHEVROLET_"):
+    return 0
+  chosen = [choice for choice, flag in CHEVROLET_STEER_FF_FLAGS.items() if CP.flags & flag]
+  return chosen[0] if len(chosen) == 1 else 0
 
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'torque_data/override.toml')
@@ -332,13 +368,25 @@ class CarInterfaceBase(ABC):
     Params().put_int('LongitudinalPersonalityMax', 3)
     eps_firmware = str(next((fw.fwVersion for fw in CP.carFw if fw.ecu == "eps"), ""))
 
-    comma_nnff_supported = self.check_comma_nn_ff_support(CP.carFingerprint)
-    nnff_supported = self.initialize_lat_torque_nn(CP.carFingerprint, eps_firmware)
+    # The choice CP was built with, not the live setting; the GM interface's torque_from_lateral_accel() reads it too.
+    self.chevrolet_steer_ff = chevrolet_steer_ff_from_cp(CP)
+    if self.chevrolet_steer_ff in CHEVROLET_STEER_FF_NNFF_MODELS:
+      model_name = CHEVROLET_STEER_FF_NNFF_MODELS[self.chevrolet_steer_ff]
+      self.lat_torque_nn_model = FluxModel(os.path.join(TORQUE_NN_MODEL_PATH, f"{model_name}.json"))
+      self.use_nnff = True
+      self.use_nnff_lite = False
+    elif self.chevrolet_steer_ff == CHEVROLET_STEER_FF_LINEAR:
+      self.lat_torque_nn_model = None
+      self.use_nnff = False
+      self.use_nnff_lite = Params().get_bool("NNFFLite")
+    else:
+      comma_nnff_supported = self.check_comma_nn_ff_support(CP.carFingerprint)
+      nnff_supported = self.initialize_lat_torque_nn(CP.carFingerprint, eps_firmware)
 
-    comma_first = comma_nnff_supported and CP.carFingerprint not in NNFF_OVER_COMMA_NN
-    self.use_nnff = not comma_first and nnff_supported and Params().get_bool("NNFF")
-    self.use_nnff_lite = not self.use_nnff and Params().get_bool("NNFFLite")
-    
+      comma_first = comma_nnff_supported and CP.carFingerprint not in NNFF_OVER_COMMA_NN
+      self.use_nnff = not comma_first and nnff_supported and Params().get_bool("NNFF")
+      self.use_nnff_lite = not self.use_nnff and Params().get_bool("NNFFLite")
+
   def get_ff_nn(self, x):
     return self.lat_torque_nn_model.evaluate(x)
 
@@ -388,7 +436,18 @@ class CarInterfaceBase(ABC):
     ret = cls._get_params(ret, candidate, fingerprint, car_fw, alpha_long, is_release, docs)
    
     # Enable torque controller for all cars that do not use angle based steering
-    if ret.steerControlType != structs.CarParams.SteerControlType.angle and Params().get_bool("NNFF"):
+    steer_ff = get_chevrolet_steer_ff(candidate)
+    if steer_ff and ret.steerControlType != structs.CarParams.SteerControlType.angle:
+      ret.flags |= int(CHEVROLET_STEER_FF_FLAGS[steer_ff])   # the interface reads the choice back from CarParams
+    if ret.steerControlType != structs.CarParams.SteerControlType.angle and steer_ff == CHEVROLET_STEER_FF_LINEAR:
+      # No NNFF: the torque controller with the Volt 2017-18 latAccelFactor and friction. Drop any model name an
+      # earlier build left, so the screen shows no NNFF and no startup notice (Codex review)
+      CarInterfaceBase.configure_torque_tune(CHEVROLET_STEER_FF_LINEAR_TORQUE, ret.lateralTuning)
+      Params().remove("NNFFModelName")
+    elif ret.steerControlType != structs.CarParams.SteerControlType.angle and steer_ff in CHEVROLET_STEER_FF_NNFF_MODELS:
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+      Params().put_nonblocking("NNFFModelName", f"{CHEVROLET_STEER_FF_NNFF_MODELS[steer_ff].replace('_', ' ')} (selected)")
+    elif ret.steerControlType != structs.CarParams.SteerControlType.angle and Params().get_bool("NNFF"):
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
       eps_firmware = str(next((fw.fwVersion for fw in car_fw if fw.ecu == "eps"), ""))
       model = get_nn_model_path(candidate, eps_firmware, allow_substitute=True)
