@@ -102,7 +102,7 @@ def test_gap_cycle_setting_is_registered_and_in_gap_menu(settings):
 
 def test_rear_camera_hold_uses_meter_values_and_persistent_default(settings, params):
   hold = next(p for p in params if p["name"] == "AutoNaviRearCameraHoldDistance")
-  assert (hold["min"], hold["max"], hold["default"], hold["unit"]) == (0, 300, 100, 10)
+  assert (hold["min"], hold["max"], hold["default"], hold["unit"]) == (0, 300, 100, 1)
   assert '"AutoNaviRearCameraHoldDistance", {PERSISTENT, INT, "100"}' in PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
   speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
@@ -467,7 +467,7 @@ def test_vehicle_navi_can_control_exposes_route_filter_modes(settings, params):
 def test_speed_bump_early_release_distance_is_exposed_in_centimeters(settings, params):
   by_name = {p["name"]: p for p in params}
   distance = by_name["AutoNaviSpeedBumpEndDistance"]
-  assert (distance["min"], distance["max"], distance["default"], distance["unit"]) == (0, 5000, 200, 10)
+  assert (distance["min"], distance["max"], distance["default"], distance["unit"]) == (0, 5000, 200, 1)
   assert distance["display_unit"] == "distanceCm"
   assert distance["risk"] == "high"
 
@@ -616,6 +616,8 @@ def test_cluster_camera_preference_is_in_brightness_and_view(settings, params):
   brightness = next(group for group in display["groups"] if group["id"] == "DISP_BRIGHT")
   assert brightness["params"] == [
     "ShowCustomBrightness",
+    "OnroadMinimalMode",
+    "OnroadMochiMode",
     "ShowModelView",
     "ShowCameraWithCluster",
   ]
@@ -729,7 +731,7 @@ def test_declared_numeric_bounds_stay_intact(params):
   by_name = {p["name"]: p for p in params}
   assert (by_name["ApplyModelSpeed"]["min"], by_name["ApplyModelSpeed"]["max"]) == (-120, 120)
   assert by_name["ApplyModelSpeed"]["default"] == 0
-  assert by_name["TFollowDecelBoost"]["unit"] == 10
+  assert by_name["TFollowDecelBoost"]["unit"] == 1  # 1% steps, not 10%
 
 
 def test_live_geometry_has_zero_default_and_no_enable_switch(settings, params):
