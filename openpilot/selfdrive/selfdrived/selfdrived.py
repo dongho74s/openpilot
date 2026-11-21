@@ -133,6 +133,7 @@ class SelfdriveD:
     self.mismatch_counter = 0
     self.vehicle_fault_monitor = VehicleFaultMonitor()
     self.cruise_mismatch_counter = 0
+    self.locationd_invalid_counter = 0
     self.last_steering_pressed_frame = 0
     self.distance_traveled = 0
     self.last_functional_fan_frame = 0
@@ -509,7 +510,16 @@ class SelfdriveD:
           if EventName.selfdriveInitializing not in self.events.names:
             self.events.add(EventName.selfdriveInitializing)
         else:
-          self.events.add(EventName.locationdTemporaryError)
+          # Debounce: one dropped camera frame makes inputsOK False for ~50ms
+          # (modeld runs ~45ms of its 50ms budget, so a scheduling jitter drops
+          # a frame), which used to soft-disable immediately. Only alert after
+          # 0.5s of sustained invalid input; a truly dead locationd is still
+          # caught (and commIssue fires separately when its messages stop).
+          self.locationd_invalid_counter += 1
+          if self.locationd_invalid_counter > int(0.5 / DT_CTRL):
+            self.events.add(EventName.locationdTemporaryError)
+      else:
+        self.locationd_invalid_counter = 0
       if (self.sm.seen['liveParameters'] and not self.sm['liveParameters'].valid and cal_status == log.LiveCalibrationData.Status.calibrated
           and not TESTING_CLOSET and (not SIMULATION or REPLAY)):
         self.events.add(EventName.paramsdTemporaryError)

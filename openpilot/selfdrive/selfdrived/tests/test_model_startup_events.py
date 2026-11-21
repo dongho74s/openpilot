@@ -26,7 +26,7 @@ def load_policy():
   wrapper = ast.parse('def check(self): pass')
   wrapper.body[0].body = method.body[start:end] + [pose]
   ns = {'EventName': EventName, 'log': log, 'cal_status': log.LiveCalibrationData.Status.calibrated,
-        'TESTING_CLOSET': False, 'SIMULATION': False, 'REPLAY': False}
+        'TESTING_CLOSET': False, 'SIMULATION': False, 'REPLAY': False, 'DT_CTRL': 0.01}
   exec(compile(ast.fix_missing_locations(wrapper), '<startup event policy>', 'exec'), ns)
   return ns['check']
 
@@ -82,7 +82,7 @@ class Messages(dict):
 
 def drive(*, valid=False, healthy=False, settling=True, enabled=False):
   return SimpleNamespace(sm=Messages(valid=valid, healthy=healthy), events=Events(), enabled=enabled, model_startup_complete=False,
-                         CP=SimpleNamespace(notCar=False), _big_model_settling=lambda: settling)
+                         CP=SimpleNamespace(notCar=False), _big_model_settling=lambda: settling, locationd_invalid_counter=0)
 
 
 def test_cold_model_startup_blocks_enable_until_downstream_readiness():
@@ -154,11 +154,30 @@ def test_pose_sensor_or_sanity_failure_is_not_relabelled_as_startup(field):
   state = drive(valid=True, healthy=True)
   state.sm['livePose'].inputsOK = False
   setattr(state.sm['livePose'], field, False)
-  load_policy()(state)
+  check = load_policy()
+  # Sustained failure (0.6s) must still raise locationdTemporaryError.
+  for _ in range(60):
+    check(state)
   assert EventName.locationdTemporaryError in state.events
   assert EventName.selfdriveInitializing not in state.events
   if field == 'posenetOK':
     assert EventName.posenetInvalid in state.events
+
+
+def test_single_frame_pose_glitch_is_debounced():
+  # One dropped camera frame makes inputsOK False for ~50ms; that alone
+  # must not raise locationdTemporaryError.
+  state = drive(valid=True, healthy=True)
+  state.sm['livePose'].inputsOK = False
+  state.sm['livePose'].sensorsOK = False
+  check = load_policy()
+  check(state)
+  assert EventName.locationdTemporaryError not in state.events
+  assert EventName.selfdriveInitializing not in state.events
+  # But a sustained failure (0.6s) must still alert.
+  for _ in range(60):
+    check(state)
+  assert EventName.locationdTemporaryError in state.events
 
 
 def test_settling_ends_five_seconds_after_loading_finishes():
