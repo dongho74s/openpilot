@@ -171,20 +171,16 @@ class ModelRenderer(Widget):
     # self._draw_path(sm)
     # self._draw_lead_indicator()
     self._draw_carrot_overlays(sm)
-    # 최소 모드(기기 화면만): 정지선·신호등 정지 표시 등 정보 오버레이 숨김.
-    if not self._carrot_minimal_mode:
-      from openpilot.selfdrive.ui.stop_object import draw_stop_object
-      draw_stop_object(self, sm, started_frame=ui_state.started_frame)
+    from openpilot.selfdrive.ui.stop_object import draw_stop_object
+    draw_stop_object(self, sm, started_frame=ui_state.started_frame)
 
   def _draw_carrot_overlays(self, sm) -> None:
     timing = self._render_diagnostics
     timing.start()
     timing.call('path', self._draw_path_carrot, sm)
     timing.call('lanes', self._draw_lane_lines_carrot, sm)
-    # 최소 모드(기기 화면만): 사각지대·레이더 정보 숨김 (경로·차선만 표시).
-    if not self._carrot_minimal_mode:
-      timing.call('blindspot', self._draw_blind_spot_carrot, sm)
-      timing.call('radar', self._draw_radar_info_carrot, sm)
+    timing.call('blindspot', self._draw_blind_spot_carrot, sm)
+    timing.call('radar', self._draw_radar_info_carrot, sm)
     timing.values['native_draw'] = float(native_draw.active())
     timing.values['native_geometry'] = float(native_geometry.active())
     timing.values['native_text'] = float(native_text.active())
@@ -442,8 +438,6 @@ class ModelRenderer(Widget):
     self._carrot_long_active = False
     self._carrot_use_lane_line_speed_apply = 0
     self._carrot_tire_trajectory = 0
-    # 주행 화면 최소 모드 (기기 화면만, 외부 HUD는 건드리지 않음).
-    self._carrot_minimal_mode = 0
 
     self._carrot_path_draw_seq = 0.0
     self._carrot_path_draw_seq2 = -1
@@ -511,7 +505,6 @@ class ModelRenderer(Widget):
     self._carrot_show_path_color_lane = ui_state.params.get_int("ShowPathColorLane")
     self._carrot_show_path_color_cruise_off = ui_state.params.get_int("ShowPathColorCruiseOff")
     self._carrot_tire_trajectory = ui_state.params.get_int("CarrotTireTrajectory")
-    self._carrot_minimal_mode = ui_state.params.get_int("OnroadMinimalMode")
     self._carrot_params_next_refresh_time = now + CARROT_PARAM_REFRESH_INTERVAL
 
 
@@ -892,8 +885,7 @@ class ModelRenderer(Widget):
                          25, rl.Color(255, 255, 255, 255), align="left", y_offset=0.0)
 
   def _draw_lane_lines_carrot(self, sm):
-    # 최소 모드에서는 ShowLaneInfo 값과 무관하게 차선을 항상 표시한다.
-    if self._carrot_show_lane_info < 1 and not self._carrot_minimal_mode:
+    if self._carrot_show_lane_info < 1:
       return
     if not sm.valid['modelV2'] or not sm.valid['carState']:
       return
@@ -1520,9 +1512,7 @@ class ModelRenderer(Widget):
     else:
       self._draw_animated_path_carrot(sm, show_path_mode, show_path_color, brake_valid)
 
-    # 최소 모드(기기 화면만): 경로 끝 표시 숨김. 타이어 궤적은 최소 모드에서 강제 표시.
-    if not self._carrot_minimal_mode:
-      self._render_diagnostics.call('path_labels', self._draw_path_end_overlay_carrot)
+    self._render_diagnostics.call('path_labels', self._draw_path_end_overlay_carrot)
     self._render_diagnostics.call('tire', self._draw_tire_trajectory_carrot, sm)
 
   @staticmethod
@@ -1545,10 +1535,8 @@ class ModelRenderer(Widget):
     """타이어 궤적: 모델 예측 경로 위에 차폭(±0.9m) 타이어 트랙을 그라데이션 밴드로 그리고,
     차선 중앙 대비 편차(danger_ratio)에 따라 초록->빨강으로 색을 바꾼다. 이탈 임박 시 펄스.
     하단에 L/R/C 방향 + 편차(m) 표시. CarrotTireTrajectory 토글로만 노출된다.
-    단, 최소 모드(OnroadMinimalMode)가 켜져 있으면 CarrotTireTrajectory 파라미터 값과
-    무관하게 항상 표시한다 (최소 모드의 주행 경로선은 타이어 궤적이다).
     """
-    if self._carrot_tire_trajectory <= 0 and not self._carrot_minimal_mode:
+    if self._carrot_tire_trajectory <= 0:
       return
     if not sm.valid['modelV2']:
       return
