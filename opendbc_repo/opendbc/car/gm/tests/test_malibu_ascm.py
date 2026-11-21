@@ -53,15 +53,16 @@ def test_chosen_from_the_car_list_and_never_fingerprinted(runtime):
   assert MALIBU_ASCM.config.specs == CAR.CHEVROLET_MALIBU.config.specs
 
 
-@pytest.mark.parametrize("alpha", [False, True])
-@pytest.mark.parametrize("sascm", [False, True])
+@pytest.mark.parametrize("alpha,sascm", [(False, False), (True, False), (False, True)])
 def test_car_params_keep_the_stock_acc_and_forward_like_a_camera(runtime, alpha, sascm):
+  # The stock ACC unless a SASCM is fitted and alpha longitudinal is turned on
   cp = malibu_cp(runtime, alpha, sascm=sascm)
   assert cp.networkLocation == structs.CarParams.NetworkLocation.fwdCamera
   assert cp.safetyConfigs[0].safetyParam == int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT)
   assert cp.pcmCruise
   assert not cp.openpilotLongitudinalControl
-  assert not cp.alphaLongitudinalAvailable
+  # offered (StarPilot ASCM_INT) only with the SASCM's 0x2FF on the powertrain bus
+  assert cp.alphaLongitudinalAvailable == sascm
   # The ASCM sends no AEBCmd; it still sends the LKAS frame openpilot syncs to, so this is no camera-less car
   assert not cp.flags & GMFlags.NO_CAMERA.value
   assert not cp.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value
@@ -73,12 +74,60 @@ def test_car_params_keep_the_stock_acc_and_forward_like_a_camera(runtime, alpha,
 
 
 def test_a_pedal_frame_does_not_turn_on_openpilot_longitudinal(runtime):
-  # The common GM pedal branch would make it a pedal-long car; this one keeps the stock ACC only
+  # The common GM pedal branch would make it a pedal-long car; this one never takes the pedal path
   for alpha in (False, True):
-    cp = malibu_cp(runtime, alpha, pedal=True)
+    cp = malibu_cp(runtime, alpha, sascm=False, pedal=True)
     assert cp.pcmCruise and not cp.openpilotLongitudinalControl and not cp.enableGasInterceptorDEPRECATED
     assert cp.safetyConfigs[0].safetyParam == int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT)
     assert not cp.flags & GMFlags.PEDAL_LONG.value
+  # with a SASCM and alpha long it is the SASCM path, still without the pedal interceptor
+  cp = malibu_cp(runtime, True, pedal=True)
+  assert cp.openpilotLongitudinalControl and not cp.enableGasInterceptorDEPRECATED
+  assert not cp.safetyConfigs[0].safetyParam & (GMSafetyFlags.GAS_INTERCEPTOR | GMSafetyFlags.HW_ASCM_LONG)
+  assert not cp.flags & GMFlags.PEDAL_LONG.value
+
+
+ASCM_INT_LONG = int(GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_ASCM_INT | GMSafetyFlags.HW_CAM_LONG)
+
+
+@pytest.mark.parametrize("accel_pos", [True, False])
+def test_sascm_with_alpha_long_runs_openpilot_longitudinal(runtime, accel_pos):
+  """User request 2026-11-21 (the friend's Malibu has a SASCM): StarPilot's ASCM_INT alpha long."""
+  cp = malibu_cp(runtime, True, accel_pos=accel_pos)
+  assert cp.alphaLongitudinalAvailable and cp.openpilotLongitudinalControl and not cp.pcmCruise
+  c9 = 0 if accel_pos else int(GMSafetyFlags.ASCM_INT_C9_BRAKE)
+  assert cp.safetyConfigs[0].safetyParam == ASCM_INT_LONG | c9
+  assert cp.networkLocation == structs.CarParams.NetworkLocation.fwdCamera
+  assert not cp.flags & GMFlags.NO_CAMERA.value
+  # the tuning of the same car with openpilot in place of the ASCM (CHEVROLET_MALIBU)
+  premier = runtime.interface.CarInterface.get_params(CAR.CHEVROLET_MALIBU, malibu_fingerprint(), [], True, True, False)
+  assert list(cp.longitudinalTuning.kpV) == list(premier.longitudinalTuning.kpV) == [1.0]
+  assert list(cp.longitudinalTuning.kiV) == pytest.approx(list(premier.longitudinalTuning.kiV)) and \
+         list(cp.longitudinalTuning.kiV) == pytest.approx([0.3])
+  assert cp.minEnableSpeed == pytest.approx(5 * CV.KPH_TO_MS)  # first engagement from 5 km/h, as StarPilot
+  # steering stays exactly as in the stock-ACC mode
+  stock = malibu_cp(runtime, False, accel_pos=accel_pos)
+  assert cp.lateralTuning.to_dict() == stock.lateralTuning.to_dict()
+  assert (cp.steerActuatorDelay, cp.minSteerSpeed) == (stock.steerActuatorDelay, stock.minSteerSpeed)
+
+
+def test_gas_regen_limits_are_the_ascm_ones_the_panda_checks(runtime):
+  # The ASCM sends -500 Nm idle in the same 0x2CB layout; the host and panda use the ASCM limits (-650 idle, 1018 max)
+  params = CarControllerParams(malibu_cp(runtime, True))
+  assert (params.MAX_GAS, params.MAX_ACC_REGEN, params.INACTIVE_REGEN, params.MAX_BRAKE) == (1018.0, -650.0, -650.0, 400)
+
+
+def test_frames_match_the_ascms_own_layout(runtime):
+  """0x2CB and 0x370 exactly as the friend's ASCM sent them (rlog 0000001d--c1e04a331d--15, 2026-11-21)."""
+  from opendbc.car.gm import gmcan
+  packer = runtime.CANPacker(DBC[MALIBU_ASCM][Bus.pt])
+  # counter 2, ACC active, -500 Nm (the ASCM's idle) / inactive
+  assert gmcan.create_gas_regen_command(packer, 0, -500, 2, True, False, MALIBU_ASCM)[1] == bytes.fromhex("8142b09000bd4f6e")
+  assert gmcan.create_gas_regen_command(packer, 0, -500, 2, False, False, MALIBU_ASCM)[1] == bytes.fromhex("8042b09001bd4f6e")
+  # ACC active at 77 km/h, three gap bars, without and with a lead car
+  for lead, expected in ((False, "0100b4d00100"), (True, "0100b4d00110")):
+    hud = NS(leadDistanceBars=3, leadVisible=lead)
+    assert gmcan.create_acc_dashboard_command(packer, 0, True, 77.0, hud, False)[1] == bytes.fromhex(expected)
 
 
 def test_without_0xbe_the_brake_switch_in_0xc9_is_used(runtime):

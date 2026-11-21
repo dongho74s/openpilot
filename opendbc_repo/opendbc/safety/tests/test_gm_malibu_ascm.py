@@ -294,9 +294,185 @@ def behavior(lib, param):
 @pytest.mark.parametrize('extra', MODE_BITS)
 @pytest.mark.parametrize('camera', [True, False])
 def test_the_new_bits_are_ignored_next_to_any_other_mode_bit(native, extra, camera):
+  if camera and extra == int(GMSafetyFlags.HW_CAM_LONG):
+    pytest.skip("HW_CAM + HW_CAM_LONG + HW_ASCM_INT is the SASCM longitudinal layout (tested below)")
   base = extra | (CAMERA if camera else 0)
   assert behavior(native, base | NEW_BITS) == behavior(native, base)
   assert behavior(native, base | int(GMSafetyFlags.HW_ASCM_INT)) == behavior(native, base)
+
+
+@pytest.mark.parametrize('extra', [bit for bit in MODE_BITS if bit != int(GMSafetyFlags.HW_CAM_LONG)])
+def test_the_long_layout_too_is_ignored_next_to_any_other_mode_bit(native, extra):
+  base = extra | CAMERA | int(GMSafetyFlags.HW_CAM_LONG)
+  assert behavior(native, base | NEW_BITS) == behavior(native, base)
+  assert behavior(native, base | int(GMSafetyFlags.HW_ASCM_INT)) == behavior(native, base)
+
+
+# SASCM fitted, openpilot longitudinal (user request 2026-11-21, StarPilot ASCM_INT alpha long)
+ASCM_INT_LONG = ASCM_INT | int(GMSafetyFlags.HW_CAM_LONG)
+ASCM_INT_LONG_C9 = ASCM_INT_LONG | int(GMSafetyFlags.ASCM_INT_C9_BRAKE)
+SET = 3
+
+
+def gas_regen(nm, apply):  # ASCMGasRegenCmd 0x2CB: apply bit 0, 19-bit GasRegenCmd (0.125 Nm, -22534) from bit 10
+  raw = int(round((nm + 22534) / 0.125))
+  return bytes([int(apply), 0x40 | ((raw >> 16) & 0x7), (raw >> 8) & 0xFF, raw & 0xFF, 0 if apply else 1, 0, 0, 0])
+
+
+def friction_brake(brake):  # EBCMFrictionBrakeCmd 0x315: FrictionBrakeCmd = -brake in 12 bits
+  raw = (0x1000 - brake) & 0xFFF
+  return bytes([0x10 | (raw >> 8), raw & 0xFF, 0, 0, 0])
+
+
+def engage_with_set(lib):
+  rx(lib, 0x1E1, button(SET))
+  rx(lib, 0x1E1, button(UNPRESS))
+
+
+@pytest.mark.parametrize('param', [ASCM_INT_LONG, ASCM_INT_LONG_C9])
+def test_long_layout_engages_on_the_buttons_not_the_stock_acc(native, param):
+  use(native, param)
+  rx(native, 0x1C4, pedal2(1))  # the ECM's cruise state no longer engages
+  assert not native.get_controls_allowed()
+  engage_with_set(native)       # falling edge of SET, as on the other openpilot-long GM cars
+  assert native.get_controls_allowed()
+  rx(native, 0x1E1, button(CANCEL))
+  assert not native.get_controls_allowed()
+
+
+@pytest.mark.parametrize('param', [ASCM_INT_LONG, ASCM_INT_LONG_C9])
+@pytest.mark.parametrize('address,bus,expected', [
+  (0x180, 2, -1),   # openpilot replaces the ASCM's LKAS command...
+  (0x370, 2, -1),   # ...and its ACC dashboard, gas/regen and friction brake
+  (0x2CB, 2, -1),
+  (0x315, 2, -1),
+  (0x409, 2, 0),    # everything else of the ASCM still reaches the car
+  (0x2CD, 2, 0),
+  (0x184, 0, -1),   # PSCMStatus toward the ASCM comes from openpilot
+  (0x1E1, 0, 2),    # the driver's buttons, the SASCM and the car still reach the ASCM
+  (0x2FF, 0, 2),
+  (0x1C4, 0, 2),
+])
+def test_long_layout_forwarding_blocks_the_ascms_longitudinal(native, param, address, bus, expected):
+  use(native, param)
+  assert fwd(native, address, bus) == expected
+
+
+@pytest.mark.parametrize('param', [ASCM_INT_LONG, ASCM_INT_LONG_C9])
+def test_long_layout_transmit_list(native, param):
+  use(native, param)
+  native.set_controls_allowed(True)
+  assert tx(native, 0x180, bytes(4))
+  assert tx(native, 0x184, bytes(8), bus=2)
+  assert tx(native, 0x2CB, gas_regen(100, True))
+  assert tx(native, 0x315, friction_brake(100))
+  assert tx(native, 0x370, bytes(6))
+  for btn in (SET, UNPRESS):
+    assert tx(native, 0x1E1, button(btn))
+  # not toward the ASCM (bus 2), not the radar bus, no pedal interceptor or ASCM keepalives
+  for address, length, bus in ((0x2CB, 8, 2), (0x315, 5, 2), (0x370, 6, 2), (0x1E1, 7, 2), (0x200, 6, 0), (0x409, 7, 0),
+                               (0xA1, 7, 1), (0x306, 8, 1)):
+    assert not tx(native, address, bytes(length), bus=bus)
+
+
+@pytest.mark.parametrize('param', [ASCM_INT_LONG, ASCM_INT_LONG_C9])
+def test_long_layout_uses_the_ascm_gas_and_brake_limits(native, param):
+  use(native, param)
+  native.set_controls_allowed(True)
+  assert tx(native, 0x2CB, gas_regen(1018, True)) and not tx(native, 0x2CB, gas_regen(1019, True))
+  assert tx(native, 0x2CB, gas_regen(-650, True)) and not tx(native, 0x2CB, gas_regen(-651, True))
+  assert tx(native, 0x315, friction_brake(400)) and not tx(native, 0x315, friction_brake(401))
+  native.set_controls_allowed(False)
+  # without controls: only the inactive -650 Nm with apply 0, and no brake
+  assert tx(native, 0x2CB, gas_regen(-650, False))
+  assert not tx(native, 0x2CB, gas_regen(-500, False))
+  assert not tx(native, 0x2CB, gas_regen(-650, True))
+  assert not native.get_controls_allowed()  # an apply frame never grants controls here
+  assert tx(native, 0x315, friction_brake(0)) and not tx(native, 0x315, friction_brake(1))
+
+
+@pytest.mark.parametrize('param,brake_pos,brake_bit,pressed', [
+  (ASCM_INT_LONG, 10, 0, True), (ASCM_INT_LONG, 0, 1, False),
+  (ASCM_INT_LONG_C9, 10, 0, False), (ASCM_INT_LONG_C9, 0, 1, True),
+])
+def test_long_layout_keeps_the_brake_source(native, param, brake_pos, brake_bit, pressed):
+  use(native, param)
+  assert brake_state(native, brake_pos, brake_bit) == [(pressed, not pressed)] * 2
+
+
+@pytest.mark.parametrize('param,missing,valid', [
+  (ASCM_INT_LONG, None, True), (ASCM_INT_LONG, 0xBE, False), (ASCM_INT_LONG_C9, 0xBE, True), (ASCM_INT_LONG_C9, 0xF1, False),
+])
+def test_long_layout_keeps_the_rx_checks(native, param, missing, valid):
+  use(native, param)
+  for address, length in RX_FRAMES.items():
+    if address != missing:
+      rx(native, address, bytes(length))
+  assert native.safety_config_valid() == valid
+
+
+@pytest.mark.parametrize('case', sorted(VIOLATIONS))
+def test_long_layout_keeps_the_steering_checks(native, case):
+  results = {}
+  for p in (ASCM_INT_LONG, ASCM_INT, TRAVERSE):
+    use(native, p)
+    native.set_controls_allowed(True)
+    results[p] = steer(native, VIOLATIONS[case])
+  assert results[ASCM_INT_LONG] == results[ASCM_INT] == results[TRAVERSE]
+
+
+def long_drive():
+  """(accel request, longActive) for every 10 ms tick: accelerate, hold, brake hard, then disengage."""
+  ticks = []
+  for tick in range(600):
+    if tick < 150:
+      ticks.append((1.5, True))
+    elif tick < 250:
+      ticks.append((0.0, True))
+    elif tick < 450:
+      ticks.append((-3.5, True))
+    else:
+      ticks.append((0.0, False))
+  return ticks
+
+
+@pytest.mark.parametrize('accel_pos', [True, False])
+def test_the_hosts_longitudinal_frames_reach_the_car(native, runtime, accel_pos):
+  """The real CarController in SASCM long mode against the C hooks: every gas/regen, brake, dashboard, steering and
+  PSCMStatus frame it sends passes the panda, it really accelerates and brakes, and nothing goes to the radar bus."""
+  cp = car.malibu_cp(runtime, True, accel_pos=accel_pos, radar=True)
+  use(native, cp.safetyConfigs[0].safetyParam)
+  engage_with_set(native)
+  ci = car.malibu_interface(runtime, cp)
+  controller = runtime.controller.CarController(car.DBC[car.MALIBU_ASCM], ci.CP)
+  packer = runtime.CANPacker(car.DBC[car.MALIBU_ASCM][car.Bus.pt])
+  t0 = time.monotonic_ns()
+  rejected, by_address, gas, brake = [], set(), [], []
+  LongCtrlState = car.structs.CarControl.Actuators.LongControlState
+  for tick, (accel, long_active) in enumerate(long_drive()):
+    now = t0 + tick * 10_000_000
+    native.set_timer(1_000_000 + tick * 10_000)
+    if tick == 450:
+      rx(native, 0x1E1, button(CANCEL))  # the driver cancels: the panda drops controls with the host
+      rx(native, 0x1E1, button(UNPRESS))
+    ci.update([(now, car.frames(packer, tick, ascm_counter=2, accel_pos=accel_pos))])
+    cc = car.structs.CarControl(enabled=long_active, latActive=long_active, longActive=long_active)
+    cc.actuators.accel = accel
+    cc.actuators.longControlState = LongCtrlState.pid if long_active else LongCtrlState.off
+    _, sends = controller.update(cc.as_reader(), ci.CS, now)
+    for address, dat, bus in sends:
+      by_address.add((address, bus))
+      if not tx(native, address, bytes(dat), bus=bus):
+        rejected.append((tick, hex(address), bus, bytes(dat).hex()))
+      if address == 0x2CB and dat[0] & 1:
+        gas.append(((dat[1] & 7) << 16 | dat[2] << 8 | dat[3]) * 0.125 - 22534)
+      if address == 0x315:
+        brake.append((0x1000 - (((dat[0] & 0xF) << 8) | dat[1])) & 0xFFF)
+  assert rejected == []
+  assert {(0x180, 0), (0x2CB, 0), (0x315, 0), (0x370, 0), (0x184, 2)} <= by_address
+  assert not any(bus == 1 for _, bus in by_address)
+  assert not {(0x2CB, 2), (0x315, 2), (0x370, 2)} & by_address
+  assert max(gas) > 100 and max(brake) > 100   # it really asked for gas and for the friction brake
 
 
 def lateral_drive(scenario):

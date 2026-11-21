@@ -38,6 +38,7 @@ NON_LINEAR_TORQUE_PARAMS = {
 NEURAL_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/neural_ff_weights.json')
 
 PEDAL_MSG = 0x201
+SASCM_MSG = 0x2FF  # StarPilot's SASCM_ADDRESS: seen on the powertrain bus when a SASCM is fitted
 
 class CarInterface(CarInterfaceBase):
   CarState = CarState
@@ -208,8 +209,13 @@ class CarInterface(CarInterfaceBase):
     elif candidate in ASCM_INT_CAR:
       # StarPilot ASCM_INT (interface.py, stable 8589b73f): the comma sits between the ASCM and the powertrain bus. The
       # ASCM stays alive and keeps the stock ACC and radar; the panda forwards both ways like a camera harness except the
-      # ASCM's LKAS command (0x180), which openpilot replaces. openpilot longitudinal through a SASCM is not ported.
-      ret.alphaLongitudinalAvailable = False
+      # ASCM's LKAS command (0x180), which openpilot replaces.
+      # With a SASCM (0x2FF on the powertrain bus) StarPilot also offers openpilot longitudinal here (alpha long,
+      # user request 2026-11-21: the friend's Malibu has one). openpilot then sends gas/regen (0x2CB) and the friction
+      # brake (0x315, which the SASCM relays to the EBCM) on the powertrain bus with the ACC status (0x370), and the panda
+      # blocks the ASCM's own 0x2CB/0x315/0x370. The ASCM stays alive and keeps running the radar.
+      has_sascm = SASCM_MSG in fingerprint[CanBus.POWERTRAIN]
+      ret.alphaLongitudinalAvailable = has_sascm
       ret.networkLocation = NetworkLocation.fwdCamera
       # The ASCM runs the radar; read it only when the whole stock radar stream is on bus 1.
       ret.radarUnavailable = not all(fingerprint[CanBus.OBSTACLE].get(msg) == 8
@@ -221,6 +227,14 @@ class CarInterface(CarInterfaceBase):
       if ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
         # No 0xBE to read the brake from: the brake switch in 0xC9, as StarPilot does with FORCE_BRAKE_C9
         ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.ASCM_INT_C9_BRAKE.value
+      if alpha_long and has_sascm:
+        ret.pcmCruise = False
+        ret.openpilotLongitudinalControl = True
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
+        # The same car's tuning where openpilot replaces the ASCM (CHEVROLET_MALIBU, gateway branch). Gas/regen limits
+        # are the ASCM ones (CarControllerParams, panda GM_ASCM_LONG_LIMITS): the ASCM's 0x2CB uses the same layout.
+        ret.longitudinalTuning.kpV = [1.0]
+        ret.longitudinalTuning.kiV = [0.3]
 
     else:  # ASCM, OBD-II harness
       ret.openpilotLongitudinalControl = True

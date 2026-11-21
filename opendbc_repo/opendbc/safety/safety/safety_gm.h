@@ -544,6 +544,12 @@ static safety_config gm_init(uint16_t param) {
   static const CanMsg GM_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4},  // pt bus
                                                {0x184, 2, 8}, {0x1E1, 2, 7}};  // ASCM side
 
+  // Malibu ASCM harness with a SASCM and openpilot longitudinal (StarPilot ASCM_INT alpha long): gas/regen, the
+  // friction brake (relayed to the EBCM by the SASCM), ACC status and buttons on the powertrain bus, PSCMStatus toward
+  // the ASCM. The ASCM's own 0x2CB/0x315/0x370 are not forwarded (gm_fwd_hook, gm_cam_long).
+  static const CanMsg GM_ASCM_INT_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x315, 0, 5}, {0x2CB, 0, 8}, {0x370, 0, 6}, {0x1E1, 0, 7},  // pt bus
+                                                    {0x184, 2, 8}};  // ASCM side
+
   static const CanMsg GM_CC_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x1E1, 0, 7},  // pt bus
                                               {0x184, 2, 8}, {0x1E1, 2, 7}};  // camera bus
   gm_hw = GET_FLAG(param, GM_PARAM_HW_CAM) ? GM_CAM : GM_ASCM;
@@ -558,12 +564,18 @@ static safety_config gm_init(uint16_t param) {
 
   gm_cc_long = GET_FLAG(param, GM_PARAM_CC_LONG);
   gm_sdgm = GET_FLAG(param, GM_PARAM_HW_SDGM);
-  // Only the exact stock-ACC layout the host builds for this car: HW_CAM + HW_ASCM_INT, optionally + the C9 brake. Any
-  // other mode bit alongside them makes the panda ignore both new bits, so a mixed param keeps its existing behavior.
-  const uint16_t GM_ASCM_INT_PARAMS = GM_PARAM_HW_CAM | GM_PARAM_HW_ASCM_INT | GM_PARAM_ASCM_INT_C9_BRAKE;
+  // Only the exact layouts the host builds for this car: HW_CAM + HW_ASCM_INT, optionally + the C9 brake and + camera
+  // long (SASCM). Any other mode bit alongside them makes the panda ignore both new bits, so a mixed param keeps its
+  // existing behavior.
+  const uint16_t GM_PARAM_ASCM_INT_CAM_LONG = 2;  // GM_PARAM_HW_CAM_LONG
+  const uint16_t GM_ASCM_INT_PARAMS = GM_PARAM_HW_CAM | GM_PARAM_HW_ASCM_INT | GM_PARAM_ASCM_INT_C9_BRAKE | GM_PARAM_ASCM_INT_CAM_LONG;
   gm_ascm_int = GET_FLAG(param, GM_PARAM_HW_ASCM_INT) && GET_FLAG(param, GM_PARAM_HW_CAM) &&
                 ((param & (uint16_t)(~GM_ASCM_INT_PARAMS)) == 0U);
   gm_ascm_int_c9_brake = gm_ascm_int && GET_FLAG(param, GM_PARAM_ASCM_INT_C9_BRAKE);
+  if (gm_ascm_int) {
+    // The ASCM's 0x2CB layout and the host's limits for this car are the ASCM ones (inactive -650 Nm, max 1018 Nm)
+    gm_long_limits = &GM_ASCM_LONG_LIMITS;
+  }
   gm_cam_long = false;
 #ifdef ALLOW_DEBUG
   const uint16_t GM_PARAM_HW_CAM_LONG = 2;
@@ -606,7 +618,9 @@ static safety_config gm_init(uint16_t param) {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CC_LONG_TX_MSGS);
       print("GM CC Long\n");
     } else if (gm_cam_long) {
-      if (gm_sdgm) {
+      if (gm_ascm_int) {
+        ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_ASCM_INT_LONG_TX_MSGS);
+      } else if (gm_sdgm) {
         ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_SDGM_LONG_TX_MSGS);
       } else {
         ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_TX_MSGS);

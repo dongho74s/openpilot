@@ -13,7 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.cluster_speed import gm_raw_display_kph_from_cluster_display_kph, \
   gm_malibu_raw_display_kph_from_cluster_display_kph
-from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
+from opendbc.car.gm.values import ASCM_INT_CAR, MALIBU_CLUSTER_CAR
 from opendbc.car.gm.manual_auto_hold import manual_hold_supported
 from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.gas_brake_hysteresis import GasBrakeHysteresis, has_gas_brake_step
@@ -425,8 +425,10 @@ class CarController(CarControllerBase):
 
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (10hz)
-      # Traverse receives stock radar traffic without these ASCM replacement messages.
-      if not self.CP.radarUnavailable and self.CP.carFingerprint != CAR.CHEVROLET_TRAVERSE:
+      # Traverse receives stock radar traffic without these ASCM replacement messages. Behind a live ASCM (Malibu ASCM
+      # harness) the ASCM still sends them on the object bus, so openpilot's copies would collide (StarPilot ASCM_INT too).
+      if not self.CP.radarUnavailable and self.CP.carFingerprint != CAR.CHEVROLET_TRAVERSE and \
+         self.CP.carFingerprint not in ASCM_INT_CAR:
         tt = self.frame * DT_CTRL
         time_and_headlights_step = 10
         if self.frame % time_and_headlights_step == 0:
