@@ -26,7 +26,10 @@ from cluster_renderer import ClusterUiRenderer
 from main import ClusterClockVisibilityParamReader, ClusterDisplayPreferencesParamReader
 
 
-def test_nav_map_mode_retains_driving_view_and_hud_on_left(monkeypatch):
+def test_nav_model_mode_retains_driving_view_and_hud_without_map(monkeypatch):
+  # 2026-11-21: the satellite map panel was removed from mode 7 at the
+  # user's request. The driving view and HUD stay on the left, and no
+  # map is drawn on the right anymore.
   renderer = ClusterUiRenderer(screen_mode=7, panel_layout=1)
   state = SimpleNamespace(camera_view_mode=0)
   assert not renderer._panel_swap_active()
@@ -39,11 +42,10 @@ def test_nav_map_mode_retains_driving_view_and_hud_on_left(monkeypatch):
   monkeypatch.setattr(renderer, '_render_world', lambda *args: calls.append('driving view'))
   monkeypatch.setattr(renderer, '_clear_world', lambda: calls.append('clear'))
   monkeypatch.setattr(renderer, '_draw_driving_hud_content', lambda *args: calls.append('driving HUD'))
-  monkeypatch.setattr(renderer, '_draw_nav_model_map', lambda: calls.append('right map'))
   monkeypatch.setattr(renderer, '_draw_status_footer', lambda *args: calls.append('footer'))
   monkeypatch.setattr(renderer, '_draw_alert_overlay', lambda *args: calls.append('alerts'))
   renderer.render(state, (False, False))
-  assert calls == ['driving view', 'driving HUD', 'right map', 'footer', 'alerts']
+  assert calls == ['driving view', 'driving HUD', 'footer', 'alerts']
 
 
 @pytest.mark.parametrize(

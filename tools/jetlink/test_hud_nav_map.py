@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace as NS
-import ast
 
 from PIL import Image
 import pytest
@@ -83,40 +82,6 @@ def test_receiver_transport_age_identity_and_disconnect(tmp_path, monkeypatch):
   assert not receiver.fresh()
   value[0] = None
   assert not receiver.fresh() and receiver.status == {'fresh': False}
-
-
-def test_real_renderer_receives_remote_png_and_hides_lost_stream(tmp_path, monkeypatch):
-  from openpilot.selfdrive.navigation import preview
-  clock = [10.]
-  value = [record()]
-  monkeypatch.setattr(n.time, 'monotonic', lambda: clock[0])
-  receiver = n.RemoteNavPreview(lambda: (clock[0] - .1, value[0]) if value[0] else None, tmp_path / 'map.png')
-  monkeypatch.setattr(preview, 'PREVIEW_PATH', receiver.path)
-  monkeypatch.setattr(preview, 'preview_fresh', receiver.fresh)
-  tree = ast.parse((Path(__file__).parents[2] / 'openpilot/selfdrive/carrot/cluster/cluster_renderer.py').read_text(encoding='utf-8'))
-  method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == '_draw_nav_model_map')
-  calls = []
-  def load(path):
-    with Image.open(path) as image:
-      assert image.size == (256, 256) and image.getpixel((0, 0)) == 100
-    calls.append('load')
-    return NS(id=1)
-  rl = NS(load_texture=load, unload_texture=lambda _: calls.append('unload'), draw_rectangle=lambda *a: None,
-          draw_texture_pro=lambda *a: calls.append('draw'), Rectangle=lambda *a: a,
-          Vector2=lambda *a: a, WHITE=object(), BLACK=object())
-  scope = dict(rl=rl, time=n.time, DESIGN_HEIGHT=480, NAVI_LIVE_PANEL_X=1124, NAVI_LIVE_PANEL_W=792)
-  exec(compile(ast.Module(body=[method], type_ignores=[]), '<remote NAV preview>', 'exec'), scope)
-  renderer = NS(_nav_model_checked=0., _nav_model_fresh=False, _nav_model_mtime=0, _nav_model_texture=None,
-                _draw_text=lambda *a: calls.append(a[0]))
-  draw = scope['_draw_nav_model_map']
-  draw(renderer)
-  clock[0] += .6
-  draw(renderer)
-  assert calls.count('load') == 1 and calls.count('draw') == 2
-  value[0] = None
-  clock[0] += .6
-  draw(renderer)
-  assert calls.count('draw') == 2 and calls[-1].startswith('NAV MAP: waiting')
 
 
 def test_optional_preview_cannot_expand_snapshot_budget():

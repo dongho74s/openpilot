@@ -1306,12 +1306,6 @@ class ClusterUiRenderer:
         self.is_metric = bool(is_metric)
         self._theme = current_cluster_theme(self.theme_mode)
         self.hidden = False
-        self._nav_model_texture = None
-        self._nav_model_checked = 0.
-        self._nav_model_mtime = 0
-        self._nav_model_fresh = False
-        self._nav_map_style = 0
-        self._nav_map_style_checked = 0.
         self._auto_overtake = None
         self._auto_overtake_checked = 0.
         self._bluetooth_connected = None
@@ -1653,9 +1647,6 @@ class ClusterUiRenderer:
                     self._window_open = False
 
     def _close_resources(self) -> None:
-        if self._nav_model_texture is not None:
-            rl.unload_texture(self._nav_model_texture)
-            self._nav_model_texture = None
         self._system_stats.close()
         if not self._window_open:
             return
@@ -1952,22 +1943,6 @@ class ClusterUiRenderer:
         self._draw_alert_overlay(getattr(state, "alert", None))
         self._profile_add("render.alert", profile_stage)
 
-    def _nav_map_satellite(self) -> bool:
-        # MapboxStyle 2 draws the Esri satellite background; read it at most once a second.
-        now = time.monotonic()
-        if now >= self._nav_map_style_checked:
-            self._nav_map_style_checked = now + 1.0
-            try:
-                from openpilot.common.params import Params
-                for params in (Params("/dev/shm/params"), Params()):
-                    raw = params.get("MapboxStyle")
-                    if raw is not None:
-                        self._nav_map_style = int(raw)
-                        break
-            except (OSError, ValueError):
-                pass
-        return self._nav_map_style == 2
-
     def _auto_overtake_enabled(self) -> bool | None:
         # AutoOvertake param, read at most once a second. None = unreadable.
         now = time.monotonic()
@@ -2010,52 +1985,6 @@ class ClusterUiRenderer:
         rl.draw_line_ex(rl.Vector2(cx, y + height * 0.167), rl.Vector2(cx, y + height * 0.833), thick, color)
         rl.draw_line_ex(rl.Vector2(x + w * 0.29, y + height * 0.333), rl.Vector2(x + w * 0.71, y + height * 0.667), thick, color)
         rl.draw_line_ex(rl.Vector2(x + w * 0.71, y + height * 0.333), rl.Vector2(x + w * 0.29, y + height * 0.667), thick, color)
-
-    def _draw_nav_model_map(self):
-        from openpilot.selfdrive.navigation.preview import PREVIEW_PATH, preview_fresh
-        # Mode 7 keeps the normal driving view/HUD on the left. The map uses
-        # only the existing right information panel, including in 3D views.
-        rl.draw_rectangle(NAVI_LIVE_PANEL_X, 0, NAVI_LIVE_PANEL_W, DESIGN_HEIGHT, rl.BLACK)
-        center_x = NAVI_LIVE_PANEL_X + NAVI_LIVE_PANEL_W / 2
-        now = time.monotonic()
-        if now >= self._nav_model_checked:
-            self._nav_model_checked = now + .5
-            self._nav_model_fresh = preview_fresh()
-            if self._nav_model_fresh:
-                try:
-                    mtime = PREVIEW_PATH.stat().st_mtime_ns
-                    if mtime != self._nav_model_mtime:
-                        texture = rl.load_texture(str(PREVIEW_PATH))
-                        if texture.id:
-                            if self._nav_model_texture is not None:
-                                rl.unload_texture(self._nav_model_texture)
-                            self._nav_model_texture = texture
-                            self._nav_model_mtime = mtime
-                        else:
-                            self._nav_model_fresh = False
-                except OSError:
-                    self._nav_model_fresh = False
-        if self._nav_model_fresh and self._nav_model_texture is not None:
-            texture = self._nav_model_texture
-            tw, th = texture.width, texture.height
-            if th and abs(tw / th - NAVI_LIVE_PANEL_W / NAVI_LIVE_PANEL_H) < 0.05:
-                # Rectangular preview (792x478): fills the panel edge to edge,
-                # rendered natively at the panel aspect ratio, never stretched.
-                rl.draw_texture_pro(texture, rl.Rectangle(0, 0, tw, th),
-                                    rl.Rectangle(NAVI_LIVE_PANEL_X, 0, NAVI_LIVE_PANEL_W, NAVI_LIVE_PANEL_H),
-                                    rl.Vector2(0, 0), 0, rl.WHITE)
-            else:
-                # Square preview: the old centered drawing.
-                size = min(DESIGN_HEIGHT - 80, NAVI_LIVE_PANEL_W - 32)
-                rl.draw_texture_pro(texture, rl.Rectangle(0, 0, 256, 256),
-                                    rl.Rectangle(center_x - size / 2, 20, size, size),
-                                    rl.Vector2(0, 0), 0, rl.WHITE)
-            self._draw_text("Mapbox / Protomaps | Esri | (c) OpenStreetMap" if self._nav_map_satellite()
-                            else "Mapbox / Protomaps | (c) OpenStreetMap", center_x,
-                            DESIGN_HEIGHT - 40, 14, (180, 180, 180), "center")
-        else:
-            self._draw_text("NAV MAP: waiting for route / GPS / tiles", center_x,
-                            DESIGN_HEIGHT / 2, 24, (255, 255, 255), "center")
 
     def _ego_model(self, name: str):
         names = getattr(self, "_other_vehicle_names", ())
@@ -5385,7 +5314,10 @@ class ClusterUiRenderer:
             screen_mode = self._effective_screen_mode(state)
             if screen_mode == CLUSTER_SCREEN_MODE_NAV_MODEL:
                 self._draw_driving_hud_content(state, screen_mode, left_signal_lit, right_signal_lit)
-                self._draw_nav_model_map()
+                # 2026-11-21: the satellite map panel was removed at the
+                # user's request. The road view stays 1124px wide on the
+                # left; the right strip is empty background until the
+                # road view is widened (separate layout change).
                 self._draw_status_footer(state)
                 return
             if screen_mode == CLUSTER_SCREEN_MODE_NAVI:
@@ -8324,21 +8256,21 @@ class ClusterUiRenderer:
         """True when a right-side panel covers the road view's right edge
         in this mode (same branches as the main render loop).
 
-        DEBUG_GRAPH_RIGHT always has the steering graph panel,
-        TRIP_REPORT always has the trip panel, and NAV_MODEL always
-        has the map panel. DEBUG and DEBUG_SYSTEM have the live debug
-        and system dashboard panels on the same right strip — except
-        when the panel layout is swapped to the left. On the driving
-        screen (DEFAULT) the navigation live panel covers the same
-        strip whenever it is drawn. The navigation debug panel does
-        not count: it starts lower (y 118) and ends well above the
-        bottom status line, so neither the top icons nor the overtake
-        text collide with it.
+        DEBUG_GRAPH_RIGHT always has the steering graph panel and
+        TRIP_REPORT always has the trip panel. DEBUG and DEBUG_SYSTEM
+        have the live debug and system dashboard panels on the same
+        right strip — except when the panel layout is swapped to the
+        left. NAV_MODEL used to have the map panel there, but it was
+        removed 2026-11-21, so nothing covers the road view's right
+        edge in that mode anymore. On the driving screen (DEFAULT)
+        the navigation live panel covers the same strip whenever it
+        is drawn. The navigation debug panel does not count: it starts
+        lower (y 118) and ends well above the bottom status line, so
+        neither the top icons nor the overtake text collide with it.
         """
         if screen_mode in (
             CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
             CLUSTER_SCREEN_MODE_TRIP_REPORT,
-            CLUSTER_SCREEN_MODE_NAV_MODEL,
         ):
             return True
         if screen_mode in (
@@ -8363,13 +8295,12 @@ class ClusterUiRenderer:
 
         When a right-side panel covers the road view's right edge — the
         steering graph panel in DEBUG_GRAPH_RIGHT mode, the live debug
-        and system dashboard panels in DEBUG and DEBUG_SYSTEM, the map
-        panel in NAV_MODEL, the navigation live panel on the driving
-        screen, or the trip report panel — the icons sit at the road
-        view's right edge, just left of the panel. Otherwise they sit
-        at the screen's far right. The coordinate is in design space,
-        so the caller's panel-offset translation moves it with the
-        road view.
+        and system dashboard panels in DEBUG and DEBUG_SYSTEM, the
+        navigation live panel on the driving screen, or the trip
+        report panel — the icons sit at the road view's right edge,
+        just left of the panel. Otherwise they sit at the screen's
+        far right. The coordinate is in design space, so the caller's
+        panel-offset translation moves it with the road view.
         """
         if screen_mode == CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT or right_panel_active:
             return DEBUG_PLOT_RIGHT_X
