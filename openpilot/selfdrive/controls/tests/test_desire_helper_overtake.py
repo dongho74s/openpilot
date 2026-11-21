@@ -139,6 +139,28 @@ class TestAutoOvertake:
     self.overtake(car, radar)
     assert self.helper._overtake_state == "off"
 
+  def test_no_trigger_when_lead_stopped(self):
+    # A stopped lead (red light, jam) must never trigger an overtake, even
+    # though the speed difference is large.
+    car = make_car_state(v_ego_kph=100.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0)
+    self.overtake(car, radar)
+    assert self.helper._overtake_state == "off"
+
+  def test_no_trigger_when_lead_barely_moving(self):
+    # Below OVERTAKE_MIN_LEAD_SPEED_KPH the lead counts as stopped.
+    car = make_car_state(v_ego_kph=100.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=5.0)
+    self.overtake(car, radar)
+    assert self.helper._overtake_state == "off"
+
+  def test_triggers_when_lead_slow_but_moving(self):
+    # Just above the stopped threshold, a slow lead is a normal overtake.
+    car = make_car_state(v_ego_kph=100.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=15.0)
+    self.overtake(car, radar)
+    assert self.helper._overtake_state == "announcing"
+
   def test_no_trigger_when_not_lateral_active(self):
     car = make_car_state(v_ego_kph=100.0, v_cruise_kph=100.0)
     radar = make_radar_state(lead_speed_kph=70.0)

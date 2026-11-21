@@ -47,6 +47,10 @@ OVERTAKE_ANNOUNCE_S = 2.0
 OVERTAKE_ARMED_TIMEOUT_S = 3.0
 OVERTAKE_MIN_SPEED_KPH = 60.0
 OVERTAKE_MAX_LEAD_DIST_M = 150.0
+# A lead slower than this is treated as stopped: never auto-overtake a
+# stopped car (red light, jam) — passing it could mean crossing an
+# intersection or a queue in the next lane.
+OVERTAKE_MIN_LEAD_SPEED_KPH = 10.0
 
 # ── Auto overtake return (return to the original lane after an overtake) ───
 # After an automatic left-lane overtake, return to the original (right) lane
@@ -505,8 +509,10 @@ class DesireHelper:
 
     Trigger: engaged, ego speed >= OVERTAKE_MIN_SPEED_KPH, a lead car is
     present and at least OVERTAKE_SPEED_DIFF_KPH slower than the cruise set
-    speed, and the left lane change is available (this already encodes the
-    solid-line check via LaneLineCheck and the left-side obstacle/BSD check).
+    speed, the lead is moving (faster than OVERTAKE_MIN_LEAD_SPEED_KPH —
+    never overtake a stopped car), and the left lane change is available
+    (this already encodes the solid-line check via LaneLineCheck and the
+    left-side obstacle/BSD check).
     On trigger, announce with the existing lane-change notification (left
     blinker) for OVERTAKE_ANNOUNCE_S, then arm the normal auto-lane-change
     path so the FSM starts the change. Any loss of the trigger condition,
@@ -555,6 +561,7 @@ class DesireHelper:
       v_ego_kph >= OVERTAKE_MIN_SPEED_KPH and
       v_cruise_kph > 0.0 and
       (v_cruise_kph - lead_kph) >= OVERTAKE_SPEED_DIFF_KPH and
+      lead_kph > OVERTAKE_MIN_LEAD_SPEED_KPH and
       0.0 < lead_dist <= OVERTAKE_MAX_LEAD_DIST_M and
       # Left lane change available: solid centre line blocks this (via
       # LaneLineCheck) and so does a blocked/occupied left lane.
