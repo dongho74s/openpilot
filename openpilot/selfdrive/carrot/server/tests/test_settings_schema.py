@@ -231,7 +231,12 @@ def test_fixed_tuning_catalog_hides_longitudinal_pid_settings(settings, brand):
     for name in section["items"]
   }
 
-  assert hidden_names == hidden
+  # The PID settings plus any other entry hidden for this brand (e.g. the Chevrolet-only ChevroletSteerFF)
+  hidden_for_brand = {p["name"] for p in settings["params"] if brand in p.get("hidden_brands", [])}
+  assert hidden <= hidden_for_brand
+  assert hidden_names == hidden_for_brand
+  assert hidden_for_brand.isdisjoint(visible_names)
+  assert hidden_for_brand.isdisjoint(menu_names)
   assert hidden.isdisjoint(visible_names)
   assert hidden.isdisjoint(menu_names)
   assert all(
@@ -305,7 +310,10 @@ def test_ray_pedal_catalog_uses_identified_capability(settings, fingerprint, ped
   assert tuning <= {item["name"] for items in groups.values() for item in items}
   assert all(group["count"] == sum(not item.get("detail_parent") and not item.get("search_only")
                                   for item in filtered[group["group"]]) for group in counts)
-  assert hidden == (set() if expected else tuning)
+  # Plus any entry hidden for this brand (e.g. the Chevrolet-only ChevroletSteerFF on a Hyundai); the tuning PIDs
+  # are excluded here because this test itself governs their visibility through the pedal capability.
+  brand_hidden = {p["name"] for p in settings["params"] if brand in p.get("hidden_brands", [])} - tuning
+  assert hidden == (set() if expected else tuning) | brand_hidden
 
 
 @pytest.mark.parametrize("car_params", [None, b"invalid"])

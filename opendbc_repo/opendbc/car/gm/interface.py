@@ -14,7 +14,8 @@ from opendbc.car.gm.gmcan import is_trailblazer_camera_longitudinal
 from opendbc.car.gm.manual_auto_hold import MANUAL_HOLD_CARS
 from opendbc.car.gm.radar_interface import RadarInterface, RADAR_HEADER_MSG, LAST_RADAR_MSG
 from opendbc.car.gm.values import CAR, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, CruiseButtons, GMSafetyFlags, ALT_ACCS
-from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LatControlInputs, NanoFFModel
+from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LatControlInputs, NanoFFModel, \
+  CHEVROLET_STEER_FF_LINEAR
 
 #ButtonType = structs.CarState.ButtonEvent.Type 이 두 줄도 사용되지 않습니다.
 #GearShifter = structs.CarState.GearShifter
@@ -128,6 +129,9 @@ class CarInterface(CarInterfaceBase):
     return float(self.neural_ff_model.predict(inputs)) + friction
 
   def torque_from_lateral_accel(self) -> TorqueFromLateralAccelCallbackType:
+    # ChevroletSteerFF 3 (Volt linear): plain linear torque, not comma's NN or the sigmoid fits of the Bolts/Silverado
+    if getattr(self, "chevrolet_steer_ff", 0) == CHEVROLET_STEER_FF_LINEAR:
+      return self.torque_from_lateral_accel_linear
     with open(NEURAL_PARAMS_PATH) as f:
       neural_ff_cars = json.load(f).keys()
     if self.CP.carFingerprint in neural_ff_cars:
