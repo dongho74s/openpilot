@@ -1798,12 +1798,15 @@ class ClusterUiRenderer:
 
     def _auto_overtake_enabled(self) -> bool | None:
         # AutoOvertake param, read at most once a second. None = unreadable.
+        # Read the file-backed Params first: the /dev/shm copy goes stale
+        # (it is not updated when the Bluetooth remote writes the setting),
+        # so reading shm first showed OFF while the setting was ON.
         now = time.monotonic()
         if now >= self._auto_overtake_checked:
             self._auto_overtake_checked = now + 1.0
             try:
                 from openpilot.common.params import Params
-                for params in (Params("/dev/shm/params"), Params()):
+                for params in (Params(), Params("/dev/shm/params")):
                     try:
                         self._auto_overtake = bool(params.get_bool("AutoOvertake"))
                         break
