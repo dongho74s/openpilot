@@ -164,6 +164,11 @@ class SelfdriveD:
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
     self.atc_type_last = ""
+    # Previous DesireHelper desire (modelV2.meta.desire), for the
+    # auto-overtake lane-change voice announcement. See
+    # update_auto_overtake_events().
+    self._desire_prev = log.Desire.none
+
 
 
     # Remote access, maintenance and the optional display do not supply driving data.
@@ -397,6 +402,8 @@ class SelfdriveD:
         elif "turn" in atc_type and "turn" not in self.atc_type_last:   # fork left/right -> turn left/right
           self.events.add(EventName.audioTurn)
         self.atc_type_last = atc_type
+    self.update_auto_overtake_events(CS)
+
 
     # Handle lane change
     if self.sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:
@@ -760,6 +767,43 @@ class SelfdriveD:
       self.AM.alerts.pop('wrongGear/noEntry', None)
     self.AM.add_many(self.sm.frame, alerts)
     self.AM.process_alerts(self.sm.frame, clear_event_types)
+
+  def update_auto_overtake_events(self, CS):
+    """Announce an automatic lane change (auto-overtake) with the
+    "차선변경 합니다" voice, once per change.
+
+    modelV2.meta.desire is the DesireHelper's desire (modeld publishes
+    DH.desire there). It flips to laneChangeLeft/Right when the lane-change
+    FSM starts a change and stays there until the change finishes, so the
+    transition is the start — exactly once per change. The event is added
+    on that one frame only (update_events clears events every frame), and
+    soundd plays the voice once per alert activation.
+
+    Only automatic changes ring:
+    - The driver's own lever change is excluded: openpilot never drives
+      the physical blinker, so a lit stalk blinker means the driver.
+    - An ATC navigation change is excluded: update_atc_events already
+      rings its own audioLaneChange for the fork transition, so ringing
+      here too would double-announce.
+
+    The return (right, back to the original lane) rings too: it is also
+    an automatic lane change the driver did not initiate. That bounds
+    one overtake cycle to at most two announcements (left out, right
+    back) instead of ringing on every frame of a change.
+    """
+    if not self.sm.alive['modelV2']:
+      return
+    desire = self.sm['modelV2'].meta.desire
+    if desire in (log.Desire.laneChangeLeft, log.Desire.laneChangeRight) and \
+       desire != self._desire_prev:
+      # Driver's own lever change: the physical stalk blinker is on.
+      driver_blinker = bool(CS.leftBlinker or CS.rightBlinker)
+      # ATC navigation change: same idle set as desire_helper's atc_live.
+      atc_live = self.sm.alive['carrotMan'] and \
+        self.sm['carrotMan'].atcType not in ("", "none", "none prepare", "straight", "straight prepare")
+      if not driver_blinker and not atc_live:
+        self.events.add(EventName.audioLaneChange)
+    self._desire_prev = desire
 
   def publish_selfdriveState(self, CS):
     # selfdriveState
