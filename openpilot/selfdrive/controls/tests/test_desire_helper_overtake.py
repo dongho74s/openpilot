@@ -41,6 +41,25 @@ def make_car_state(v_ego_kph=100.0, v_cruise_kph=100.0, left_blinker=False, righ
   )
 
 
+def make_model_plan(stop_x_m=30.0, end_speed_kph=0.0, ego_kph=70.0, cruising=False):
+  """Fake ModelDataV2 plan for the signal-stop guard: position.x ramps to the
+  planned stop point (or keeps going when cruising), velocity.x eases from
+  ego speed to the end speed, position.y stays on the lane centre."""
+  n = 33
+  if cruising:
+    x = [float(i * 5.0) for i in range(n)]
+    v = [ego_kph / 3.6] * n
+  else:
+    x = [stop_x_m * min(1.0, i / 10.0) for i in range(n)]
+    v0 = ego_kph / 3.6
+    v1 = end_speed_kph / 3.6
+    v = [v0 + (v1 - v0) * (i / (n - 1)) for i in range(n)]
+  y = [0.0] * n
+  return SimpleNamespace(
+    position=SimpleNamespace(x=x, y=y),
+    velocity=SimpleNamespace(x=v),
+  )
+
 def make_radar_state(lead_speed_kph=None, lead_dist_m=50.0):
   if lead_speed_kph is None:
     lead = SimpleNamespace(status=False, vLead=0.0, dRel=0.0)
@@ -58,8 +77,11 @@ class TestAutoOvertake:
     self.helper.left.lane_change_available_geom = True
     self.helper.lane_change_state = log.LaneChangeState.off
 
-  def overtake(self, car, radar, lateral_active=True):
-    self.helper._update_auto_overtake(car, radar, lateral_active)
+  def overtake(self, car, radar, lateral_active=True, signal_stop=False):
+    self.helper._update_auto_overtake(car, radar, lateral_active, signal_stop=signal_stop)
+
+  def signal_stop(self, plan, car, radar):
+    return self.helper._model_signal_stop(plan, car, radar)
 
   def test_triggers_when_lead_is_20kph_slower(self):
     car = make_car_state(v_ego_kph=100.0, v_cruise_kph=100.0)
@@ -176,3 +198,80 @@ class TestAutoOvertake:
     self.helper.lane_change_state = log.LaneChangeState.laneChangeStarting
     self.overtake(car, radar)
     assert self.helper._overtake_state == "off"
+class TestAutoOvertakeSignalStop:
+  """Signal-stop guard: a stopped car at a signal (red / solid yellow light,
+  stop line) is never overtaken, while a stopped car on the open road still
+  is. The guard reads the model's stop plan: it blocks only when the model
+  plans to stop well before the lead car, not when it plans to stop behind
+  it."""
+
+  def setup_method(self):
+    self.helper = DesireHelper()
+    self.helper._update_params_periodic = lambda: None
+    self.helper.left.lane_change_available = True
+    self.helper.left.lane_change_available_geom = True
+    self.helper.lane_change_state = log.LaneChangeState.off
+
+  def overtake(self, car, radar, lateral_active=True, signal_stop=False):
+    self.helper._update_auto_overtake(car, radar, lateral_active, signal_stop=signal_stop)
+
+  def signal_stop(self, plan, car, radar):
+    return self.helper._model_signal_stop(plan, car, radar)
+
+  def test_signal_stop_when_model_plans_stop_before_lead(self):
+    # Stopped lead 50 m ahead, model plans to stop at 30 m (stop line well
+    # before the queue): a signal stop.
+    car = make_car_state(v_ego_kph=70.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    plan = make_model_plan(stop_x_m=30.0, end_speed_kph=0.0, ego_kph=70.0)
+    assert self.signal_stop(plan, car, radar) is True
+
+  def test_no_signal_stop_when_model_stops_behind_lead(self):
+    # Same stopped lead, but the model plans to stop 1.5 m behind it: lead
+    # following on the open road, not a signal stop.
+    car = make_car_state(v_ego_kph=70.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    plan = make_model_plan(stop_x_m=48.5, end_speed_kph=0.0, ego_kph=70.0)
+    assert self.signal_stop(plan, car, radar) is False
+
+  def test_no_signal_stop_when_model_not_stopping(self):
+    # Model keeps cruising past the lead: no stop planned at all.
+    car = make_car_state(v_ego_kph=70.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    plan = make_model_plan(ego_kph=70.0, cruising=True)
+    assert self.signal_stop(plan, car, radar) is False
+
+  def test_no_signal_stop_when_ego_above_82(self):
+    # Same signal-stop plan, but ego is above the model's stop band: the
+    # guard is blind up here (the announcement cancel is the safety net).
+    car = make_car_state(v_ego_kph=90.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    plan = make_model_plan(stop_x_m=30.0, end_speed_kph=0.0, ego_kph=90.0)
+    assert self.signal_stop(plan, car, radar) is False
+
+  def test_no_trigger_when_signal_stop_ahead(self):
+    car = make_car_state(v_ego_kph=70.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    self.overtake(car, radar, signal_stop=True)
+    assert self.helper._overtake_state == "off"
+    assert self.helper.carrot_lane_change_count == 0
+
+  def test_triggers_for_stopped_lead_without_signal(self):
+    # The core case the revert asked for: a stopped car with no signal stop
+    # ahead is still overtaken.
+    car = make_car_state(v_ego_kph=70.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    self.overtake(car, radar, signal_stop=False)
+    assert self.helper._overtake_state == "announcing"
+
+  def test_cancels_announcement_when_signal_appears(self):
+    # Announcing, then the model starts planning a signal stop: cancel
+    # before any lane change starts.
+    car = make_car_state(v_ego_kph=70.0, v_cruise_kph=100.0)
+    radar = make_radar_state(lead_speed_kph=0.0, lead_dist_m=50.0)
+    self.overtake(car, radar, signal_stop=False)
+    assert self.helper._overtake_state == "announcing"
+    self.overtake(car, radar, signal_stop=True)
+    assert self.helper._overtake_state == "off"
+    assert self.helper.carrot_lane_change_count == 0
+
