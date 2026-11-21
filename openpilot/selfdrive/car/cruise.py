@@ -16,6 +16,17 @@ STOCK_SET_SPEED_DISPLAY_CARS = (GM_CAR.CHEVROLET_TRAVERSE, GM_CAR.CHEVROLET_MALI
 GearShifter = structs.CarState.GearShifter
 
 
+def driver_button_engage_only(CP) -> bool:
+  """openpilot-longitudinal cars whose panda grants control only from the driver's SET/RES on the wheel, never from a
+  0x2CB apply: the Bolt ACC with pedal in StarPilot mode (BoltPedalLongMode 2, GMFlags.PEDAL_LONG = 1; mode 1 runs
+  camera long, where the panda grants control from 0x2CB) and the Malibu ASCM harness with a SASCM on openpilot
+  longitudinal (Codex review 2026-11-21)."""
+  fingerprint = getattr(CP, "carFingerprint", "")
+  if fingerprint == "CHEVROLET_BOLT_ACC_PEDAL":
+    return bool(getattr(CP, "enableGasInterceptorDEPRECATED", False)) and bool(int(getattr(CP, "flags", 0)) & 1)
+  return fingerprint == "CHEVROLET_MALIBU_ASCM" and bool(getattr(CP, "openpilotLongitudinalControl", False))
+
+
 # WARNING: this value was determined based on the model's training distribution,
 #          model predictions above this speed can be unpredictable
 # V_CRUISE's are in kph
@@ -208,11 +219,9 @@ class VCruiseCarrot:
     self._cruise_cancel_state = False
     self._pause_auto_speed_up = False
     self._activate_cruise = 0
-    # The Bolt ACC with pedal in StarPilot mode (BoltPedalLongMode 2, GMFlags.PEDAL_LONG = 1) engages only from the
-    # driver's SET/RES (see _cruise_control); mode 1 runs camera long, where the panda grants control from 0x2CB.
-    self._driver_button_engage_only = (getattr(CP, "carFingerprint", "") == "CHEVROLET_BOLT_ACC_PEDAL" and
-                                       bool(getattr(CP, "enableGasInterceptorDEPRECATED", False)) and
-                                       bool(int(getattr(CP, "flags", 0)) & 1))
+    # Cars whose panda grants longitudinal control only from the driver's SET/RES (see _cruise_control and
+    # driver_button_engage_only).
+    self._driver_button_engage_only = driver_button_engage_only(CP)
     self._cruise_available = False
     self._hold_interlock_active = False
     self._steering_interlock_active = False
@@ -866,13 +875,13 @@ class VCruiseCarrot:
     return v_cruise_kph
 
   def _cruise_control(self, enable, cancel_timer, reason, allow_cancel_state=False, manual=False):
-    # The Bolt ACC with pedal's panda in StarPilot mode allows longitudinal control only after the driver's own SET/RES
-    # on the wheel (StarPilot's rule), so an engage that is not that button (auto cruise, soft hold, remote, carrot
-    # command) would be refused there and end in Controls Mismatch. Those wait for the button instead.
+    # The panda of these cars (driver_button_engage_only) allows longitudinal control only after the driver's own
+    # SET/RES on the wheel, so an engage that is not that button (auto cruise, soft hold, remote, carrot command) would
+    # be refused there and end in Controls Mismatch. Those wait for the button instead.
     if enable > 0 and getattr(self, "_driver_button_engage_only", False):
       self._activate_cruise = 0
       self._soft_hold_active = 0
-      self._add_log(reason + " > needs SET/RES (Bolt ACC w Pedal)")
+      self._add_log(reason + " > needs the driver's SET/RES")
       return
     # Explicit HID button requests bypass automatic-engage preferences only;
     # availability/interlocks below and selfdrived's normal no-entry checks remain.

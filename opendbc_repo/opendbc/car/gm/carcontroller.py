@@ -14,6 +14,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.cluster_speed import gm_raw_display_kph_from_cluster_display_kph, \
   gm_malibu_raw_display_kph_from_cluster_display_kph
 from opendbc.car.gm.values import ASCM_INT_CAR, MALIBU_CLUSTER_CAR
+from opendbc.car.gm.stock_fcw import stock_fcw_replay_supported
 from opendbc.car.gm.manual_auto_hold import manual_hold_supported
 from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.gas_brake_hysteresis import GasBrakeHysteresis, has_gas_brake_step
@@ -82,6 +83,7 @@ class CarController(CarControllerBase):
       and CP.safetyConfigs and CP.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_SDGM
     )
     self.fcw_warning_test = FcwWarningTest() if self.traverse_sdgm_long else None
+    self.stock_fcw_replay = stock_fcw_replay_supported(CP)
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint][Bus.pt])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
@@ -409,8 +411,9 @@ class CarController(CarControllerBase):
             CS.cam_stock_long_active, stock_acc_status,
           )
 
-          # The panda blocks the camera 0x370 here, so its FCW only reaches the red LED through this frame.
-          stock_fcw_alert = CS.cam_fcw_alert if self.traverse_sdgm_long else 0
+          # The panda blocks the camera's (Malibu: the ASCM's) 0x370 here, so its FCW only reaches the car through
+          # this frame.
+          stock_fcw_alert = CS.cam_fcw_alert if self.stock_fcw_replay else 0
 
           # Do not emit the generic invalid Trailblazer state during startup;
           # wait at most one camera cycle for a stock 0x370 template.

@@ -6,14 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from openpilot.selfdrive.car.cruise import VCruiseCarrot
+from openpilot.selfdrive.car.cruise import VCruiseCarrot, driver_button_engage_only
 
 
-def helper(fingerprint, interceptor=True, starpilot=True):
+def helper(fingerprint, interceptor=True, starpilot=True, op_long=True):
   h = VCruiseCarrot.__new__(VCruiseCarrot)
-  h.CP = SimpleNamespace(carFingerprint=fingerprint, enableGasInterceptorDEPRECATED=interceptor, pcmCruise=False,
-                         openpilotLongitudinalControl=True, flags=1 if starpilot else 0)
-  h._driver_button_engage_only = (fingerprint == "CHEVROLET_BOLT_ACC_PEDAL" and interceptor and starpilot)
+  h.CP = SimpleNamespace(carFingerprint=fingerprint, enableGasInterceptorDEPRECATED=interceptor, pcmCruise=not op_long,
+                         openpilotLongitudinalControl=op_long, flags=1 if starpilot else 0)
+  h._driver_button_engage_only = driver_button_engage_only(h.CP)
   h._add_log = lambda log: None
   h._cruise_available = True
   h._steering_interlock_active = False
@@ -52,9 +52,31 @@ def test_other_setups_keep_carrot_auto_engage(fingerprint, interceptor, starpilo
 
 
 def test_flag_comes_from_car_params():
-  """__init__ derives the flag the same way; checked on the source line so a rename cannot drift silently."""
+  """__init__ derives the flag from CarParams through driver_button_engage_only."""
   import inspect
-  source = inspect.getsource(VCruiseCarrot.__init__)
-  assert 'getattr(CP, "carFingerprint", "") == "CHEVROLET_BOLT_ACC_PEDAL"' in source
-  assert 'getattr(CP, "enableGasInterceptorDEPRECATED", False)' in source
-  assert 'bool(int(getattr(CP, "flags", 0)) & 1)' in source
+  assert "self._driver_button_engage_only = driver_button_engage_only(CP)" in inspect.getsource(VCruiseCarrot.__init__)
+  cp = lambda fp, interceptor, flags, op_long: SimpleNamespace(carFingerprint=fp, enableGasInterceptorDEPRECATED=interceptor,
+                                                               flags=flags, openpilotLongitudinalControl=op_long)
+  assert driver_button_engage_only(cp("CHEVROLET_BOLT_ACC_PEDAL", True, 1, True))
+  assert not driver_button_engage_only(cp("CHEVROLET_BOLT_ACC_PEDAL", True, 0, True))   # mode 1
+  assert not driver_button_engage_only(cp("CHEVROLET_BOLT_ACC_PEDAL", False, 1, True))
+  assert driver_button_engage_only(cp("CHEVROLET_MALIBU_ASCM", False, 0, True))          # SASCM long
+  assert not driver_button_engage_only(cp("CHEVROLET_MALIBU_ASCM", False, 0, False))     # stock ACC
+  assert not driver_button_engage_only(cp("CHEVROLET_TRAVERSE", False, 0, True))
+
+
+@pytest.mark.parametrize('reason,manual', [("Cruise on (soft hold)", False), ("Cruise on (speed)", False),
+                                           ("Cruise on (carrot command)", False), ("Cruise on (Bluetooth button)", True)])
+def test_malibu_ascm_long_waits_for_the_button(reason, manual):
+  """Its panda grants control only from the driver's SET/RES, never from a 0x2CB apply (Codex review 2026-11-21)."""
+  h = helper("CHEVROLET_MALIBU_ASCM", interceptor=False, starpilot=False)
+  h._cruise_control(1, -1, reason, manual=manual)
+  assert h._activate_cruise == 0 and h._soft_hold_active == 0
+  h._cruise_control(-1, -1, "Cruise off (gas pressed)", allow_cancel_state=True, manual=True)
+  assert h._activate_cruise == -1
+
+
+def test_malibu_ascm_on_the_stock_acc_keeps_carrot_auto_engage():
+  h = helper("CHEVROLET_MALIBU_ASCM", interceptor=False, starpilot=False, op_long=False)
+  h._cruise_control(1, -1, "Cruise on (speed)")
+  assert h._activate_cruise == 1

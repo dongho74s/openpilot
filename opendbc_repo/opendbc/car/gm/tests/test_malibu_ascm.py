@@ -117,6 +117,35 @@ def test_gas_regen_limits_are_the_ascm_ones_the_panda_checks(runtime):
   assert (params.MAX_GAS, params.MAX_ACC_REGEN, params.INACTIVE_REGEN, params.MAX_BRAKE) == (1018.0, -650.0, -650.0, 400)
 
 
+@pytest.mark.parametrize("alpha", [True, False])
+def test_the_ascms_fcw_reaches_the_car(runtime, monkeypatch, alpha):
+  """The panda blocks the ASCM's 0x370 under openpilot longitudinal, so its FCWAlert is replayed on openpilot's 0x370
+  (StarPilot does the same; Codex review 2026-11-21). No new openpilot alert: stockFcw stays False."""
+  cp = malibu_cp(runtime, alpha, radar=True)
+  ci = malibu_interface(runtime, cp)
+  controller = runtime.controller.CarController(DBC[MALIBU_ASCM], ci.CP)
+  packer = runtime.CANPacker(DBC[MALIBU_ASCM][Bus.pt])
+  t0 = time.monotonic_ns()
+  dashboard = []
+  for tick in range(30):
+    now = t0 + tick * 10_000_000
+    slice_ = frames(packer, tick, ascm_counter=2)
+    fcw = packer.make_can_msg("ASCMActiveCruiseControlStatus", 2, {"ACCSpeedSetpoint": 80.0, "FCWAlert": 3})
+    slice_ = [m for m in slice_ if not (m[0] == 0x370 and m[2] == 2)] + [tuple(fcw)]
+    monkeypatch.setattr("opendbc.car.gm.stock_fcw.boottime_ns", lambda now=now: now)
+    ret = ci.update([(now, slice_)])
+    cc = structs.CarControl(enabled=True, latActive=True, longActive=alpha)
+    _, sends = controller.update(cc.as_reader(), ci.CS, now)
+    dashboard += [dat for addr, dat, bus in sends if addr == 0x370 and bus == 0]
+  assert not ret.stockFcw
+  if alpha:
+    assert ci.CS.cam_fcw_alert == 3
+    # from the first frame sent after the ASCM's alert was parsed
+    assert len(dashboard) > 2 and all((dat[5] & 0x3) == 3 for dat in dashboard[1:])
+  else:
+    assert ci.CS.stock_fcw is None and not dashboard   # stock ACC: the ASCM's own 0x370 is forwarded
+
+
 def test_frames_match_the_ascms_own_layout(runtime):
   """0x2CB and 0x370 exactly as the friend's ASCM sent them (rlog 0000001d--c1e04a331d--15, 2026-11-21)."""
   from opendbc.car.gm import gmcan

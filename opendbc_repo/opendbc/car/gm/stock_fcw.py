@@ -10,7 +10,7 @@ import math
 import time
 
 from opendbc.car import structs
-from opendbc.car.gm.values import CAR, GMSafetyFlags
+from opendbc.car.gm.values import ASCM_INT_CAR, CAR, GMSafetyFlags
 
 NetworkLocation = structs.CarParams.NetworkLocation
 
@@ -27,9 +27,17 @@ def boottime_ns() -> int:
 
 
 def stock_fcw_supported(CP) -> bool:
+  """The Traverse: the camera's FCW is replayed on openpilot's 0x370 and level 3 also raises stockFcw."""
   return bool(CP.carFingerprint == CAR.CHEVROLET_TRAVERSE and CP.openpilotLongitudinalControl
               and CP.networkLocation == NetworkLocation.fwdCamera
               and CP.safetyConfigs and CP.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_SDGM)
+
+
+def stock_fcw_replay_supported(CP) -> bool:
+  """Cars whose stock 0x370 the panda blocks under openpilot longitudinal, so its FCWAlert is replayed on openpilot's
+  0x370: the Traverse, and the Malibu ASCM harness with a SASCM, where the live ASCM still sets it (StarPilot keeps it
+  too; Codex review 2026-11-21). Only the replay for the Malibu: it raises no new openpilot alert."""
+  return stock_fcw_supported(CP) or bool(CP.carFingerprint in ASCM_INT_CAR and CP.openpilotLongitudinalControl)
 
 
 def _alert_value(value) -> int | None:

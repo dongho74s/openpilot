@@ -10,7 +10,7 @@ from opendbc.car.gm.cluster_speed import gm_cluster_cruise_speed_from_raw_ms, gm
   MALIBU_CLUSTER_RATIO
 from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
 from opendbc.car.gm.manual_auto_hold import ManualAutoHold, manual_hold_supported
-from opendbc.car.gm.stock_fcw import StockFcw, stock_fcw_supported
+from opendbc.car.gm.stock_fcw import StockFcw, stock_fcw_replay_supported, stock_fcw_supported
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CAMERA_ACC_CAR, \
   ASCM_INT_CAR, is_bolt_acc_pedal_starpilot, is_cc_only
 from opendbc.car.interfaces import CarStateBase
@@ -73,7 +73,8 @@ class CarState(CarStateBase):
     self.cam_stock_long_active = None
     self.cam_stock_long_cancel = False
     self.cam_acc_status = None
-    self.stock_fcw = StockFcw() if stock_fcw_supported(CP) else None
+    self.stock_fcw = StockFcw() if stock_fcw_replay_supported(CP) else None
+    self.stock_fcw_event = stock_fcw_supported(CP)
     self.cam_fcw_alert = 0
     # Bolt ACC with pedal: mode 1 runs camera long with the pedal only tapping to leave the ECM's ACC standstill; mode 2
     # (StarPilot) runs as a CC-only pedal-long car and replays the camera's 0x370 FCWAlert level on openpilot's 0x370.
@@ -319,8 +320,8 @@ class CarState(CarStateBase):
       self.cam_fcw_alert = self.stock_fcw.update(camera_status.get("FCWAlert", ()) if camera_status else (),
                                                  camera_times.get("FCWAlert", 0))
       # 3 is the collision alert seen with the seat pulse (11/4); 1 and 2 are not confirmed as one,
-      # so only 3 sets stockFcw, which car_specific turns into the existing forward-collision alert.
-      ret.stockFcw = self.cam_fcw_alert == 3
+      # so only 3 sets stockFcw, which car_specific turns into the existing forward-collision alert (the Traverse only).
+      ret.stockFcw = self.stock_fcw_event and self.cam_fcw_alert == 3
     if self.cc_only:
       ret.accFaulted = False
       ret.cruiseState.speed = pt_cp.vl["ECMCruiseControl"]["CruiseSetSpeed"] * CV.KPH_TO_MS
