@@ -1,8 +1,11 @@
 import math
 import time
 
+import numpy as np
+
 from openpilot.cereal import log
 from openpilot.common.constants import CV
+from openpilot.common.filter_simple import MyMovingAverage
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.params import Params
 from openpilot.selfdrive.carrot.bluetooth.model import CommandReader, RUNTIME, read_json
@@ -47,6 +50,11 @@ OVERTAKE_ANNOUNCE_S = 2.0
 OVERTAKE_ARMED_TIMEOUT_S = 3.0
 OVERTAKE_MIN_SPEED_KPH = 60.0
 OVERTAKE_MAX_LEAD_DIST_M = 150.0
+# Signal-stop guard: when the model plans to stop, a planned stop point this
+# close to the lead car counts as stopping FOR the lead (lead following),
+# not for a signal. The same 2 m boundary the signal-stop logic already uses
+# (lead_in_stop_range) to tell a lead stop from a signal stop.
+OVERTAKE_SIGNAL_STOP_LEAD_GAP_M = 2.0
 
 # ── Auto overtake return (return to the original lane after an overtake) ───
 # After an automatic left-lane overtake, return to the original (right) lane
@@ -162,6 +170,10 @@ class DesireHelper:
     # lead is clearly the same car).
     self._overtake_lead_d0 = 0.0
     self._overtake_lead_v0 = 0.0
+    # Signal-stop guard for the auto overtake: moving averages matching
+    # CarrotPlanner's stop detection (vFilter window 10, xStop median 3).
+    self._signal_v_filter = MyMovingAverage(10)
+    self._signal_stop_x_filter = MyMovingAverage(3)
 
     # auto overtake return (return to the original lane after an overtake).
     # States: "off" -> "overtaking" (left lane, watching the pass) -> "delay"
@@ -497,25 +509,80 @@ class DesireHelper:
   def _is_last_lane(side: SideState) -> bool:
     return side.lane_exist_count.counter <= 0 and not side.lane_change_available_geom
 
+  def _model_signal_stop(self, modeldata, carstate, radarState):
+    """True when the driving model plans to stop for a signal (red or solid
+    yellow light, stop line) ahead, as opposed to stopping behind the lead
+    car. Port of CarrotPlanner.check_model_stopping + lead_in_stop_range
+    (openpilot/selfdrive/carrot/carrot_functions.py); keep the thresholds in
+    sync with that code. Two deliberate differences from the port source:
+    the firm-decel suppression is left out (the guard needs the stop intent
+    during the whole approach, not only once the car is nearly stopped), and
+    a missing or malformed plan returns False, so a bad model frame never
+    blocks an overtake. The camera signal pipeline has no yellow class
+    (red/green only), so a solid yellow light is covered here through the
+    model's stop plan, the same way the car stops at yellow today.
+    """
+    try:
+      x = modeldata.position.x
+      y = modeldata.position.y
+      v = modeldata.velocity.x
+      if len(x) < 32 or len(v) < 1 or len(y) < 1:
+        return False
+      v_ego_kph = float(carstate.vEgo) * CV.MS_TO_KPH
+      v0 = float(v[0])
+      model_v = self._signal_v_filter.process(float(v[-1]))
+      model_x = float(x[-1])
+      y_end = float(y[-1])
+    except (AttributeError, TypeError, ValueError, IndexError):
+      return False
+    lead = getattr(radarState, "leadOne", None)
+    lead_ok = bool(lead is not None and getattr(lead, "status", False))
+    lead_dist = float(getattr(lead, "dRel", 0.0) or 0.0) if lead_ok else 1000.0
+    # Planned stop point (same index CarrotPlanner uses for xStop).
+    stop_x = self._signal_stop_x_filter.process(float(x[31]), median=True)
+    # The planned stop is for the lead car, not for a signal: the stop point
+    # sits within 2 m of the lead. A stopped lead on the open road must
+    # still be overtaken; only a stop well before the lead is a signal stop.
+    if (lead_ok and lead_dist > 0 and math.isfinite(lead_dist)
+            and math.isfinite(stop_x)
+            and (lead_dist - stop_x) < OVERTAKE_SIGNAL_STOP_LEAD_GAP_M):
+      return False
+    # Does the model plan to stop? Same speed bands as check_model_stopping.
+    if v_ego_kph < 1.0:
+      stop_sign = model_x < 20.0 and model_v < 10.0
+    elif v_ego_kph < 82.0:
+      stop_sign = (
+        model_x < lead_dist - 3.0
+        and model_x < np.interp(v0 * CV.MS_TO_KPH, [60.0, 80.0], [120.0, 150.0])
+        and ((model_v < 3.0) or (model_v < v0 * 0.7))
+        and abs(y_end) < 5.0
+      )
+    else:
+      stop_sign = False
+    return bool(stop_sign)
+
   # ─────────────────────────────────────────────
   # auto overtake
   # ─────────────────────────────────────────────
-  def _update_auto_overtake(self, carstate, radarState, lateral_active):
+  def _update_auto_overtake(self, carstate, radarState, lateral_active, signal_stop=False):
     """Automatic left-lane overtake.
 
     Trigger: engaged, ego speed >= OVERTAKE_MIN_SPEED_KPH, a lead car is
     present and at least OVERTAKE_SPEED_DIFF_KPH slower than the cruise set
     speed, and the left lane change is available (this already encodes the
     solid-line check via LaneLineCheck and the left-side obstacle/BSD check).
-    On trigger, announce with the existing lane-change notification (left
-    blinker) for OVERTAKE_ANNOUNCE_S, then arm the normal auto-lane-change
-    path so the FSM starts the change. Any loss of the trigger condition,
-    a solid line appearing, the left lane becoming blocked, or driver
-    intervention cancels the overtake before the lane change starts. After
-    arming, the state is "armed" (not "off") until the lane change actually
-    starts, so a still-slow lead cannot immediately re-trigger a new
-    announcement; if the lane change has not started within
-    OVERTAKE_ARMED_TIMEOUT_S the arming is withdrawn.
+    A model-planned signal stop (red or solid yellow light, stop line)
+    blocks the trigger: a stopped car at a signal is never overtaken, while
+    a stopped car on the open road still is. On trigger, announce with the
+    existing lane-change notification (left blinker) for
+    OVERTAKE_ANNOUNCE_S, then arm the normal auto-lane-change path so the
+    FSM starts the change. Any loss of the trigger condition, a solid line
+    appearing, the left lane becoming blocked, or driver intervention
+    cancels the overtake before the lane change starts. After arming, the
+    state is "armed" (not "off") until the lane change actually starts, so
+    a still-slow lead cannot immediately re-trigger a new announcement; if
+    the lane change has not started within OVERTAKE_ARMED_TIMEOUT_S the
+    arming is withdrawn.
     """
     # Auto overtake off (AutoOvertake setting): never trigger, and drop any
     # announcement/arming already in progress.
@@ -552,6 +619,7 @@ class DesireHelper:
 
     trigger = (
       lead_ok and
+      not signal_stop and
       v_ego_kph >= OVERTAKE_MIN_SPEED_KPH and
       v_cruise_kph > 0.0 and
       (v_cruise_kph - lead_kph) >= OVERTAKE_SPEED_DIFF_KPH and
@@ -1026,9 +1094,12 @@ class DesireHelper:
     # auto overtake (left-lane overtake when the lead is much slower than the
     # cruise set speed). Runs after _process_sides so the left lane's solid-line
     # and obstacle state is known, and before the blinker update so the
-    # announcement (left blinker) is picked up in this same frame.
+    # announcement (left blinker) is picked up in this same frame. A
+    # model-planned signal stop (red / solid yellow light, stop line) blocks
+    # the overtake; a stopped lead on the open road still triggers it.
     if not trailer_maneuver_blocked:
-      self._update_auto_overtake(carstate, radarState, lateral_active)
+      signal_stop = self._model_signal_stop(modeldata, carstate, radarState)
+      self._update_auto_overtake(carstate, radarState, lateral_active, signal_stop=signal_stop)
     # The return is called unconditionally: it must cancel itself when the
     # trailer connects (or lateral control drops) instead of freezing.
     self._update_overtake_return(carstate, modeldata, radarState, lateral_active, carrotMan)
