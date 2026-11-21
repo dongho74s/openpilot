@@ -484,8 +484,67 @@ def test_longitudinal_frames_are_the_bolt_euvs_without_pedal_long(runtime, monke
   euv = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False)
   euv.flags &= ~GMFlags.PEDAL_LONG.value
   euv.autoResumeSng = False
-  assert controller_stream_cp(runtime, monkeypatch, bolt_cp(runtime, BOLT, True, False), pitch, resume=False) == \
-         controller_stream_cp(runtime, monkeypatch, euv, pitch, resume=False)
+  bolt_stream = controller_stream_cp(runtime, monkeypatch, bolt_cp(runtime, BOLT, True, False), pitch, resume=False)
+  euv_stream = controller_stream_cp(runtime, monkeypatch, euv, pitch, resume=False)
+  # The 0x370 gap level differs only before engaging (test_cluster_gap_shows_before_engaging)
+  assert without_gap_level(bolt_stream) == without_gap_level(euv_stream)
+  assert bolt_stream != euv_stream
+
+
+def without_gap_level(stream):
+  out = []
+  for sends, *rest in stream:
+    masked = []
+    for addr, dat, bus in sends:
+      if addr == 0x370:
+        raw = bytearray.fromhex(dat)
+        raw[2] &= ~0x30
+        dat = raw.hex()
+      masked.append([addr, dat, bus])
+    out.append([masked, *rest])
+  return out
+
+
+def cluster_gaps(runtime, monkeypatch, cp, *, enabled, available, bars, can_valid=True):
+  monkeypatch.setattr(runtime.controller, "Params", memory_params())
+  controller = runtime.controller.CarController(DBC[cp.carFingerprint], cp)
+  gaps = []
+  for frame in range(12):
+    cc = structs.CarControl(enabled=enabled, longActive=enabled, latActive=enabled)
+    cc.actuators.longControlState = "pid" if enabled else "off"
+    cc.hudControl.setSpeed = 20.0
+    cc.hudControl.leadDistanceBars = bars
+    out = structs.CarState(vEgo=15.0, aEgo=0.0, canValid=can_valid)
+    out.cruiseState.available = available
+    out.cruiseState.enabled = enabled
+    out.gearShifter = "drive"
+    cs = NS(out=out, CP=controller.CP, loopback_lka_steering_cmd_ts_nanos=0, loopback_lka_steering_cmd_updated=False,
+            cam_lka_steering_cmd_counter=0, pt_lka_steering_cmd_counter=0, buttons_counter=0,
+            pcm_acc_status=1 if enabled else 0, pscm_status=defaultdict(int),
+            cam_ascm_2cb_counter=0, cam_ascm_2cb_counter_updated=False, cam_ascm_2cb_counter_ts_nanos=0,
+            cam_stock_long_active=None, cam_stock_long_cancel=False, cam_acc_status=None, cam_fcw_alert=0, stock_fcw_alert=0)
+    _, sends = controller.update(cc.as_reader(), cs, 1_000_000_000 + frame * 10_000_000)
+    gaps += [((dat[2] >> 4) & 3, (dat[2] >> 7) & 1) for addr, dat, bus in sends if addr == 0x370 and bus == 0]
+  return set(gaps)
+
+
+@pytest.mark.parametrize("bars", [1, 2, 3, 4])
+def test_cluster_gap_shows_before_engaging(runtime, monkeypatch, bars):
+  """User report 2026-11-21: after a gap press the cluster kept an old gap (2) while the comma showed the new one (3).
+  The stock camera sends its gap in 0x370 before engaging too (00 02 22 cd 00 00 in rlog 00000028--02c4808d1b--21);
+  this sent 0 there. Now: up to 3 bars (2 bits) with ACC main on, engaged or not, and ACCCmdActive only when engaged."""
+  cp = bolt_cp(runtime, BOLT, True, False)
+  shown = min(bars, 3)
+  assert cluster_gaps(runtime, monkeypatch, cp, enabled=False, available=True, bars=bars) == {(shown, 0)}
+  assert cluster_gaps(runtime, monkeypatch, cp, enabled=True, available=True, bars=bars) == {(shown, 1)}
+  assert cluster_gaps(runtime, monkeypatch, cp, enabled=False, available=False, bars=bars) == {(0, 0)}
+  assert cluster_gaps(runtime, monkeypatch, cp, enabled=False, available=True, bars=bars, can_valid=False) == {(0, 0)}
+
+
+def test_other_bolts_keep_no_gap_before_engaging(runtime, monkeypatch):
+  euv = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True)
+  assert cluster_gaps(runtime, monkeypatch, euv, enabled=False, available=True, bars=2) == {(0, 0)}
+  assert cluster_gaps(runtime, monkeypatch, euv, enabled=True, available=True, bars=2) == {(2, 1)}
 
 
 def hybrid_step(controller, frame, *, accel, state, v, cruise_standstill, cruise_enabled=True, resume=False):

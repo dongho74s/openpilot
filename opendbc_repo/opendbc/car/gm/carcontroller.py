@@ -394,8 +394,11 @@ class CarController(CarControllerBase):
           send_fcw = hud_alert == VisualAlert.fcw or test_fcw
           dashboard_speed_kph = get_acc_dashboard_speed_kph(self.CP, hud_v_cruise * CV.MS_TO_KPH)
           dashboard_gap_level = None
-          if self.traverse_sdgm_long:
-            # Request up to three display bars even in standby, without asserting ACC active.
+          if self.traverse_sdgm_long or self.bolt_acc_pedal_sng:
+            # Request up to three display bars even in standby, without asserting ACC active. The Bolt ACC with pedal's
+            # stock camera sends its gap there too (0x370 00 02 22 cd 00 00 before engaging, rlog
+            # 00000028--02c4808d1b--21); with 0 the cluster kept an old gap while the comma showed the new one after a
+            # gap press (user report 2026-11-21: cluster 2, comma 3).
             dashboard_gap_level = min(hud_control.leadDistanceBars, 3) if CS.out.canValid and CS.out.cruiseState.available else 0
           is_trailblazer = self.CP.carFingerprint == CAR.CHEVROLET_TRAILBLAZER
           stock_acc_status = CS.cam_acc_status if is_trailblazer else None
