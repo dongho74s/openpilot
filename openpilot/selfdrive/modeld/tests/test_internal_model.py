@@ -331,7 +331,7 @@ def test_compile_command_uses_the_stock_build_flags(monkeypatch, tmp_path):
   im.model_dir(RDF).mkdir(parents=True)
   m.compile(RDF, 1, im.onnx_path(RDF), "stamp-1")
   cmd = seen["cmd"]
-  assert cmd[0] != "taskset" and Path(cmd[1]).name == "compile_modeld.py"
+  assert cmd[0] != "taskset" and Path(cmd[1]).name == "compile_internal.py" and cmd[2] == "queue"
   assert cmd[cmd.index("--camera-resolutions") + 1] == "1344x760" and cmd[cmd.index("--frame-skip") + 1] == "4"
   assert cmd[cmd.index("--model-size") + 1] == "512x256"
   assert all(seen["env"][k] == v for k, v in imm.QCOM_FLAGS.items())
@@ -356,8 +356,41 @@ def test_a_state_queue_model_is_compiled_with_its_own_compiler(monkeypatch):
   model = im.find("CHDRIVING")
   im.model_dir(model).mkdir(parents=True)
   m.compile(model, 1, im.onnx_path(model), "stamp-1")
-  assert Path(seen["cmd"][1]).name == "compile_modeld_state.py"
-  assert (imm.MODELD_DIR / "compile_modeld_state.py").is_file()
+  assert Path(seen["cmd"][1]).name == "compile_internal.py" and seen["cmd"][2] == "state"
+  assert all((imm.MODELD_DIR / f).is_file() for f in ("compile_internal.py", "compile_modeld_state.py", "compile_modeld.py"))
+
+
+def test_compile_internal_keeps_kernels_with_large_private_memory_out(monkeypatch):
+  import struct
+  import tinygrad.engine.realize as realize
+  from types import SimpleNamespace as NS
+  from openpilot.selfdrive.modeld import compile_internal as ci
+
+  def lib(pvt):
+    b = bytearray(0x400)
+    struct.pack_into("<I", b, 0x110, 0x200)
+    struct.pack_into("<I", b, 0x200 + 0xc8, pvt)
+    return bytes(b)
+  assert ci.qcom_pvtmem(lib(3232)) == 3232 and ci.qcom_pvtmem(b"short") is None
+
+  from tinygrad.helpers import NOOPT
+  calls = []
+  def orig(ast, renderer):
+    noopt = bool(NOOPT.value)
+    calls.append((ast, noopt))
+    pvt = {"big": 3232 if not noopt else 120, "small": 60, "worse": 400}[ast]
+    return NS(src=(None, None, None, None, NS(arg=lib(pvt))), arg=NS(name=ast))
+  monkeypatch.setattr(realize, "to_program", orig)
+  qcom = type("QCOMCLRenderer", (), {})()
+  qcom.target = NS(device="QCOM")
+  logs = []
+  ci.keep_kernels_small(log=lambda *a, **k: logs.append(a[0]))
+  assert ci.qcom_pvtmem(realize.to_program("small", qcom).src[4].arg) == 60          # small kernels: compiled once
+  assert ci.qcom_pvtmem(realize.to_program("big", qcom).src[4].arg) == 120           # recompiled without optimizations
+  assert calls[-2:] == [("big", False), ("big", True)] and "needs 3232 B" in logs[-1]
+  cpu = type("ClangRenderer", (), {})()
+  cpu.target = NS(device="CPU")
+  assert ci.qcom_pvtmem(realize.to_program("big", cpu).src[4].arg) == 3232           # other devices untouched
 
 
 def test_unreadable_metadata_at_compile_is_a_contract_error(monkeypatch):
@@ -817,3 +850,23 @@ def test_read_metadata_matches_get_model_metadata_on_real_models_when_available(
   from openpilot.selfdrive.modeld.get_model_metadata import make_metadata_dict
   from openpilot.selfdrive.modeld.internal_model_onnx import read_metadata
   assert read_metadata(path) == make_metadata_dict(str(path))
+
+
+@pytest.mark.parametrize("shape,axis,n_idx", [((1, 33, 8), 1, 300), ((33, 8), 0, 225), ((2, 5, 40), -1, 64), ((3, 50), 1, 10)])
+def test_large_constant_gathers_become_a_matmul_with_the_same_values(monkeypatch, shape, axis, n_idx):
+  import numpy as np
+  import tinygrad.nn.onnx as onnx
+  from tinygrad.tensor import Tensor
+  from openpilot.selfdrive.modeld import compile_internal as ci
+  monkeypatch.setitem(onnx.onnx_ops, "Gather", onnx.onnx_ops["Gather"])   # restored after the test
+  orig = onnx.onnx_ops["Gather"]
+  rng = np.random.default_rng(1)
+  x = rng.standard_normal(shape).astype(np.float16)
+  n = shape[axis]
+  idx = [int(i) for i in rng.integers(-n, n, n_idx)]
+  want = orig(Tensor(x), idx, axis).numpy()
+  ci.gather_large_constant_indices_by_matmul()
+  got = onnx.onnx_ops["Gather"](Tensor(x), idx, axis).numpy()
+  assert got.shape == want.shape and np.array_equal(got, want)
+  ints, int_idx = Tensor(np.arange(12, dtype=np.int32)), list(range(-5, 7)) * 4   # integer data: tinygrad's own gather
+  assert np.array_equal(onnx.onnx_ops["Gather"](ints, int_idx, 0).numpy(), orig(ints, int_idx, 0).numpy())
