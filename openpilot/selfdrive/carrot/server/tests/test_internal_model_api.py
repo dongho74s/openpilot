@@ -53,11 +53,11 @@ def test_select_writes_the_request_offroad(feature):
 
 
 @pytest.mark.parametrize("key", ["onroad", "engaged"])
-def test_select_is_refused_while_driving(feature, key):
+def test_select_is_accepted_while_driving_and_modeld_switches_when_disengaged(feature, key):
   feature.state[key] = True
   status, payload = call(feature.api_select, {"id": "RDF"})
-  assert status == 409 and not payload["ok"]
-  assert im.requested_model().id == im.STOCK_ID
+  assert status == 200 and payload["ok"] and payload["can_select"] is True
+  assert im.requested_model().id == "RDF" and payload[key] is True
 
 
 @pytest.mark.parametrize("body", [{"id": "NOPE"}, {}, ["RDF"], ValueError("bad json")])

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import gc
 import os
 import signal
 os.environ['GMMU'] = '0' # for usbgpu fast loading, noop for qcom
@@ -168,6 +169,12 @@ class ModelState:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
     return parsed_model_outputs
 
+  @property
+  def history_seconds(self) -> float:
+    """How long the recurrent history takes to fill after a reset."""
+    steps = self.input_shapes['state_feat_q'][0] if self.state_model else self.input_shapes['features_buffer'][1] * self.frame_skip
+    return steps / ModelConstants.MODEL_RUN_FREQ
+
   def reset(self):
     # Returning from a recovered external model must not reuse old local history.
     self.prev_desire[:] = 0
@@ -262,6 +269,76 @@ def create_internal_model(cam_w: int, cam_h: int, usbgpu_model_loaded: bool, mod
       cloudlog.exception("selected internal model %s failed to load; using the stock model", selected.model.id)
       internal_model.record_load_failure(selected)
   return model_state(cam_w, cam_h, False, enable_shadow=not usbgpu_model_loaded), None
+
+
+def install_clean_stop_handler() -> None:
+  """The manager stops modeld with SIGINT. Mark that stop as clean, also while the selected model is still loading,
+  so only a crash (no mark) counts against it; then raise KeyboardInterrupt as the default handler does."""
+  def stop_cleanly(signum, frame):
+    internal_model.mark_clean_stop()
+    signal.default_int_handler(signum, frame)
+  signal.signal(signal.SIGINT, stop_cleanly)
+
+
+class LiveSwitch:
+  """Switch the internal model selected in the carrot web while driving, between frames, when neither openpilot nor
+  its lateral or longitudinal control is active, if the selection is ready to load (stock, or compiled for this build
+  and camera: compiling needs the parked manager). Loading stalls modeld for a moment and the new model starts with
+  an empty history, so InternalModelSwitching keeps engagement blocked (selfdrived: selfdriveInitializing) until the
+  history has filled."""
+  CHECK_FRAMES = 20  # once a second
+  MARGIN_SECONDS = 1.0
+
+  def __init__(self, params, internal_selected):
+    self.params = params
+    self.token = internal_model.request_token()
+    self.running_sha = internal_selected.model.sha256 if internal_selected is not None else internal_model.stock_model().sha256
+    self.block_until = 0.0
+    params.put_bool("InternalModelSwitching", False)
+
+  def tick(self, now: float) -> None:
+    if self.block_until and now >= self.block_until:
+      self.block_until = 0.0
+      self.params.put_bool_nonblocking("InternalModelSwitching", False)
+
+  def wanted(self, frame: int, engaged: bool, cam_w: int, cam_h: int) -> bool:
+    if frame % self.CHECK_FRAMES or engaged:
+      return False
+    token = internal_model.request_token()
+    if token == self.token or not internal_model.live_switch_ready(cam_w, cam_h):
+      return False  # an uncompiled selection keeps being checked; the manager compiles it once parked
+    self.token = token
+    if internal_model.requested_model().sha256 == self.running_sha:
+      return False  # the running model was selected again
+    return True
+
+  def switch(self, model, small_model, cam_w: int, cam_h: int, usbgpu_model_loaded: bool, bufs):
+    """Load the selection in place of small_model. Returns (model, small_model, selected); the caller drops the old one."""
+    from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model
+    self.params.put_bool("InternalModelSwitching", True)
+    self.block_until = float('inf')
+    started = time.monotonic()
+    if not internal_model.requested_model().stock:
+      install_clean_stop_handler()  # as at startup; the stock model keeps the default SIGINT behaviour
+    new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded)
+    try:
+      warm_internal_model(new_small, {name: bufs[name] for name in new_small.vision_input_names})
+    except Exception:
+      if selected is None:
+        raise
+      cloudlog.exception("internal model %s failed its warmup after a live switch; using the stock model", selected.model.id)
+      internal_model.record_runtime_failure(selected)
+      new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded)  # blocked now: the stock model
+      warm_internal_model(new_small, {name: bufs[name] for name in new_small.vision_input_names})
+    if model is small_model:
+      model = new_small
+    elif getattr(model, 'small', None) is small_model:
+      model.small = new_small  # the Jetlink wrapper runs or keeps it on standby
+    self.running_sha = selected.model.sha256 if selected is not None else internal_model.stock_model().sha256
+    self.block_until = time.monotonic() + new_small.history_seconds + self.MARGIN_SECONDS
+    cloudlog.warning("internal model switched live to %s in %.2fs", selected.model.id if selected else internal_model.STOCK_ID,
+                     time.monotonic() - started)
+    return model, new_small, selected
 
 
 def main(demo=False):
@@ -379,15 +456,11 @@ def main(demo=False):
   # receives no live samples. Keep standby inference/warmup and fallback intact;
   # optional comparison remains available when internal inference starts active.
   if not internal_model.requested_model().stock:
-    # The manager stops modeld with SIGINT. Mark that stop as clean, also while the selected model is still loading,
-    # so only a crash (no mark) counts against it; then raise KeyboardInterrupt as the default handler does.
-    def stop_cleanly(signum, frame):
-      internal_model.mark_clean_stop()
-      signal.default_int_handler(signum, frame)
-    signal.signal(signal.SIGINT, stop_cleanly)
+    install_clean_stop_handler()
   small_model, internal_selected = create_internal_model(vipc_client_main.width, vipc_client_main.height,
                                                          usbgpu_model_loaded) if model is None or USBGPU else (None, None)
   internal_health = internal_model.HealthTracker(internal_selected)
+  live_switch = LiveSwitch(params, internal_selected)
   if usbgpu_model_loaded:
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
     try:
@@ -507,6 +580,19 @@ def main(demo=False):
     sm.update(0)
     if hasattr(model, 'update'):
       model.update(sm, meta_main)
+    live_switch.tick(camera_ready)
+    engaged = (sm['selfdriveState'].enabled or sm['selfdriveState'].active or
+               sm['carControl'].latActive or sm['carControl'].longActive)
+    if small_model is not None and live_switch.wanted(frame, engaged, vipc_client_main.width, vipc_client_main.height):
+      live_bufs = {'img': buf_main, 'big_img': buf_extra if buf_extra is not None else buf_main}
+      model, small_model, internal_selected = live_switch.switch(model, small_model, vipc_client_main.width,
+                                                                vipc_client_main.height, usbgpu_model_loaded, live_bufs)
+      internal_health = internal_model.HealthTracker(internal_selected)
+      gc.collect()  # free the previous internal model's buffers now that nothing references it
+      # the load took a while: start again from a fresh camera pair, without counting the gap as dropped frames
+      last_vipc_frame_id = meta_main.frame_id
+      run_count = 0
+      continue
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId

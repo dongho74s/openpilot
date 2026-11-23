@@ -48,9 +48,11 @@ const FALLBACK_STRINGS = {
   failure_build: "Waiting for the openpilot build to finish. It retries automatically.",
   failure_template: "This model is built from the stock model file, which changed after an update. It needs a newer software version.",
   failure_unknown: "Preparation failed. The stock model stays in use.",
-  onroad_note: "The driving model can only be changed while parked with the ignition off.",
-  confirm: "Switch the driving model to {name}? It is downloaded and compiled while parked (about 10-20 minutes) and used from the next drive.",
-  confirm_stock: "Switch back to the stock driving model? It is used from the next drive.",
+  live: "Switches when disengaged",
+  live_detail: "{name} is ready. It replaces the current driving model as soon as openpilot is disengaged; engaging stays blocked for about 5-7 seconds after the switch.",
+  live_stock_detail: "The stock model replaces the current one as soon as openpilot is disengaged; engaging stays blocked for about 5 seconds after the switch.",
+  confirm: "Switch the driving model to {name}? If it is already compiled it switches as soon as openpilot is disengaged. Otherwise it is downloaded and compiled while parked (about 10-20 minutes) and used from the next drive.",
+  confirm_stock: "Switch back to the stock driving model? It switches as soon as openpilot is disengaged.",
   applied: "Driving model selection saved.",
 };
 
@@ -82,8 +84,11 @@ function canRetry(status) {
 // What the card shows: { state, detailKey } for a /api/internal_model payload.
 function describe(status) {
   const requested = modelById(status, status?.requested);
+  const changing = !!status?.active && status.active !== status?.requested;
   if (!requested || requested.stock) {
-    return { state: "stock", detailKey: status?.active && status.active !== status.requested ? "stock_next_detail" : "stock_detail" };
+    // while driving modeld switches as soon as nothing is engaged (the stock model is always ready)
+    if (changing && status.onroad) return { state: "live", detailKey: "live_stock_detail" };
+    return { state: "stock", detailKey: changing ? "stock_next_detail" : "stock_detail" };
   }
   const phase = String(status.phase || "waiting");
   if (phase === "error") {
@@ -94,6 +99,7 @@ function describe(status) {
     if (status.active === requested.id && status.in_use !== false) return { state: "active", detailKey: "active_detail" };
     const key = `fallback_${status.fallback_reason}`;
     if (status.fallback_reason && Object.hasOwn(FALLBACK_STRINGS, key)) return { state: "ready", detailKey: key };
+    if (status.onroad && changing) return { state: "live", detailKey: "live_detail" };
     return { state: "ready", detailKey: "ready_detail" };
   }
   if (["downloading", "verifying", "validating", "compiling"].includes(phase)) return { state: phase, detailKey: `${phase}_detail` };
@@ -134,7 +140,7 @@ function render(status = lastStatus) {
     }));
     select.value = userChoice || status.requested;
   }
-  if (select) select.disabled = !status.can_select || applying;
+  if (select) select.disabled = applying;
 
   const percent = Number(status.progress);
   const showProgress = state === "downloading" && Number.isFinite(percent);
@@ -142,12 +148,12 @@ function render(status = lastStatus) {
   document.getElementById("internalModelProgressBar").style.width = `${Math.min(100, Math.max(0, percent || 0))}%`;
   document.getElementById("internalModelAmount").textContent = showProgress
     ? `${formatBytes(status.downloaded_bytes)} / ${formatBytes(status.total_bytes)} · ${percent.toFixed(1)}%`
-    : (state === "compiling" ? elapsedText(status.started_at) : (status.can_select ? "" : t("onroad_note")));
+    : (state === "compiling" ? elapsedText(status.started_at) : "");
 
   const button = document.getElementById("btnInternalModelApply");
   if (button) {
     button.textContent = applying ? t("checking") : t("apply");
-    button.disabled = applying || !status.can_select || !select || (select.value === status.requested && !canRetry(status));
+    button.disabled = applying || !select || (select.value === status.requested && !canRetry(status));
   }
 }
 

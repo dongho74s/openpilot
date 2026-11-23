@@ -588,8 +588,9 @@ def test_modeld_marks_the_managers_sigint_as_a_clean_stop_before_loading_the_mod
   tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
   function = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
   body = ast.unparse(function)
-  assert body.index("signal.signal(signal.SIGINT, stop_cleanly)") < body.index("create_internal_model(vipc_client_main")
-  block = next(n for n in ast.walk(function) if isinstance(n, ast.If) and "signal.signal" in ast.unparse(n.body))
+  assert body.index("install_clean_stop_handler()") < body.index("create_internal_model(vipc_client_main")
+  block = next(n for n in ast.walk(function) if isinstance(n, ast.If) and "install_clean_stop_handler" in ast.unparse(n.body))
+  installer = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "install_clean_stop_handler")
   handlers, stops = {}, []
   def default_int_handler(signum, frame):
     raise KeyboardInterrupt
@@ -600,7 +601,7 @@ def test_modeld_marks_the_managers_sigint_as_a_clean_stop_before_loading_the_mod
     internal = type("I", (), {"mark_clean_stop": staticmethod(lambda: stops.append(1)),
                               "requested_model": staticmethod(lambda stock=stock: type("M", (), {"stock": stock}))})
     scope = {"signal": fake_signal, "internal_model": internal}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[block], type_ignores=[])), "<sigint>", "exec"), scope)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[installer, block], type_ignores=[])), "<sigint>", "exec"), scope)
     assert (2 in handlers) == installed   # the stock model keeps the default SIGINT behaviour
   with pytest.raises(KeyboardInterrupt):
     handlers[2](2, None)
@@ -872,3 +873,103 @@ def test_large_constant_gathers_become_a_matmul_with_the_same_values(monkeypatch
     onnx.onnx_ops["Gather"](Tensor(x), [-2 * n] * 40, axis).numpy()   # out of range: rejected, as before
   ints, int_idx = Tensor(np.arange(12, dtype=np.int32)), list(range(-5, 7)) * 4   # integer data: tinygrad's own gather
   assert np.array_equal(onnx.onnx_ops["Gather"](ints, int_idx, 0).numpy(), orig(ints, int_idx, 0).numpy())
+
+
+def live_switch_class(create, warm, records, monkeypatch):
+  """modeld.LiveSwitch with fakes for what modeld.py imports natively (VisionIPC, tinygrad)."""
+  import ast
+  tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
+  nodes = [n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in ("LiveSwitch", "install_clean_stop_handler")]
+  import time as time_module
+  warmup = type("W", (), {"warm_internal_model": staticmethod(warm)})
+  import sys
+  monkeypatch.setitem(sys.modules, "openpilot.selfdrive.modeld.internal_model_warmup", warmup)
+  internal = type("I", (), {k: staticmethod(getattr(im, k)) for k in ("request_token", "live_switch_ready", "requested_model", "stock_model")})
+  internal.STOCK_ID = im.STOCK_ID
+  internal.record_runtime_failure = staticmethod(lambda selected: records.append(("runtime_failed", selected.model.id)))
+  internal.mark_clean_stop = staticmethod(lambda: None)
+  scope = {"internal_model": internal, "create_internal_model": create, "time": time_module,
+           "cloudlog": type("L", (), {"warning": staticmethod(lambda *a: None), "exception": staticmethod(lambda *a: None)}),
+           "signal": type("S", (), {"SIGINT": 2, "signal": staticmethod(lambda *a: records.append("sigint")), "default_int_handler": None})}
+  exec(compile(ast.Module(body=nodes, type_ignores=[]), "<live_switch>", "exec"), scope)
+  return scope["LiveSwitch"]
+
+
+class FakeSwitchParams:
+  def __init__(self):
+    self.values = {}
+  def put_bool(self, key, value):
+    self.values[key] = value
+  put_bool_nonblocking = put_bool
+
+
+class FakeState:
+  def __init__(self, name, history=4.8):
+    self.name, self.history_seconds, self.vision_input_names = name, history, ["img", "big_img"]
+
+
+def test_live_switch_waits_for_a_new_ready_selection_and_no_engagement(monkeypatch):
+  records, params = [], FakeSwitchParams()
+  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  sw = LiveSwitch(params, None)
+  assert params.values["InternalModelSwitching"] is False
+  assert not sw.wanted(20, False, *CAM)                 # nothing selected since modeld started
+  im.write_request(RDF, now=1)
+  assert not sw.wanted(20, False, *CAM)                 # RDF is not compiled: wait for the parked manager...
+  compile_ok(RDF)
+  assert not sw.wanted(21, False, *CAM)                 # ...checked once a second
+  assert not sw.wanted(40, True, *CAM)                  # never while engaged or lateral/longitudinal is active
+  assert sw.wanted(40, False, *CAM)
+  assert not sw.wanted(60, False, *CAM)                 # consumed
+
+
+def test_live_switch_ignores_the_running_model_selected_again(monkeypatch):
+  records, params = [], FakeSwitchParams()
+  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  compile_ok(RDF)
+  sw = LiveSwitch(params, im.Selected(RDF, im.pkl_path(RDF)))
+  im.write_request(RDF, now=5)
+  assert not sw.wanted(20, False, *CAM)
+  im.write_request(im.stock_model(), now=6)
+  assert sw.wanted(20, False, *CAM)                     # back to stock: always ready
+
+
+def test_live_switch_replaces_the_internal_model_and_blocks_engagement_until_its_history_filled(monkeypatch):
+  records, params = [], FakeSwitchParams()
+  selected = im.Selected(RDF, im.pkl_path(RDF))
+  new = FakeState("new", history=6.4)
+  LiveSwitch = live_switch_class(lambda *a: (new, selected), lambda m, b: records.append(("warm", m.name, sorted(b))), records,
+                                 monkeypatch)
+  im.write_request(RDF, now=1)
+  sw = LiveSwitch(params, None)
+  old = FakeState("old")
+  model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
+  assert (model, small, sel) == (new, new, selected) and ("warm", "new", ["big_img", "img"]) in records
+  assert "sigint" in records                            # a custom model gets the clean-stop handler, as at startup
+  assert params.values["InternalModelSwitching"] is True
+  assert 6.4 < sw.block_until - __import__("time").monotonic() <= 6.4 + LiveSwitch.MARGIN_SECONDS
+  sw.tick(sw.block_until - 0.1)
+  assert params.values["InternalModelSwitching"] is True
+  sw.tick(sw.block_until)
+  assert params.values["InternalModelSwitching"] is False and sw.block_until == 0.0
+  wrapper = type("J", (), {})()
+  wrapper.small = old
+  model, small, _ = LiveSwitch(params, None).switch(wrapper, old, *CAM, False, {"img": 1, "big_img": 2})
+  assert model is wrapper and wrapper.small is new and small is new   # the Jetlink wrapper keeps running it
+
+
+def test_live_switch_falls_back_to_stock_when_the_new_model_fails_its_warmup(monkeypatch):
+  records, params = [], FakeSwitchParams()
+  selected = im.Selected(RDF, im.pkl_path(RDF))
+  stock = FakeState("stock")
+  made = iter([(FakeState("rdf"), selected), (stock, None)])
+  def warm(model, bufs):
+    if model.name == "rdf":
+      raise RuntimeError("NaN")
+  LiveSwitch = live_switch_class(lambda *a: next(made), warm, records, monkeypatch)
+  im.write_request(RDF, now=1)
+  sw = LiveSwitch(params, None)
+  old = FakeState("old")
+  model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
+  assert model is stock and sel is None and ("runtime_failed", "RDF") in records
+  assert sw.running_sha == im.stock_model().sha256

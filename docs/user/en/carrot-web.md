@@ -160,14 +160,22 @@ September 2026 (the history kept inside the model).
     the best comma models (distillation) and fills the cases they all miss with human driving data. 32-frame history.
     `Vega` came out on 7 November and `Vega 2` on 22 November. The files download from StarPilot's public Hugging
     Face storage; their checksums are pinned, so if the source changes the comma does not use it and the card says why.
-- To change it, park with the ignition off, pick a model and press **Apply**. It cannot be changed while driving.
+- To change it, pick a model and press **Apply**. This also works while driving.
+- A model that is already compiled (and the stock model) switches **without restarting the car or rebooting the
+  comma**: as soon as openpilot is disengaged and neither steering nor speed control is active. If you apply it while
+  engaged, it switches the moment you disengage.
+  - While the model loads, the path on the driving screen pauses for a moment (one to a few seconds).
+  - The new model starts with an empty history, so engaging stays blocked until it has filled (about 5 s for a
+    24-frame model, about 6.5 s for a 32-frame one). Trying to engage meanwhile shows "System Initializing".
+- A model that is not compiled yet is not compiled while driving (it would share the GPU with the running model). It
+  is downloaded and compiled once parked and used from the next drive; after that it switches right away.
 - While parked the comma downloads the model (about 100 MB), checks it against the pinned checksum and the expected
   inputs/outputs, then compiles it on the comma (about 10-20 minutes). Turning the ignition on pauses this until you park again.
   - Upstream published `WMI V11` only as a separate policy file, so the comma downloads that file (about 14 MB) and
     builds the model by replacing the policy weights in the stock model file. The stock file, the policy file and the
     result are all checked against pinned checksums. If an update changed the stock model file, it is not built and
     the card says why.
-- The model is used **from the next drive** once it is ready. `In use` on the card means it actually ran.
+- When it finishes preparing while parked, the model is used **from the next drive**. `In use` on the card means it actually ran.
 - The stock model is never removed. The comma drives with it automatically, and the card says why, when:
   - compilation has not finished, or a software update requires compiling again (this runs automatically while parked)
   - the model could not be loaded

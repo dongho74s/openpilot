@@ -158,6 +158,7 @@ class SelfdriveD:
     self.big_model_loading = False
     self.big_model_active = False
     self.big_model_ready_t = 0.0
+    self.internal_model_switching = False
     self.model_startup_complete = False
     self.state_machine = StateMachine()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
@@ -461,6 +462,11 @@ class SelfdriveD:
     if not REPLAY and self.rk.lagging:
       self.events.add(EventName.selfdrivedLagging)
     big_model_settling = self._big_model_settling()
+    if self.sm.frame % 10 == 0:
+      self.internal_model_switching = self.params.get_bool("InternalModelSwitching")
+    if self.internal_model_switching:
+      # modeld is loading an internal model selected while driving, or its history is still filling (modeld.LiveSwitch)
+      self.events.add(EventName.selfdriveInitializing)
     pose = self.sm['livePose']
     radar_errors = self.sm['radarState'].radarErrors
     model_inputs_ready = (self.sm.all_checks(['modelV2', 'radarState', 'livePose', 'liveCalibration',

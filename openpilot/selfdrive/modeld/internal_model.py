@@ -252,6 +252,24 @@ def requested_model() -> InternalModel:
   return find(read_json(request_path()).get("id")) or stock_model()
 
 
+def request_token() -> int:
+  """Changes with every selection in the carrot web (also of the same model)."""
+  try:
+    return int(read_json(request_path()).get("token") or 0)
+  except (TypeError, ValueError):
+    return 0
+
+
+def live_switch_ready(cam_w: int, cam_h: int) -> bool:
+  """modeld can load the selected model now: the stock model, or a compiled artifact for this build and camera.
+  A model that is not compiled yet waits for the parked manager and the next modeld start."""
+  try:
+    model = requested_model()
+    return model.stock or artifact_problem(model, cam_w, cam_h) is None
+  except Exception:
+    return False
+
+
 def write_request(model: InternalModel, now: float | None = None) -> dict[str, Any]:
   request = {"id": model.id, "token": int((now if now is not None else time.time()) * 1000)}
   write_json(request_path(), request)

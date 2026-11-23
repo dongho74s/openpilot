@@ -60,7 +60,9 @@ def build_payload(params: Any | None = None) -> dict[str, Any]:
     "fallback_reason": runtime.get("fallback_reason") if runtime.get("sha256") == requested.sha256 else None,
     "onroad": onroad,
     "engaged": engaged,
-    "can_select": not onroad and not engaged,
+    # Selecting is always allowed: modeld switches to a ready (compiled) model while driving as soon as nothing is
+    # engaged (modeld.LiveSwitch); a model that still has to be compiled waits for the parked manager.
+    "can_select": True,
   }
 
 
@@ -77,9 +79,6 @@ async def api_select(request: web.Request) -> web.Response:
   if model is None:
     return web.json_response({"ok": False, "error": "unknown model"}, status=400)
   params = _params()
-  if _params_bool(params, "IsOnroad") or _params_bool(params, "IsEngaged"):
-    return web.json_response({"ok": False, "error": "park and turn the ignition off before changing the driving model"},
-                             status=409)
   im.reset_runtime_block(model)
   im.write_request(model)
   return web.json_response(build_payload(params))
