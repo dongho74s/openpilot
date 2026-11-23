@@ -401,6 +401,27 @@ def test_a_stale_copy_is_forgotten_across_the_timer_wrap(native, param):
 
 
 @pytest.mark.parametrize('param', MALIBU_PARAMS)
+@pytest.mark.parametrize('address,bus,length', [(0x1C4, 0, 8), (0x308, 1, 7), (0x2CD, 2, 8)])
+def test_any_received_frame_forgets_a_stale_copy(native, param, address, bus, length):
+  """No real 0x184 for a whole timer wrap: another received frame on any bus already forgot the copy (Codex review)."""
+  use(native, param)
+  assert tx(native, 0x184, bytes(8), bus=2)
+  native.set_timer(T0 + 400_000)
+  rx(native, address, bytes(length), bus=bus)
+  native.set_timer(T0 + 100_000)                 # 2^32 + 100 ms later: the timer reads as if just after the copy
+  assert fwd(native, 0x184, 0) == 2
+
+
+@pytest.mark.parametrize('param', MALIBU_PARAMS)
+def test_a_fresh_copy_survives_received_frames(native, param):
+  use(native, param)
+  assert tx(native, 0x184, bytes(8), bus=2)
+  native.set_timer(T0 + 300_000)
+  rx(native, 0x1C4, bytes(8))
+  assert fwd(native, 0x184, 0) == -1
+
+
+@pytest.mark.parametrize('param', MALIBU_PARAMS)
 def test_a_new_safety_mode_forgets_the_copy(native, param):
   use(native, param)
   assert tx(native, 0x184, bytes(8), bus=2)

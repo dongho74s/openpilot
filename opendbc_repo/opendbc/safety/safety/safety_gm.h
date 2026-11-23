@@ -53,13 +53,15 @@ static bool gm_ascm_int_c9_brake = false;
 static bool gm_ascm_int_pscm_tx_seen = false;
 static uint32_t gm_ascm_int_pscm_tx_us = 0U;
 
-static bool gm_ascm_int_pscm_relayed(void) {
-  // A stale copy is forgotten, so the 32-bit timer wrapping (~72 min) cannot make it look fresh again.
-  if (gm_ascm_int_pscm_tx_seen &&
-      (get_ts_elapsed(microsecond_timer_get(), gm_ascm_int_pscm_tx_us) > GM_ASCM_INT_PSCM_STALE_US)) {
-    gm_ascm_int_pscm_tx_seen = false;
+// A stale copy is forgotten, so the 32-bit timer wrapping (~72 min) cannot make it look fresh again. Every received
+// frame checks this (gm_rx_hook), not only the real 0x184, so that would take a whole timer wrap without any CAN frame.
+static void gm_ascm_int_pscm_expire(void) {
+  if (gm_ascm_int_pscm_tx_seen) {
+    const uint32_t now = microsecond_timer_get();
+    if (get_ts_elapsed(now, gm_ascm_int_pscm_tx_us) > GM_ASCM_INT_PSCM_STALE_US) {
+      gm_ascm_int_pscm_tx_seen = false;
+    }
   }
-  return gm_ascm_int_pscm_tx_seen;
 }
 
 // Bolt with the factory camera ACC and a comma pedal (CHEVROLET_BOLT_ACC_PEDAL), ported from StarPilot's
@@ -201,6 +203,10 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
   // If thresholds are mismatched then it is possible for panda to see the gas fall and rise while openpilot is in the pre-enabled state
   const int GM_GAS_INTERCEPTOR_THRESHOLD = 550; // (675 + 355) / 2 ratio between offset and gain from dbc file
   #define GM_GET_INTERCEPTOR(msg) (((GET_BYTE((msg), 0) << 8) + GET_BYTE((msg), 1) + (GET_BYTE((msg), 2) << 8) + GET_BYTE((msg), 3)) / 2U) // avg between 2 tracks
+
+  if (gm_ascm_int) {
+    gm_ascm_int_pscm_expire();
+  }
 
 
 
@@ -454,7 +460,8 @@ static int gm_fwd_hook(CANPacket_t* to_send) {
       bool is_pscm_msg = (addr == 0x184);
       if (is_pscm_msg && gm_ascm_int) {
         // Malibu ASCM harness: the real one reaches the ASCM while openpilot's copy is missing
-        is_pscm_msg = gm_ascm_int_pscm_relayed();
+        gm_ascm_int_pscm_expire();
+        is_pscm_msg = gm_ascm_int_pscm_tx_seen;
       }
       // Bolt ACC with pedal: the camera gets no ECM cruise status (StarPilot's non-ACC rule)
       bool is_ecm_cruise_status_msg = gm_bolt_acc_pedal && (addr == 0x3D1);
