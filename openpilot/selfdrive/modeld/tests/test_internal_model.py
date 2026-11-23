@@ -876,100 +876,175 @@ def test_large_constant_gathers_become_a_matmul_with_the_same_values(monkeypatch
 
 
 def live_switch_class(create, warm, records, monkeypatch):
-  """modeld.LiveSwitch with fakes for what modeld.py imports natively (VisionIPC, tinygrad)."""
+  """modeld.LiveSwitch with fakes for what modeld.py imports natively (VisionIPC, tinygrad, cereal)."""
   import ast
+  import sys
+  import time as time_module
+  from types import SimpleNamespace as NS
   tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
   nodes = [n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in ("LiveSwitch", "install_clean_stop_handler")]
-  import time as time_module
-  warmup = type("W", (), {"warm_internal_model": staticmethod(warm)})
-  import sys
-  monkeypatch.setitem(sys.modules, "openpilot.selfdrive.modeld.internal_model_warmup", warmup)
-  internal = type("I", (), {k: staticmethod(getattr(im, k)) for k in ("request_token", "live_switch_ready", "requested_model", "stock_model")})
+  monkeypatch.setitem(sys.modules, "openpilot.selfdrive.modeld.internal_model_warmup", NS(warm_internal_model=warm))
+  internal = NS(**{k: getattr(im, k) for k in ("request_token", "live_switch_ready", "requested_model", "stock_model")})
   internal.STOCK_ID = im.STOCK_ID
-  internal.record_runtime_failure = staticmethod(lambda selected: records.append(("runtime_failed", selected.model.id)))
-  internal.mark_clean_stop = staticmethod(lambda: None)
+  internal.record_runtime_failure = lambda selected: records.append(("runtime_failed", selected.model.id))
+  internal.mark_loading = lambda selected: records.append(("loading", selected.model.id))
+  internal.mark_loaded = lambda selected: records.append(("loaded", selected.model.id))
+  internal.mark_clean_stop = lambda: None
   scope = {"internal_model": internal, "create_internal_model": create, "time": time_module,
-           "cloudlog": type("L", (), {"warning": staticmethod(lambda *a: None), "exception": staticmethod(lambda *a: None)}),
-           "signal": type("S", (), {"SIGINT": 2, "signal": staticmethod(lambda *a: records.append("sigint")), "default_int_handler": None})}
+           "log": NS(OnroadEvent=NS(EventName=NS(internalModelSwitching="internalModelSwitching"))),
+           "cloudlog": NS(warning=lambda *a: None, exception=lambda *a: None),
+           "signal": NS(SIGINT=2, signal=lambda *a: records.append("sigint"), default_int_handler=None)}
   exec(compile(ast.Module(body=nodes, type_ignores=[]), "<live_switch>", "exec"), scope)
   return scope["LiveSwitch"]
 
 
 class FakeSwitchParams:
   def __init__(self):
-    self.values = {}
+    self.values, self.writes = {}, []
   def put_bool(self, key, value):
     self.values[key] = value
-  put_bool_nonblocking = put_bool
+    self.writes.append(value)
+  def put_bool_nonblocking(self, key, value):
+    raise AssertionError("LiveSwitch must order its flag writes (blocking puts only)")
 
 
 class FakeState:
-  def __init__(self, name, history=4.8):
-    self.name, self.history_seconds, self.vision_input_names = name, history, ["img", "big_img"]
+  def __init__(self, name, steps=96):
+    self.name, self.history_steps, self.vision_input_names = name, steps, ["img", "big_img"]
 
 
-def test_live_switch_waits_for_a_new_ready_selection_and_no_engagement(monkeypatch):
+def fake_sm(t_ns, event=True, enabled=False, lat=False, long=False, events_ns=None, state_ns=None, control_ns=None):
+  from types import SimpleNamespace as NS
+  return {
+    "logMonoTime": {"onroadEvents": events_ns or t_ns, "selfdriveState": state_ns or t_ns + 1, "carControl": control_ns or t_ns + 2},
+    "onroadEvents": [NS(name="internalModelSwitching")] if event else [NS(name="other")],
+    "selfdriveState": NS(enabled=enabled, active=enabled), "carControl": NS(latActive=lat, longActive=long),
+  }
+
+
+class SM(dict):
+  @property
+  def logMonoTime(self):
+    return self["logMonoTime"]
+
+
+def requested_switch(monkeypatch, create=None, warm=None, token_model=RDF):
+  records, params = [], FakeSwitchParams()
+  LiveSwitch = live_switch_class(create or (lambda *a: (FakeState("x"), None)), warm or (lambda m, b: None), records, monkeypatch)
+  compile_ok(RDF)
+  sw = LiveSwitch(params, None, im.request_token())
+  im.write_request(token_model, now=7)
+  assert sw.wanted(20, False, *CAM)
+  sw.request()
+  return sw, params, records, LiveSwitch
+
+
+def test_live_switch_requests_only_a_new_ready_selection_while_nothing_is_engaged(monkeypatch):
   records, params = [], FakeSwitchParams()
   LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
-  sw = LiveSwitch(params, None)
-  assert params.values["InternalModelSwitching"] is False
+  sw = LiveSwitch(params, None, im.request_token())
+  assert params.writes == [False]
   assert not sw.wanted(20, False, *CAM)                 # nothing selected since modeld started
   im.write_request(RDF, now=1)
-  assert not sw.wanted(20, False, *CAM)                 # RDF is not compiled: wait for the parked manager...
+  assert not sw.wanted(20, False, *CAM)                 # RDF is not compiled: wait for the parked manager
   compile_ok(RDF)
-  assert not sw.wanted(21, False, *CAM)                 # ...checked once a second
+  assert not sw.wanted(21, False, *CAM)                 # checked once a second
   assert not sw.wanted(40, True, *CAM)                  # never while engaged or lateral/longitudinal is active
-  assert sw.wanted(40, False, *CAM)
-  assert not sw.wanted(60, False, *CAM)                 # consumed
+  assert sw.wanted(40, False, *CAM) and sw.phase == LiveSwitch.IDLE
+  sw.request()
+  assert sw.phase == LiveSwitch.REQUESTED and params.values["InternalModelSwitching"] is True
+  assert not sw.wanted(60, False, *CAM)                 # one request at a time
+
+
+def test_a_selection_made_while_modeld_loads_is_still_switched_to(monkeypatch):
+  records, params = [], FakeSwitchParams()
+  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  compile_ok(RDF)
+  im.write_request(RDF, now=1)
+  start_token = im.request_token()                       # modeld reads it, then loads RDF...
+  im.write_request(im.stock_model(), now=2)              # ...while the user picks stock
+  sw = LiveSwitch(params, im.Selected(RDF, im.pkl_path(RDF)), start_token)
+  assert sw.wanted(20, False, *CAM)
 
 
 def test_live_switch_ignores_the_running_model_selected_again(monkeypatch):
   records, params = [], FakeSwitchParams()
   LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
   compile_ok(RDF)
-  sw = LiveSwitch(params, im.Selected(RDF, im.pkl_path(RDF)))
+  sw = LiveSwitch(params, im.Selected(RDF, im.pkl_path(RDF)), im.request_token())
   im.write_request(RDF, now=5)
   assert not sw.wanted(20, False, *CAM)
   im.write_request(im.stock_model(), now=6)
   assert sw.wanted(20, False, *CAM)                     # back to stock: always ready
 
 
-def test_live_switch_replaces_the_internal_model_and_blocks_engagement_until_its_history_filled(monkeypatch):
-  records, params = [], FakeSwitchParams()
+def test_the_load_waits_for_the_block_to_be_confirmed_after_the_request(monkeypatch):
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch)
+  t = sw.requested_at_ns
+  later = t + int(0.3e9)
+  assert sw.acknowledged(SM(fake_sm(t - 10)), False) == "wait"                       # messages from before the request
+  assert sw.acknowledged(SM(fake_sm(later, event=False)), False) == "wait"           # selfdrived has not raised it yet
+  assert sw.acknowledged(SM(fake_sm(later, enabled=True)), False) == "wait"          # state still engaged
+  assert sw.acknowledged(SM(fake_sm(later, lat=True)), False) == "wait"              # AlwaysLateral still steering
+  assert sw.acknowledged(SM(fake_sm(t + 10, control_ns=t + int(0.1e9))), False) == "wait"  # controlsd may not have re-read
+  assert sw.acknowledged(SM(fake_sm(later, state_ns=later - 5)), False) == "wait"    # state older than the event
+  assert sw.acknowledged(SM(fake_sm(later)), False) == "go"
+  assert sw.acknowledged(SM(fake_sm(later)), True) == "engaged"
+
+
+def test_an_unconfirmed_or_interrupted_request_is_withdrawn_and_retried(monkeypatch):
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch)
+  assert sw.acknowledged(SM(fake_sm(sw.requested_at_ns)), True) == "engaged"
+  sw.withdraw()
+  assert params.values["InternalModelSwitching"] is False and sw.phase == LiveSwitch.IDLE
+  assert sw.wanted(40, False, *CAM)                     # still pending: requested again once disengaged
+  sw.request()
+  sw.requested_at_ns -= int(4e9)
+  assert sw.acknowledged(SM(fake_sm(sw.requested_at_ns)), False) == "timeout"
+  sw.withdraw(timed_out=True)
+  assert not sw.wanted(60, False, *CAM)                 # paused after an unconfirmed block
+  sw.retry_at_ns = 0
+  assert sw.wanted(60, False, *CAM)
+
+
+def test_the_block_lasts_until_the_new_model_itself_produced_a_full_history(monkeypatch):
   selected = im.Selected(RDF, im.pkl_path(RDF))
-  new = FakeState("new", history=6.4)
-  LiveSwitch = live_switch_class(lambda *a: (new, selected), lambda m, b: records.append(("warm", m.name, sorted(b))), records,
-                                 monkeypatch)
-  im.write_request(RDF, now=1)
-  sw = LiveSwitch(params, None)
+  new = FakeState("new", steps=128)
+  sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=lambda *a: (new, selected))
   old = FakeState("old")
   model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
-  assert (model, small, sel) == (new, new, selected) and ("warm", "new", ["big_img", "img"]) in records
-  assert "sigint" in records                            # a custom model gets the clean-stop handler, as at startup
+  assert (model, small, sel) == (new, new, selected)
+  assert records[-2:] == [("loading", "RDF"), ("loaded", "RDF")] and "sigint" in records
+  assert sw.phase == LiveSwitch.WARMING and sw.steps_needed == 128 + LiveSwitch.EXTRA_STEPS
+  for _ in range(sw.steps_needed - 1):
+    sw.produced(True, True)
+  sw.produced(True, False)                              # prepare_only: no output, no history step counted
   assert params.values["InternalModelSwitching"] is True
-  assert 6.4 < sw.block_until - __import__("time").monotonic() <= 6.4 + LiveSwitch.MARGIN_SECONDS
-  sw.tick(sw.block_until - 0.1)
-  assert params.values["InternalModelSwitching"] is True
-  sw.tick(sw.block_until)
-  assert params.values["InternalModelSwitching"] is False and sw.block_until == 0.0
-  wrapper = type("J", (), {})()
+  sw.produced(True, True)
+  assert params.values["InternalModelSwitching"] is False and sw.phase == LiveSwitch.IDLE
+  assert params.writes == [False, True, False]
+  assert not sw.wanted(80, False, *CAM)                 # the switched-to selection is consumed
+
+
+def test_the_block_ends_at_once_while_an_external_model_produces_the_outputs(monkeypatch):
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch)
+  wrapper, old = type("J", (), {})(), FakeState("old")
   wrapper.small = old
-  model, small, _ = LiveSwitch(params, None).switch(wrapper, old, *CAM, False, {"img": 1, "big_img": 2})
-  assert model is wrapper and wrapper.small is new and small is new   # the Jetlink wrapper keeps running it
+  model, small, _ = sw.switch(wrapper, old, *CAM, False, {"img": 1, "big_img": 2})
+  assert model is wrapper and wrapper.small is small    # the Jetlink wrapper keeps it on standby or runs it
+  sw.produced(False, True)
+  assert params.values["InternalModelSwitching"] is False and sw.phase == LiveSwitch.IDLE
 
 
 def test_live_switch_falls_back_to_stock_when_the_new_model_fails_its_warmup(monkeypatch):
-  records, params = [], FakeSwitchParams()
   selected = im.Selected(RDF, im.pkl_path(RDF))
   stock = FakeState("stock")
   made = iter([(FakeState("rdf"), selected), (stock, None)])
   def warm(model, bufs):
     if model.name == "rdf":
       raise RuntimeError("NaN")
-  LiveSwitch = live_switch_class(lambda *a: next(made), warm, records, monkeypatch)
-  im.write_request(RDF, now=1)
-  sw = LiveSwitch(params, None)
+  sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=lambda *a: next(made), warm=warm)
   old = FakeState("old")
   model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
   assert model is stock and sel is None and ("runtime_failed", "RDF") in records
-  assert sw.running_sha == im.stock_model().sha256
+  assert sw.running_sha == im.stock_model().sha256 and sw.phase == LiveSwitch.WARMING

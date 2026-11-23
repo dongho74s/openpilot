@@ -170,10 +170,9 @@ class ModelState:
     return parsed_model_outputs
 
   @property
-  def history_seconds(self) -> float:
-    """How long the recurrent history takes to fill after a reset."""
-    steps = self.input_shapes['state_feat_q'][0] if self.state_model else self.input_shapes['features_buffer'][1] * self.frame_skip
-    return steps / ModelConstants.MODEL_RUN_FREQ
+  def history_steps(self) -> int:
+    """How many 20 Hz runs the recurrent history takes to fill after a reset."""
+    return int(self.input_shapes['state_feat_q'][0] if self.state_model else self.input_shapes['features_buffer'][1] * self.frame_skip)
 
   def reset(self):
     # Returning from a recovered external model must not reuse old local history.
@@ -281,64 +280,121 @@ def install_clean_stop_handler() -> None:
 
 
 class LiveSwitch:
-  """Switch the internal model selected in the carrot web while driving, between frames, when neither openpilot nor
-  its lateral or longitudinal control is active, if the selection is ready to load (stock, or compiled for this build
-  and camera: compiling needs the parked manager). Loading stalls modeld for a moment and the new model starts with
-  an empty history, so InternalModelSwitching keeps engagement blocked (selfdrived: selfdriveInitializing) until the
-  history has filled."""
+  """Switch the internal model selected in the carrot web while driving, between frames, when the selection is ready
+  to load (stock, or compiled for this build and camera: compiling needs the parked manager).
+
+  The switch stalls modeld while it loads and the new model starts with an empty history, so nothing may control the
+  car from the request until that history has filled:
+    IDLE -> REQUESTED: InternalModelSwitching is set. selfdrived then raises internalModelSwitching (no entry only;
+      not selfdriveInitializing, which also stops card's control messages) and controlsd keeps AlwaysLateral off.
+    REQUESTED -> loading: only once onroadEvents and selfdriveState published after the request show that event with
+      nothing engaged, and carControl published after controlsd re-read the flag shows no lateral or longitudinal
+      control. From then on nothing can engage. Engaged meanwhile, or no confirmation in time: the request is
+      withdrawn and retried later.
+    WARMING -> IDLE: the flag is cleared after the new model itself produced a full history of outputs (or at once
+      while an external Jetlink/eGPU model produces the outputs, whose history the switch did not touch).
+  Every flag write is a blocking put, so a late clear can never land after a newer set."""
   CHECK_FRAMES = 20  # once a second
-  MARGIN_SECONDS = 1.0
+  ACK_TIMEOUT_S = 3.0
+  CONTROLSD_REREAD_S = 0.2  # controlsd reads the flag every frame (100 Hz)
+  EXTRA_STEPS = 20  # one more second of outputs on top of the history
+  RETRY_AFTER_TIMEOUT_S = 10.0  # an unconfirmed block is not requested again right away (it keeps AlwaysLateral off)
+  IDLE, REQUESTED, WARMING = "idle", "requested", "warming"
+  BLOCK_EVENT = log.OnroadEvent.EventName.internalModelSwitching
 
-  def __init__(self, params, internal_selected):
+  def __init__(self, params, internal_selected, token: int):
     self.params = params
-    self.token = internal_model.request_token()
+    self.token = token  # the request the running model was loaded for, read before loading it
     self.running_sha = internal_selected.model.sha256 if internal_selected is not None else internal_model.stock_model().sha256
-    self.block_until = 0.0
-    params.put_bool("InternalModelSwitching", False)
+    self.phase = self.IDLE
+    self.requested_at_ns = 0
+    self.pending_token = token
+    self.steps = self.steps_needed = 0
+    self.retry_at_ns = 0
+    self._block(False)
 
-  def tick(self, now: float) -> None:
-    if self.block_until and now >= self.block_until:
-      self.block_until = 0.0
-      self.params.put_bool_nonblocking("InternalModelSwitching", False)
+  def _block(self, value: bool) -> None:
+    self.params.put_bool("InternalModelSwitching", value)
 
   def wanted(self, frame: int, engaged: bool, cam_w: int, cam_h: int) -> bool:
-    if frame % self.CHECK_FRAMES or engaged:
+    """IDLE: a new, ready selection of another model while nothing is engaged."""
+    if self.phase != self.IDLE or frame % self.CHECK_FRAMES or engaged or time.monotonic_ns() < self.retry_at_ns:
       return False
     token = internal_model.request_token()
     if token == self.token or not internal_model.live_switch_ready(cam_w, cam_h):
       return False  # an uncompiled selection keeps being checked; the manager compiles it once parked
-    self.token = token
     if internal_model.requested_model().sha256 == self.running_sha:
-      return False  # the running model was selected again
+      self.token = token  # the running model was selected again
+      return False
+    self.pending_token = token
     return True
+
+  def request(self) -> None:
+    self._block(True)
+    self.phase, self.requested_at_ns = self.REQUESTED, time.monotonic_ns()
+
+  def withdraw(self, timed_out: bool = False) -> None:
+    """The selection stays pending: it is requested again once nothing is engaged (after a pause if unconfirmed)."""
+    self._block(False)
+    self.phase = self.IDLE
+    if timed_out:
+      self.retry_at_ns = time.monotonic_ns() + int(self.RETRY_AFTER_TIMEOUT_S * 1e9)
+
+  def acknowledged(self, sm, engaged: bool) -> str:
+    """REQUESTED: 'go' once the block is confirmed, 'engaged' or 'timeout' to withdraw it, else 'wait'."""
+    now = time.monotonic_ns()
+    if engaged:
+      return "engaged"
+    if now - self.requested_at_ns > self.ACK_TIMEOUT_S * 1e9:
+      return "timeout"
+    events_at, state_at, control_at = sm.logMonoTime['onroadEvents'], sm.logMonoTime['selfdriveState'], sm.logMonoTime['carControl']
+    blocked = events_at > self.requested_at_ns and any(e.name == self.BLOCK_EVENT for e in sm['onroadEvents'])
+    idle_state = state_at > max(events_at, self.requested_at_ns) and not (sm['selfdriveState'].enabled or sm['selfdriveState'].active)
+    idle_control = (control_at > self.requested_at_ns + self.CONTROLSD_REREAD_S * 1e9 and
+                    not (sm['carControl'].latActive or sm['carControl'].longActive))
+    return "go" if blocked and idle_state and idle_control else "wait"
 
   def switch(self, model, small_model, cam_w: int, cam_h: int, usbgpu_model_loaded: bool, bufs):
     """Load the selection in place of small_model. Returns (model, small_model, selected); the caller drops the old one."""
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model
-    self.params.put_bool("InternalModelSwitching", True)
-    self.block_until = float('inf')
     started = time.monotonic()
     if not internal_model.requested_model().stock:
       install_clean_stop_handler()  # as at startup; the stock model keeps the default SIGINT behaviour
     new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded)
     try:
+      if selected is not None:
+        internal_model.mark_loading(selected)  # a native crash in the warmup counts against it, as at startup
       warm_internal_model(new_small, {name: bufs[name] for name in new_small.vision_input_names})
+      if selected is not None:
+        internal_model.mark_loaded(selected)
     except Exception:
       if selected is None:
         raise
       cloudlog.exception("internal model %s failed its warmup after a live switch; using the stock model", selected.model.id)
       internal_model.record_runtime_failure(selected)
+      new_small = selected = None  # drop the failed model before loading the fallback
       new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded)  # blocked now: the stock model
       warm_internal_model(new_small, {name: bufs[name] for name in new_small.vision_input_names})
     if model is small_model:
       model = new_small
     elif getattr(model, 'small', None) is small_model:
       model.small = new_small  # the Jetlink wrapper runs or keeps it on standby
+    self.token = self.pending_token
     self.running_sha = selected.model.sha256 if selected is not None else internal_model.stock_model().sha256
-    self.block_until = time.monotonic() + new_small.history_seconds + self.MARGIN_SECONDS
+    self.phase, self.steps, self.steps_needed = self.WARMING, 0, new_small.history_steps + self.EXTRA_STEPS
     cloudlog.warning("internal model switched live to %s in %.2fs", selected.model.id if selected else internal_model.STOCK_ID,
                      time.monotonic() - started)
     return model, new_small, selected
+
+  def produced(self, internal_running: bool, output: bool) -> None:
+    """WARMING: count the new model's own outputs; clear the block once its history is full."""
+    if self.phase != self.WARMING:
+      return
+    if output and internal_running:
+      self.steps += 1
+    if not internal_running or self.steps >= self.steps_needed:
+      self._block(False)
+      self.phase = self.IDLE
 
 
 def main(demo=False):
@@ -457,10 +513,11 @@ def main(demo=False):
   # optional comparison remains available when internal inference starts active.
   if not internal_model.requested_model().stock:
     install_clean_stop_handler()
+  start_token = internal_model.request_token()  # before loading: a selection made while it loads is still switched to
   small_model, internal_selected = create_internal_model(vipc_client_main.width, vipc_client_main.height,
                                                          usbgpu_model_loaded) if model is None or USBGPU else (None, None)
   internal_health = internal_model.HealthTracker(internal_selected)
-  live_switch = LiveSwitch(params, internal_selected)
+  live_switch = LiveSwitch(params, internal_selected, start_token)
   if usbgpu_model_loaded:
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
     try:
@@ -507,7 +564,8 @@ def main(demo=False):
 
   # messaging
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry"])
-  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "selfdriveState", "liveDelay", "carrotMan", "radarState"])
+  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "selfdriveState", "liveDelay", "carrotMan", "radarState",
+                  "onroadEvents"])
 
   publish_state = PublishState()
   from openpilot.selfdrive.navigation.map_client import MapInput
@@ -580,19 +638,26 @@ def main(demo=False):
     sm.update(0)
     if hasattr(model, 'update'):
       model.update(sm, meta_main)
-    live_switch.tick(camera_ready)
     engaged = (sm['selfdriveState'].enabled or sm['selfdriveState'].active or
                sm['carControl'].latActive or sm['carControl'].longActive)
     if small_model is not None and live_switch.wanted(frame, engaged, vipc_client_main.width, vipc_client_main.height):
-      live_bufs = {'img': buf_main, 'big_img': buf_extra if buf_extra is not None else buf_main}
-      model, small_model, internal_selected = live_switch.switch(model, small_model, vipc_client_main.width,
-                                                                vipc_client_main.height, usbgpu_model_loaded, live_bufs)
-      internal_health = internal_model.HealthTracker(internal_selected)
-      gc.collect()  # free the previous internal model's buffers now that nothing references it
-      # the load took a while: start again from a fresh camera pair, without counting the gap as dropped frames
-      last_vipc_frame_id = meta_main.frame_id
-      run_count = 0
-      continue
+      live_switch.request()
+    elif live_switch.phase == LiveSwitch.REQUESTED:
+      ack = live_switch.acknowledged(sm, engaged)
+      if ack in ("engaged", "timeout"):
+        cloudlog.warning("internal model live switch withdrawn: %s", ack)
+        live_switch.withdraw(timed_out=ack == "timeout")
+      elif ack == "go":
+        live_bufs = {'img': buf_main, 'big_img': buf_extra if buf_extra is not None else buf_main}
+        model, small_model, internal_selected = live_switch.switch(model, small_model, vipc_client_main.width,
+                                                                  vipc_client_main.height, usbgpu_model_loaded, live_bufs)
+        internal_health = internal_model.HealthTracker(internal_selected)
+        gc.collect()  # drop the previous internal model now that nothing references it
+        # Receive a fresh camera pair after the load. The frames missed meanwhile still count as a gap (prepare_only on
+        # the next frame), and run_count = 0 keeps that gap out of the dropped-frame filter.
+        last_vipc_frame_id = meta_main.frame_id
+        run_count = 0
+        continue
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId
@@ -688,6 +753,7 @@ def main(demo=False):
       last_vipc_frame_id = meta_main.frame_id
       continue
     mt2 = time.perf_counter()
+    live_switch.produced(internal_running, model_output is not None)
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
     model_execution_time = mt2 - mt1
     inference_backend, inference_usbgpu = type(model).__name__, model.usbgpu

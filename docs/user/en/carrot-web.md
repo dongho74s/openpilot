@@ -164,9 +164,12 @@ September 2026 (the history kept inside the model).
 - A model that is already compiled (and the stock model) switches **without restarting the car or rebooting the
   comma**: as soon as openpilot is disengaged and neither steering nor speed control is active. If you apply it while
   engaged, it switches the moment you disengage.
+  - Engaging is blocked first, and the model loads only once that block is confirmed. If you engage meanwhile, the
+    switch waits and happens when you disengage again.
   - While the model loads, the path on the driving screen pauses for a moment (one to a few seconds).
-  - The new model starts with an empty history, so engaging stays blocked until it has filled (about 5 s for a
-    24-frame model, about 6.5 s for a 32-frame one). Trying to engage meanwhile shows "System Initializing".
+  - The new model starts with an empty history, so engaging stays blocked until the new model itself has run a full
+    history (about 5 s for a 24-frame model, about 6.5 s for a 32-frame one, plus 1 s). Trying to engage meanwhile
+    shows "주행 모델 바꾸는 중" (driving model switching). AlwaysLateral also pauses meanwhile.
 - A model that is not compiled yet is not compiled while driving (it would share the GPU with the running model). It
   is downloaded and compiled once parked and used from the next drive; after that it switches right away.
 - While parked the comma downloads the model (about 100 MB), checks it against the pinned checksum and the expected

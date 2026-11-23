@@ -466,7 +466,7 @@ class SelfdriveD:
       self.internal_model_switching = self.params.get_bool("InternalModelSwitching")
     if self.internal_model_switching:
       # modeld is loading an internal model selected while driving, or its history is still filling (modeld.LiveSwitch)
-      self.events.add(EventName.selfdriveInitializing)
+      self.events.add(EventName.internalModelSwitching)
     pose = self.sm['livePose']
     radar_errors = self.sm['radarState'].radarErrors
     model_inputs_ready = (self.sm.all_checks(['modelV2', 'radarState', 'livePose', 'liveCalibration',

@@ -1246,6 +1246,13 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   EventName.torqueNNLoad: {
     ET.PERMANENT: torque_nn_load_alert,
   },
+  # modeld is switching the internal driving model selected in the carrot web while driving, or the new model's
+  # history is still filling (modeld.LiveSwitch). Only engagement is refused; unlike selfdriveInitializing it does not
+  # stop card from sending the car's control messages.
+  EventName.internalModelSwitching: {
+    ET.NO_ENTRY: NoEntryAlert("주행 모델 바꾸는 중"),
+  },
+
   # the minimum-distance clamp's laneless correction pushing the car off a line (controlsState.clampSteerActive): a
   # short ding once when it starts (soundd plays a sound when the alert's sound changes), shown while it lasts
   EventName.clampSteerActive: {
