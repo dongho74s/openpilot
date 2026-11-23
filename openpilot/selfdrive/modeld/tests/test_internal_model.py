@@ -56,12 +56,60 @@ def test_contract_accepts_stock_layout_with_or_without_action():
 
 
 @pytest.mark.parametrize("change,expected", [
-  ({"input_shapes": {**im.REQUIRED_INPUTS, "features_buffer": (1, 32, 512)}}, "input features_buffer shape"),
+  ({"input_shapes": {**im.REQUIRED_INPUTS, "features_buffer": (1, 28, 512)}}, "input features_buffer shape"),
+  # a 32-frame history needs the matching 33-entry desire_pulse
+  ({"input_shapes": {**im.REQUIRED_INPUTS, "features_buffer": (1, 32, 512)}}, "input desire_pulse shape (1, 25, 8) != (1, 33, 8)"),
   ({"input_shapes": {**im.REQUIRED_INPUTS, "lateral_control_params": (1, 2)}}, "unexpected input lateral_control_params"),
   ({"output_shapes": {"a": (1, 10), "b": (1, 10)}}, "expected one output"),
 ])
 def test_contract_rejects_other_inputs_and_outputs(change, expected):
   assert any(expected in e for e in im.contract_errors(stock_metadata(**change)))
+
+
+def state_metadata(history=32, **changes):
+  meta = stock_metadata()
+  inputs = im.state_history_inputs(history)
+  meta["input_shapes"] = dict(inputs)
+  meta["output_shapes"] = {**meta["output_shapes"], **{f"next_{k}": v for k, v in inputs.items() if k.startswith("state_")}}
+  meta.update(changes)
+  return meta
+
+
+@pytest.mark.parametrize("history", im.QUEUE_HISTORIES)
+def test_contract_accepts_the_queue_layout_with_a_24_or_32_frame_history(history):
+  meta = stock_metadata(input_shapes=im.queue_history_inputs(history))
+  assert im.contract_kind(meta) == "queue" and im.contract_errors(meta) == []
+
+
+@pytest.mark.parametrize("history", im.QUEUE_HISTORIES)
+def test_contract_accepts_the_state_queue_layout(history):
+  meta = state_metadata(history)
+  assert im.contract_kind(meta) == "state" and im.contract_errors(meta) == []
+  assert meta["input_shapes"]["state_feat_q"] == (4 * history, 1, 512)
+  assert meta["input_shapes"]["state_desire_q"] == (4 * (history + 1), 1, 8)
+
+
+def test_contract_rejects_broken_state_layouts():
+  meta = state_metadata()
+  del meta["output_shapes"]["next_state_feat_q"]
+  assert "missing output next_state_feat_q" in im.contract_errors(meta)
+  meta = state_metadata()
+  meta["output_shapes"]["next_state_desire_q"] = (100, 1, 8)
+  assert any("output next_state_desire_q shape" in e for e in im.contract_errors(meta))
+  meta = state_metadata()
+  meta["input_shapes"]["state_img_q"] = (2, 9, 6, 128, 256)
+  assert any("input state_img_q shape" in e for e in im.contract_errors(meta))
+  meta = state_metadata()
+  meta["input_shapes"]["state_feat_q"] = (112, 1, 512)   # 28 frames: not a history modeld knows
+  assert any("input state_feat_q shape" in e for e in im.contract_errors(meta))
+  meta = state_metadata()
+  meta["output_shapes"]["debug"] = (1, 3)
+  meta["input_shapes"]["lateral_control_params"] = (1, 2)
+  errors = im.contract_errors(meta)
+  assert "unexpected output debug" in errors and "unexpected input lateral_control_params" in errors
+  meta = state_metadata()
+  meta["output_slices"]["plan"] = slice(0, 900)
+  assert any("head plan width 900" in e for e in im.contract_errors(meta))
 
 
 def test_contract_rejects_wrong_head_width_missing_head_and_unknown_head():
@@ -279,15 +327,60 @@ def test_compile_command_uses_the_stock_build_flags(monkeypatch, tmp_path):
   monkeypatch.setattr(imm, "compile_core_available", lambda: False)   # parked comma: cores 4-7 offline
   import openpilot.selfdrive.modeld.helpers as helpers
   monkeypatch.setattr(helpers, "validate_model_file", lambda path: pytest.fail("must not load the model (GPU) in the manager"))
+  monkeypatch.setattr(imm, "read_metadata", lambda path: stock_metadata())
   im.model_dir(RDF).mkdir(parents=True)
   m.compile(RDF, 1, im.onnx_path(RDF), "stamp-1")
   cmd = seen["cmd"]
-  assert cmd[0] != "taskset"
+  assert cmd[0] != "taskset" and Path(cmd[1]).name == "compile_modeld.py"
   assert cmd[cmd.index("--camera-resolutions") + 1] == "1344x760" and cmd[cmd.index("--frame-skip") + 1] == "4"
   assert cmd[cmd.index("--model-size") + 1] == "512x256"
   assert all(seen["env"][k] == v for k, v in imm.QCOM_FLAGS.items())
   compiled = json.loads(im.compiled_path(RDF).read_text())
   assert compiled["stamp"] == "stamp-1" and compiled["cameras"] == [list(CAM)] and im.pkl_path(RDF).read_bytes() == b"compiled-pkl"
+
+
+def test_a_state_queue_model_is_compiled_with_its_own_compiler(monkeypatch):
+  m = manager()
+  seen = {}
+
+  class FakeProc:
+    returncode = 0
+    def __init__(self, cmd, **kw):
+      seen.update(cmd=cmd)
+      Path(cmd[cmd.index("--output") + 1]).write_bytes(b"compiled-pkl")
+    def poll(self):
+      return 0
+  monkeypatch.setattr(imm.subprocess, "Popen", FakeProc)
+  monkeypatch.setattr(imm, "compile_core_available", lambda: False)
+  monkeypatch.setattr(imm, "read_metadata", lambda path: state_metadata())
+  model = im.find("CHDRIVING")
+  im.model_dir(model).mkdir(parents=True)
+  m.compile(model, 1, im.onnx_path(model), "stamp-1")
+  assert Path(seen["cmd"][1]).name == "compile_modeld_state.py"
+  assert (imm.MODELD_DIR / "compile_modeld_state.py").is_file()
+
+
+def test_unreadable_metadata_at_compile_is_a_contract_error(monkeypatch):
+  def broken(path):
+    raise ValueError("truncated")
+  monkeypatch.setattr(imm, "read_metadata", broken)
+  im.model_dir(RDF).mkdir(parents=True)
+  with pytest.raises(imm.StepError) as e:
+    manager().compile(RDF, 1, im.onnx_path(RDF), "stamp-1")
+  assert e.value.code == "contract"
+
+
+@pytest.mark.parametrize("model_id,env", [("CHDRIVING", "CARROT_TEST_CH_ONNX"), ("POLARISVEGA", "CARROT_TEST_POLARIS_ONNX"),
+                                          ("POLARISVEGA2", "CARROT_TEST_POLARIS2_ONNX")])
+def test_new_catalog_models_match_a_contract_when_available(model_id, env):
+  path = Path(os.getenv(env, "/nonexistent"))
+  if not path.is_file():
+    pytest.skip(f"{env} not set")
+  from openpilot.selfdrive.modeld.internal_model_onnx import read_metadata
+  meta = read_metadata(path)
+  model = im.find(model_id)
+  assert im.contract_errors(meta) == [] and meta["model_checkpoint"] == model.checkpoint
+  assert path.stat().st_size == model.size
 
 
 def test_rdf_onnx_metadata_matches_the_contract_when_available():
@@ -356,6 +449,7 @@ def run_compile(monkeypatch, m, child):
 
 
 def test_stop_signal_during_compile_kills_the_child_and_leaves_a_resumable_status(monkeypatch):
+  monkeypatch.setattr(imm, "read_metadata", lambda path: stock_metadata())   # the compiler is faked, the ONNX absent
   im.write_request(RDF)
   m = manager()
   def signal_arrives(child):
@@ -374,6 +468,7 @@ def test_stop_signal_during_compile_kills_the_child_and_leaves_a_resumable_statu
 
 
 def test_ignition_on_as_the_compiler_exits_does_not_finish_the_artifact(monkeypatch):
+  monkeypatch.setattr(imm, "read_metadata", lambda path: stock_metadata())   # the compiler is faked, the ONNX absent
   im.write_request(RDF)
   params = FakeParams()
   m = imm.Manager(params, cameras=[CAM])

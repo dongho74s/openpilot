@@ -224,7 +224,12 @@ class Manager:
     tmp.unlink(missing_ok=True)
     im.compiled_path(model).unlink(missing_ok=True)
     frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
-    cmd = [sys.executable, str(MODELD_DIR / "compile_modeld.py"),
+    # a model that keeps its history queues inside the ONNX (validate() accepted its layout) has its own compiler
+    try:
+      script = "compile_modeld_state.py" if im.contract_kind(read_metadata(path)) == "state" else "compile_modeld.py"
+    except Exception as e:
+      raise StepError("contract", f"metadata unreadable: {e}") from e
+    cmd = [sys.executable, str(MODELD_DIR / script),
            "--model-size", "{}x{}".format(*MEDMODEL_INPUT_SIZE),
            "--camera-resolutions", *(f"{w}x{h}" for w, h in self.cameras),
            "--onnx", str(path), "--output", str(tmp), "--frame-skip", str(frame_skip)]

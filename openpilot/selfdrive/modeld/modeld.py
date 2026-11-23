@@ -27,6 +27,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, 
 from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import bolt_acc_pedal_long_actuator_delay
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, POLICY_INPUTS
+from openpilot.selfdrive.modeld import compile_modeld_state
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
 from openpilot.common.file_chunker import open_file_chunked
 from openpilot.selfdrive.modeld.camera_sync import FrameMeta, receive_camera_pair
@@ -136,7 +137,10 @@ class ModelState:
     jits = load_oob(open_file_chunked(pkl_path or modeld_pkl_path(usbgpu)))
     metadata = jits['metadata']
     self.input_shapes = metadata['input_shapes']
-    self.vision_input_names = [k for k in self.input_shapes if 'img' in k]
+    # a selected model may keep its history queues inside the ONNX (compile_modeld_state.py)
+    self.state_model = compile_modeld_state.is_state_model(self.input_shapes)
+    # camera roles: buffers and transforms are passed per camera, whatever the model names its image inputs
+    self.vision_input_names = ['img', 'big_img'] if self.state_model else [k for k in self.input_shapes if 'img' in k]
     self.output_slices = metadata['output_slices']
 
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
@@ -145,7 +149,13 @@ class ModelState:
     self.check_finite = usbgpu or check_finite
 
     self.frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
-    self.input_queues, self.npy = make_input_queues(self.input_shapes, self.frame_skip, device=self.QUEUE_DEV)
+    if self.state_model:
+      state_dtypes = {k: np.dtype(v) for k, v in jits['state_dtypes'].items()}
+      self.input_queues, self.npy = compile_modeld_state.make_state_input_queues(self.input_shapes, state_dtypes, device=self.QUEUE_DEV)
+      self.policy_inputs = compile_modeld_state.policy_inputs(self.input_shapes)
+    else:
+      self.input_queues, self.npy = make_input_queues(self.input_shapes, self.frame_skip, device=self.QUEUE_DEV)
+      self.policy_inputs = POLICY_INPUTS
     self.full_frames: dict[str, Tensor] = {}
     self._blob_cache: dict[int, Tensor] = {}
     self.parser = Parser()
@@ -216,14 +226,15 @@ class ModelState:
       return None
 
     outs, = self.run_policy(
-      **{k: self.input_queues[k] for k in POLICY_INPUTS if k in self.input_queues}, warped=warped
+      **{k: self.input_queues[k] for k in self.policy_inputs if k in self.input_queues}, warped=warped
     )
     model_output = outs.numpy()[0]
     shadow_payload = self.signal_shadow.capture(model_output, self.npy) if self.signal_shadow is not None else None
     if self.check_finite and not np.all(np.isfinite(model_output)):
       raise RuntimeError("eGPU model output is not finite" if self.usbgpu else "selected internal model output is not finite")
     outputs_dict = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
-    self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]
+    if not self.state_model:  # a state model feeds its hidden state back inside the ONNX
+      self.npy['prev_feat'][:] = model_output[self.output_slices['hidden_state']]
 
     if SEND_RAW_PRED:
       outputs_dict['raw_pred'] = model_output.copy()

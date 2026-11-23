@@ -141,8 +141,9 @@ Manage `ONNX Lane and BSD Detection` in **Settings → Driving → Steering → 
 ### Changing the driving model (internal model)
 
 The **Tools → Driving model card** selects the driving model that runs on the comma's own GPU.
-The default is `CD210` (comma's official model). The list contains only models with exactly
-the inputs and outputs this comma expects.
+The default is `CD210` (comma's official model). The list contains only models whose inputs and outputs
+this comma can run: the stock layout (with a 24- or 32-frame history) and the layout upstream uses since
+September 2026 (the history kept inside the model).
 
 - Available now
   - `CD210 = WMI V12` (default): comma's official model. Its weights are identical to sunnypilot's `WMI V12`
@@ -151,6 +152,14 @@ the inputs and outputs this comma expects.
   - `WMI V11` (experimental): sunnypilot's `WMI V11`, which reverted V10, so its weights equal `WMI V9`. Its vision
     is the stock one; only the policy (path and speed planning) differs. In sunnypilot V9 and V11 differ only in
     lateral smoothing (0.1 s → 0 s); carrot uses the `LatSmoothSec` setting for every model instead.
+  - `CH Driving` (experimental): an unmerged test model comma pushed only to a branch on 5 November 2026
+    (commaai/openpilot `875a6b7e`). It is newly trained, not a retrain of an earlier model, and keeps its
+    32-frame history inside the model (the newer layout). It downloads from comma's Hugging Face storage.
+  - `Polaris Vega`, `Polaris Vega 2` (experimental): the StarPilot community's "Polaris Series" (MIT license),
+    comma's RDFv4 model with its action and desire (lane change) stage retrained. Its authors say it learns from
+    the best comma models (distillation) and fills the cases they all miss with human driving data. 32-frame history.
+    `Vega` came out on 7 November and `Vega 2` on 22 November. The files download from StarPilot's public Hugging
+    Face storage; their checksums are pinned, so if the source changes the comma does not use it and the card says why.
 - To change it, park with the ignition off, pick a model and press **Apply**. It cannot be changed while driving.
 - While parked the comma downloads the model (about 100 MB), checks it against the pinned checksum and the expected
   inputs/outputs, then compiles it on the comma (about 10-20 minutes). Turning the ignition on pauses this until you park again.

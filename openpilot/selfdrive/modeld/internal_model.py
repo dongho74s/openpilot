@@ -64,8 +64,8 @@ class InternalModel:
 STOCK_SHA256 = "f73a9e535523d5e9acb9e642c64e33d631825dc8ba74123757d107cedd047bb5"
 STOCK_SIZE = 60_792_584
 
-# Only models with exactly the stock input/output contract (see contract_errors). Others, e.g. RDFv6/TSFDO with a
-# 32-frame history, need modeld changes first.
+# Only models one of the two contracts in contract_errors accepts: the stock queue layout (with a 24- or 32-frame
+# history) or the state-queue layout of upstream #38916. Anything else needs modeld changes first.
 CATALOG: tuple[InternalModel, ...] = (
   # Upstream CD210 (#37050) re-exported the weights of the WMI model (#36798, sunnypilot "WMI V12") unchanged.
   InternalModel(
@@ -93,9 +93,41 @@ CATALOG: tuple[InternalModel, ...] = (
       copies=WMIV11_COPIES,
     ),
   ),
+  # "CH Driving": an unmerged upstream test model (commaai/openpilot 875a6b7e, 2026-11-05, branch-only commit). New
+  # weights, not a fine-tune of the released models, with the history queues inside the ONNX (#38916) and a 32-frame
+  # history. Upstream moved its LFS objects to the Hugging Face bucket commaai/openpilot-lfs, addressed by sha256.
+  InternalModel(
+    id="CHDRIVING", name="CH Driving", size=82_558_205,
+    sha256="5520d198bbbe2736b7fbbc432c2d7a97e306db74214aa1677fed70521b9b9eb4",
+    url="https://huggingface.co/buckets/commaai/openpilot-lfs/resolve/sha256/"
+        "5520d198bbbe2736b7fbbc432c2d7a97e306db74214aa1677fed70521b9b9eb4",
+    checkpoint="c8198a2a-674c-4c0b-af1d-e7c4bb28cbf8/40960/913db007-d376-46a7-8d6a-855911417e8e/16384",
+    experimental=True,
+  ),
+  # "Polaris Series" (Operation Polaris, StarPilot community, MIT): comma's RDFv4 driving model with its action and
+  # desire stage retrained (distilled from comma models, filled in with human driving), 32-frame history, stock queue
+  # layout. The ONNX the StarPilot catalog builds its artifacts from (bucket StarPilot-Driving/StarPilot-Resources).
+  InternalModel(
+    id="POLARISVEGA", name="Polaris Vega", size=96_528_841,
+    sha256="cfd9dbb518d3fdbae5f3eb1f64eeae9a8a9ea88526529038a71359de2a9cb021",
+    url="https://huggingface.co/buckets/StarPilot-Driving/StarPilot-Resources/resolve/onnx/spz_polaris_vega/"
+        "spz_polaris_vega_driving_supercombo.onnx",
+    checkpoint="r5-vega",
+    experimental=True,
+  ),
+  InternalModel(
+    id="POLARISVEGA2", name="Polaris Vega 2", size=96_696_386,
+    sha256="a57171b0c122abe22572a3fc83910c4eadc054455caf84fc581c193597d92e73",
+    url="https://huggingface.co/buckets/StarPilot-Driving/StarPilot-Resources/resolve/onnx/spz_polaris_vega2/"
+        "spz_polaris_vega2_driving_supercombo.onnx",
+    checkpoint="r5-v2c_yl_s1",
+    experimental=True,
+  ),
 )
 
-# The stock model's contract (driving_supercombo.onnx, CD210). modeld, the compiler and the parser assume it.
+# The stock model's contract (driving_supercombo.onnx, CD210). modeld, the compiler and the parser assume it. The
+# history may also be 32 frames (features_buffer (1, 32, 512), desire_pulse (1, 33, 8)): compile_modeld sizes its
+# queues from the model's input shapes.
 REQUIRED_INPUTS: dict[str, tuple[int, ...]] = {
   "img": (1, 12, 128, 256),
   "big_img": (1, 12, 128, 256),
@@ -111,6 +143,32 @@ REQUIRED_HEADS: dict[str, int] = {
 }
 # 'action': [lateral accel, accel, ...], used by modeld.get_action_from_model when present
 OPTIONAL_HEADS: dict[str, int] = {"action": 4}
+# features_buffer lengths (past 5 Hz frames) the queue layout may have; desire_pulse is one longer
+QUEUE_HISTORIES = (24, 32)
+FRAME_SKIP = 4  # MODEL_RUN_FREQ // MODEL_CONTEXT_FREQ, the 20 Hz steps per history frame
+# The state-queue contract (upstream #38916, compile_modeld_state.py): the newest warped frame of both cameras and
+# the raw desire pulse in, the queues compile_modeld keeps on the host for the stock layout as state_* inputs that
+# come back as next_state_* outputs of the same shape.
+STATE_INPUTS: dict[str, tuple[int, ...]] = {
+  "new_img": (2, 6, 128, 256),
+  "desire": (8,),
+  "traffic_convention": (1, 2),
+  "action_t": (1, 2),
+  "state_img_q": (2, FRAME_SKIP + 1, 6, 128, 256),  # two frames FRAME_SKIP apart per camera
+}
+
+
+def queue_history_inputs(history: int) -> dict[str, tuple[int, ...]]:
+  return {**REQUIRED_INPUTS, "desire_pulse": (1, history + 1, 8), "features_buffer": (1, history, 512)}
+
+
+def state_history_inputs(history: int) -> dict[str, tuple[int, ...]]:
+  return {**STATE_INPUTS, "state_desire_q": (FRAME_SKIP * (history + 1), 1, 8), "state_feat_q": (FRAME_SKIP * history, 1, 512)}
+
+
+def contract_kind(metadata: dict[str, Any]) -> str:
+  """'state' for the state-queue layout (it has a new_img input), else 'queue'."""
+  return "state" if "new_img" in (metadata.get("input_shapes") or {}) else "queue"
 
 
 def find(model_id: Any) -> InternalModel | None:
@@ -208,23 +266,57 @@ def current_build_stamp() -> str:
     return ""
 
 
-def contract_errors(metadata: dict[str, Any]) -> list[str]:
-  """Differences from the stock model's input/output contract; empty when the model can replace it."""
+def _input_errors(inputs: dict[str, tuple[int, ...]], required: dict[str, tuple[int, ...]]) -> list[str]:
   errors: list[str] = []
-  inputs = {str(k): tuple(int(x) for x in v) for k, v in (metadata.get("input_shapes") or {}).items()}
-  for name, shape in REQUIRED_INPUTS.items():
+  for name, shape in required.items():
     if name not in inputs:
       errors.append(f"missing input {name}")
     elif inputs[name] != shape:
       errors.append(f"input {name} shape {inputs[name]} != {shape}")
-  for name in sorted(set(inputs) - set(REQUIRED_INPUTS)):
+  for name in sorted(set(inputs) - set(required)):
     errors.append(f"unexpected input {name}")
+  return errors
 
+
+def _history(inputs: dict[str, tuple[int, ...]], kind: str) -> int:
+  """The history length the model's own inputs name, if it is one of QUEUE_HISTORIES (else the stock one)."""
+  if kind == "state":
+    shape = inputs.get("state_feat_q") or ()
+    candidate = shape[0] // FRAME_SKIP if len(shape) == 3 and shape[0] % FRAME_SKIP == 0 else None
+  else:
+    shape = inputs.get("features_buffer") or ()
+    candidate = shape[1] if len(shape) == 3 else None
+  return candidate if candidate in QUEUE_HISTORIES else QUEUE_HISTORIES[0]
+
+
+def contract_errors(metadata: dict[str, Any]) -> list[str]:
+  """Differences from the contracts modeld can run (the stock queue layout with a 24- or 32-frame history, or the
+  state-queue layout); empty when the model can replace the stock one."""
+  inputs = {str(k): tuple(int(x) for x in v) for k, v in (metadata.get("input_shapes") or {}).items()}
   outputs = {str(k): tuple(int(x) for x in v) for k, v in (metadata.get("output_shapes") or {}).items()}
-  if len(outputs) != 1:
-    errors.append(f"expected one output, got {len(outputs)}")
-    return errors
-  out_shape = next(iter(outputs.values()))
+  kind = contract_kind(metadata)
+  history = _history(inputs, kind)
+  if kind == "state":
+    required = state_history_inputs(history)
+    errors = _input_errors(inputs, required)
+    states = [name for name in required if name.startswith("state_")]
+    for name in states:
+      want = f"next_{name}"
+      if want not in outputs:
+        errors.append(f"missing output {want}")
+      elif outputs[want] != required[name]:
+        errors.append(f"output {want} shape {outputs[want]} != {required[name]}")
+    errors += [f"unexpected output {name}" for name in sorted(set(outputs) - {"outputs", *(f"next_{n}" for n in states)})]
+    if "outputs" not in outputs:
+      errors.append("missing output outputs")
+      return errors
+    out_shape = outputs["outputs"]
+  else:
+    errors = _input_errors(inputs, queue_history_inputs(history))
+    if len(outputs) != 1:
+      errors.append(f"expected one output, got {len(outputs)}")
+      return errors
+    out_shape = next(iter(outputs.values()))
   if len(out_shape) != 2 or out_shape[0] != 1 or out_shape[1] <= 0:
     errors.append(f"output shape {out_shape} is not (1, N)")
     return errors
