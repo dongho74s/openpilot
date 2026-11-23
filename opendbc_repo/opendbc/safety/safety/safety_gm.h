@@ -45,6 +45,23 @@ static bool gm_ascm_int = false;
 // The same car without ECMAcceleratorPos: brake from 0xC9, and 0xF1 instead of 0xBE in the RX checks.
 static bool gm_ascm_int_c9_brake = false;
 
+// The panda keeps the real PSCMStatus (0x184) from the Malibu's ASCM and openpilot relays a copy. When that copy stops
+// while the panda stays in this mode (openpilot stopped with the engine on, up to the 5 s heartbeat timeout), the ASCM
+// loses the steering module, latches U0131 for the ignition cycle and its ACC stops following (Malibu 00000042,
+// 2026-11-23). So the real frame passes whenever openpilot's copy is older than 300 ms (three missed 10 Hz copies).
+#define GM_ASCM_INT_PSCM_STALE_US 300000U
+static bool gm_ascm_int_pscm_tx_seen = false;
+static uint32_t gm_ascm_int_pscm_tx_us = 0U;
+
+static bool gm_ascm_int_pscm_relayed(void) {
+  // A stale copy is forgotten, so the 32-bit timer wrapping (~72 min) cannot make it look fresh again.
+  if (gm_ascm_int_pscm_tx_seen &&
+      (get_ts_elapsed(microsecond_timer_get(), gm_ascm_int_pscm_tx_us) > GM_ASCM_INT_PSCM_STALE_US)) {
+    gm_ascm_int_pscm_tx_seen = false;
+  }
+  return gm_ascm_int_pscm_tx_seen;
+}
+
 // Bolt with the factory camera ACC and a comma pedal (CHEVROLET_BOLT_ACC_PEDAL), ported from StarPilot's
 // BOLT_2022_PEDAL + PANDA_PADDLE_SCHED path (firestar5683/StarPilot 2589caad gm.h).
 static bool gm_bolt_acc_pedal = false;
@@ -416,6 +433,12 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     }
   }
 
+  // Malibu ASCM harness: openpilot's PSCMStatus copy toward the ASCM (see gm_fwd_hook)
+  if (gm_ascm_int && tx && (addr == 0x184) && (GET_BUS(to_send) == 2U) && (GET_LEN(to_send) == 8)) {
+    gm_ascm_int_pscm_tx_us = microsecond_timer_get();
+    gm_ascm_int_pscm_tx_seen = true;
+  }
+
   return tx;
 }
 
@@ -429,6 +452,10 @@ static int gm_fwd_hook(CANPacket_t* to_send) {
     if (bus_num == 0) {
       // block PSCMStatus; forwarded through openpilot to hide an alert from the camera
       bool is_pscm_msg = (addr == 0x184);
+      if (is_pscm_msg && gm_ascm_int) {
+        // Malibu ASCM harness: the real one reaches the ASCM while openpilot's copy is missing
+        is_pscm_msg = gm_ascm_int_pscm_relayed();
+      }
       // Bolt ACC with pedal: the camera gets no ECM cruise status (StarPilot's non-ACC rule)
       bool is_ecm_cruise_status_msg = gm_bolt_acc_pedal && (addr == 0x3D1);
       if (!is_pscm_msg && !is_ecm_cruise_status_msg) {
@@ -572,6 +599,8 @@ static safety_config gm_init(uint16_t param) {
   gm_ascm_int = GET_FLAG(param, GM_PARAM_HW_ASCM_INT) && GET_FLAG(param, GM_PARAM_HW_CAM) &&
                 ((param & (uint16_t)(~GM_ASCM_INT_PARAMS)) == 0U);
   gm_ascm_int_c9_brake = gm_ascm_int && GET_FLAG(param, GM_PARAM_ASCM_INT_C9_BRAKE);
+  gm_ascm_int_pscm_tx_seen = false;
+  gm_ascm_int_pscm_tx_us = 0U;
   if (gm_ascm_int) {
     // The ASCM's 0x2CB layout and the host's limits for this car are the ASCM ones (inactive -650 Nm, max 1018 Nm)
     gm_long_limits = &GM_ASCM_LONG_LIMITS;

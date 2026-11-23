@@ -153,13 +153,14 @@ def test_ascm_layout_is_unchanged_with_or_without_the_bit(native, param):
   (0x2CB, 2, 0),
   (0x315, 2, 0),
   (0x409, 2, 0),
-  (0x184, 0, -1),   # PSCMStatus toward the ASCM comes from openpilot
+  (0x184, 0, -1),   # PSCMStatus toward the ASCM comes from openpilot while it relays it (tested below)
   (0x1E1, 0, 2),
   (0x1C4, 0, 2),
   (0x2FF, 0, 2),    # the SASCM's frame passes through
 ])
 def test_forwarding_is_the_camera_harnesss(native, param, address, bus, expected):
   use(native, param)
+  assert tx(native, 0x184, bytes(8), bus=2)  # openpilot is running and relaying PSCMStatus
   assert fwd(native, address, bus) == expected
 
 
@@ -348,14 +349,74 @@ def test_long_layout_engages_on_the_buttons_not_the_stock_acc(native, param):
   (0x315, 2, -1),
   (0x409, 2, 0),    # everything else of the ASCM still reaches the car
   (0x2CD, 2, 0),
-  (0x184, 0, -1),   # PSCMStatus toward the ASCM comes from openpilot
+  (0x184, 0, -1),   # PSCMStatus toward the ASCM comes from openpilot while it relays it (tested below)
   (0x1E1, 0, 2),    # the driver's buttons, the SASCM and the car still reach the ASCM
   (0x2FF, 0, 2),
   (0x1C4, 0, 2),
 ])
 def test_long_layout_forwarding_blocks_the_ascms_longitudinal(native, param, address, bus, expected):
   use(native, param)
+  assert tx(native, 0x184, bytes(8), bus=2)  # openpilot is running and relaying PSCMStatus
   assert fwd(native, address, bus) == expected
+
+
+# Friend's Malibu 00000042 (2026-11-23): rebooted with the engine on, the panda stayed in this mode until the heartbeat
+# timeout (PandaHeartbeatLost) while nothing relayed PSCMStatus, and the ASCM latched U0131 and dropped its ACC.
+MALIBU_PARAMS = [ASCM_INT, ASCM_INT_C9, ASCM_INT_LONG, ASCM_INT_LONG_C9]
+T0 = 1_000_000
+
+
+@pytest.mark.parametrize('param', MALIBU_PARAMS)
+def test_the_real_pscm_status_reaches_the_ascm_while_openpilots_copy_is_missing(native, param):
+  use(native, param)
+  assert fwd(native, 0x184, 0) == 2              # before openpilot's first copy
+  assert tx(native, 0x184, bytes(8), bus=2)
+  assert fwd(native, 0x184, 0) == -1             # openpilot relays it
+  native.set_timer(T0 + 300_000)
+  assert fwd(native, 0x184, 0) == -1             # three missed 10 Hz copies are still tolerated
+  native.set_timer(T0 + 300_001)
+  assert fwd(native, 0x184, 0) == 2              # then the real one passes again
+  native.set_timer(T0 + 5_000_000)
+  assert fwd(native, 0x184, 0) == 2              # for as long as openpilot stays silent (heartbeat timeout: 5 s)
+  assert tx(native, 0x184, bytes(8), bus=2)
+  assert fwd(native, 0x184, 0) == -1             # and openpilot takes over again with its next copy
+
+
+@pytest.mark.parametrize('param', MALIBU_PARAMS)
+@pytest.mark.parametrize('bus,length', [(0, 8), (1, 8), (2, 7)])
+def test_only_openpilots_copy_toward_the_ascm_counts(native, param, bus, length):
+  use(native, param)
+  tx(native, 0x184, bytes(length), bus=bus)
+  assert fwd(native, 0x184, 0) == 2
+
+
+@pytest.mark.parametrize('param', MALIBU_PARAMS)
+def test_a_stale_copy_is_forgotten_across_the_timer_wrap(native, param):
+  use(native, param)
+  assert tx(native, 0x184, bytes(8), bus=2)
+  native.set_timer(T0 + 400_000)
+  assert fwd(native, 0x184, 0) == 2
+  native.set_timer(T0 + 100_000)                 # the 32-bit microsecond timer wrapped (~72 min later)
+  assert fwd(native, 0x184, 0) == 2
+
+
+@pytest.mark.parametrize('param', MALIBU_PARAMS)
+def test_a_new_safety_mode_forgets_the_copy(native, param):
+  use(native, param)
+  assert tx(native, 0x184, bytes(8), bus=2)
+  use(native, param)
+  assert fwd(native, 0x184, 0) == 2
+
+
+@pytest.mark.parametrize('param', [CAMERA, CAMERA | int(GMSafetyFlags.HW_CAM_LONG), TRAVERSE, TRAVERSE | NEW_BITS,
+                                   CAMERA | int(GMSafetyFlags.HW_SDGM | GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.HW_ASCM_INT)])
+def test_the_other_camera_harnesses_never_pass_the_real_pscm_status(native, param):
+  """The common GM camera path (the Traverse included) is unchanged: PSCMStatus comes only from openpilot."""
+  use(native, param)
+  assert fwd(native, 0x184, 0) == -1
+  assert tx(native, 0x184, bytes(8), bus=2)
+  native.set_timer(T0 + 5_000_000)
+  assert fwd(native, 0x184, 0) == -1
 
 
 @pytest.mark.parametrize('param', [ASCM_INT_LONG, ASCM_INT_LONG_C9])
@@ -447,7 +508,7 @@ def test_the_hosts_longitudinal_frames_reach_the_car(native, runtime, accel_pos)
   controller = runtime.controller.CarController(car.DBC[car.MALIBU_ASCM], ci.CP)
   packer = runtime.CANPacker(car.DBC[car.MALIBU_ASCM][car.Bus.pt])
   t0 = time.monotonic_ns()
-  rejected, by_address, gas, brake = [], set(), [], []
+  rejected, by_address, gas, brake, leaked = [], set(), [], [], []
   LongCtrlState = car.structs.CarControl.Actuators.LongControlState
   for tick, (accel, long_active) in enumerate(long_drive()):
     now = t0 + tick * 10_000_000
@@ -460,6 +521,8 @@ def test_the_hosts_longitudinal_frames_reach_the_car(native, runtime, accel_pos)
     cc.actuators.accel = accel
     cc.actuators.longControlState = LongCtrlState.pid if long_active else LongCtrlState.off
     _, sends = controller.update(cc.as_reader(), ci.CS, now)
+    if (0x184, 2) in by_address and fwd(native, 0x184, 0) != -1:
+      leaked.append(tick)  # the real PSCMStatus would reach the ASCM between openpilot's copies
     for address, dat, bus in sends:
       by_address.add((address, bus))
       if not tx(native, address, bytes(dat), bus=bus):
@@ -468,7 +531,7 @@ def test_the_hosts_longitudinal_frames_reach_the_car(native, runtime, accel_pos)
         gas.append(((dat[1] & 7) << 16 | dat[2] << 8 | dat[3]) * 0.125 - 22534)
       if address == 0x315:
         brake.append((0x1000 - (((dat[0] & 0xF) << 8) | dat[1])) & 0xFFF)
-  assert rejected == []
+  assert rejected == [] and leaked == []
   assert {(0x180, 0), (0x2CB, 0), (0x315, 0), (0x370, 0), (0x184, 2)} <= by_address
   assert not any(bus == 1 for _, bus in by_address)
   assert not {(0x2CB, 2), (0x315, 2), (0x370, 2)} & by_address
