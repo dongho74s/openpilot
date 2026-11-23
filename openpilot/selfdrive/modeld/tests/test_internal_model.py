@@ -890,7 +890,9 @@ def live_switch_class(create, warm, records, monkeypatch):
   internal.mark_loading = lambda selected: records.append(("loading", selected.model.id))
   internal.mark_loaded = lambda selected: records.append(("loaded", selected.model.id))
   internal.mark_clean_stop = lambda: None
+  stock_state = getattr(create, "stock_state", None)
   scope = {"internal_model": internal, "create_internal_model": create, "time": time_module,
+           "ModelState": lambda *a, **k: stock_state or FakeState("explicit-stock"),
            "log": NS(OnroadEvent=NS(EventName=NS(internalModelSwitching="internalModelSwitching"))),
            "cloudlog": NS(warning=lambda *a: None, exception=lambda *a: None),
            "signal": NS(SIGINT=2, signal=lambda *a: records.append("sigint"), default_int_handler=None)}
@@ -913,12 +915,14 @@ class FakeState:
     self.name, self.history_steps, self.vision_input_names = name, steps, ["img", "big_img"]
 
 
-def fake_sm(t_ns, event=True, enabled=False, lat=False, long=False, events_ns=None, state_ns=None, control_ns=None):
+def fake_sm(t_ns, event=True, enabled=False, lat=False, long=False, events_ns=None, state_ns=None, control_ns=None,
+            valid=True, alive=True):
   from types import SimpleNamespace as NS
   return {
     "logMonoTime": {"onroadEvents": events_ns or t_ns, "selfdriveState": state_ns or t_ns + 1, "carControl": control_ns or t_ns + 2},
     "onroadEvents": [NS(name="internalModelSwitching")] if event else [NS(name="other")],
-    "selfdriveState": NS(enabled=enabled, active=enabled), "carControl": NS(latActive=lat, longActive=long),
+    "selfdriveState": NS(enabled=enabled, active=enabled), "carControl": NS(latActive=lat, longActive=long, enabled=enabled),
+    "valid": {"selfdriveState": valid, "carControl": valid}, "alive": {"selfdriveState": alive, "carControl": alive},
   }
 
 
@@ -926,6 +930,14 @@ class SM(dict):
   @property
   def logMonoTime(self):
     return self["logMonoTime"]
+
+  @property
+  def valid(self):
+    return self["valid"]
+
+  @property
+  def alive(self):
+    return self["alive"]
 
 
 def requested_switch(monkeypatch, create=None, warm=None, token_model=RDF):
@@ -988,8 +1000,43 @@ def test_the_load_waits_for_the_block_to_be_confirmed_after_the_request(monkeypa
   assert sw.acknowledged(SM(fake_sm(later, lat=True)), False) == "wait"              # AlwaysLateral still steering
   assert sw.acknowledged(SM(fake_sm(t + 10, control_ns=t + int(0.1e9))), False) == "wait"  # controlsd may not have re-read
   assert sw.acknowledged(SM(fake_sm(later, state_ns=later - 5)), False) == "wait"    # state older than the event
+  assert sw.acknowledged(SM(fake_sm(later, control_ns=later)), False) == "wait"      # control not after the idle state
+  assert sw.acknowledged(SM(fake_sm(later, valid=False)), False) == "wait"           # invalid confirmation
+  assert sw.acknowledged(SM(fake_sm(later, alive=False)), False) == "wait"           # stale confirmation
   assert sw.acknowledged(SM(fake_sm(later)), False) == "go"
   assert sw.acknowledged(SM(fake_sm(later)), True) == "engaged"
+  import time as _t
+  old = _t.monotonic_ns() - int(1e9)
+  sw.requested_at_ns = old - int(1e9)
+  assert sw.acknowledged(SM(fake_sm(old, control_ns=old + int(0.3e9))), False) == "wait"  # older than 0.3 s now
+
+
+def test_a_selection_changed_while_waiting_withdraws_the_request(monkeypatch):
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch)
+  wmi = im.find("WMIV11")
+  im.write_request(wmi, now=8)                          # not compiled
+  assert sw.acknowledged(SM(fake_sm(sw.requested_at_ns + int(0.3e9))), False) == "changed"
+  sw.withdraw()
+  assert params.values["InternalModelSwitching"] is False
+  assert not sw.wanted(40, False, *CAM)                 # checked from the start: not ready, so no request
+  compile_ok(wmi)
+  assert sw.wanted(60, False, *CAM)
+
+
+def test_no_live_switch_while_an_external_model_drives_and_jetlink_is_held_meanwhile(monkeypatch):
+  records, params = [], FakeSwitchParams()
+  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  compile_ok(RDF)
+  sw = LiveSwitch(params, None, im.request_token())
+  im.write_request(RDF, now=3)
+  assert not sw.wanted(20, False, *CAM, internal_only=False)
+  joining = type("J", (), {"join_allowed": True})()
+  sw.hold_jetlink(joining)
+  assert joining.join_allowed is True                   # idle: Jetlink decides as before
+  assert sw.wanted(20, False, *CAM, internal_only=True)
+  sw.request()
+  sw.hold_jetlink(joining)
+  assert joining.join_allowed is False
 
 
 def test_an_unconfirmed_or_interrupted_request_is_withdrawn_and_retried(monkeypatch):
@@ -1026,25 +1073,40 @@ def test_the_block_lasts_until_the_new_model_itself_produced_a_full_history(monk
   assert not sw.wanted(80, False, *CAM)                 # the switched-to selection is consumed
 
 
-def test_the_block_ends_at_once_while_an_external_model_produces_the_outputs(monkeypatch):
+def test_outputs_the_new_model_did_not_produce_never_end_the_block(monkeypatch):
   sw, params, _, LiveSwitch = requested_switch(monkeypatch)
   wrapper, old = type("J", (), {})(), FakeState("old")
   wrapper.small = old
   model, small, _ = sw.switch(wrapper, old, *CAM, False, {"img": 1, "big_img": 2})
-  assert model is wrapper and wrapper.small is small    # the Jetlink wrapper keeps it on standby or runs it
-  sw.produced(False, True)
-  assert params.values["InternalModelSwitching"] is False and sw.phase == LiveSwitch.IDLE
+  assert model is wrapper and wrapper.small is small    # the Jetlink wrapper runs it
+  for _ in range(1000):
+    sw.produced(False, True)                            # an external result, e.g. a Jetlink fallback frame
+    sw.produced(True, False)                            # prepare_only: nothing published
+  assert params.values["InternalModelSwitching"] is True and sw.phase == LiveSwitch.WARMING and sw.steps == 0
 
 
 def test_live_switch_falls_back_to_stock_when_the_new_model_fails_its_warmup(monkeypatch):
+  import gc
+  import weakref
   selected = im.Selected(RDF, im.pkl_path(RDF))
+  failed = FakeState("rdf")
+  ref = weakref.ref(failed)
+  alive_at_fallback = []
   stock = FakeState("stock")
-  made = iter([(FakeState("rdf"), selected), (stock, None)])
+  def create(*a):
+    return failed_holder.pop(), selected
+  failed_holder = [failed]
+  del failed
   def warm(model, bufs):
     if model.name == "rdf":
       raise RuntimeError("NaN")
-  sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=lambda *a: next(made), warm=warm)
+    gc.collect()
+    alive_at_fallback.append(ref() is not None)
+  create.stock_state = stock
+  sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=create, warm=warm)
+  im.write_request(im.find("WMIV11"), now=9)            # changed while warming: the fallback is still the stock model
   old = FakeState("old")
   model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
   assert model is stock and sel is None and ("runtime_failed", "RDF") in records
+  assert alive_at_fallback == [False]                   # the failed model was released before the fallback loaded
   assert sw.running_sha == im.stock_model().sha256 and sw.phase == LiveSwitch.WARMING
