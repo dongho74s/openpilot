@@ -175,7 +175,7 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 | 조향감 | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate`, `LateralAccelLimit` | 조향 시점, 평활화, 일시중지 각도와 조향비, 횡가속도 상한 |
 | [차로 변경](lane-change.md)·자동 턴 | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `AutoTurnControl`, `AutoTurnControlRightLaneChange`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | 차로 변경 진입 조건과 ATC 동작 |
 | 레인모드 | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | 레인모드 MPC 가중치와 차선 사용 조건 |
-| 고급 토크·토크 계수 | `ChevroletSteerFF`, `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | 커스텀 토크 제어 계수 |
+| 고급 토크·토크 계수 | `ChevroletSteerFF`, `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd`, `LatTorqueLimitPFilter` | 커스텀 토크 제어 계수 |
 | 고급 토크·검색 전용 | `NNFF` | 토크 조향의 신경망 피드포워드 옵션 |
 | 고급 토크·조향 제한 | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | 최대 조향 토크와 토크 변화율 제한 |
 
@@ -229,6 +229,16 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 1·2·3은 `NNFF` 토글과 관계없이 적용되고 콤마 자체 NN보다 우선합니다. 1·2를 고르면 시작 안내에 `CHEVROLET TRAILBLAZER (selected)`나 `CHEVROLET VOLT (selected)`가 나오고 3은 안내가 없습니다. 시동을 걸어 주행을 시작할 때마다 차량 설정을 새로 만들면서 읽으므로, 주행 중에 바꾸면 그 주행에는 반영되지 않고 다음 시동부터 적용됩니다. 재부팅은 필요 없습니다. `LateralTorqueCustom`을 켜면 그 값이 횡가속 계수와 마찰을 덮어씁니다. 트레일블레이저만 쓰는 저속 오차 블렌드 조정은 어떤 모델을 골라도 트레일블레이저(CHEVROLET_TRAILBLAZER)에서 NNFF로 달릴 때 적용됩니다.
 
 이 설정을 만든 이유: 2026-11-21 말리부 ASCM 하네스 로그(85~94 km/h)에서 차가 차선 안에서 약 10초 주기로 좌우로 흔들렸습니다. 토크가 3초 동안 0.12에서 0.25로 올라도 핸들각이 그대로 있다가, 토크를 풀자 한 번에 넘어갔습니다. 두 모델을 같은 입력으로 돌려 보면 일정하게 꺾는 힘은 10% 안쪽으로 비슷하지만, 목표와 어긋났을 때 마찰을 넘기는 힘은 트블 모델이 볼트 모델의 1/4~1/6입니다. 같은 날 트래버스 고속 구간(77~98 km/h)도 핸들이 버티는 비율이 비슷했습니다(43~60%, 말리부 46%). 어느 선택이 각 차에 나은지는 실차로 비교하지 않았습니다.
+
+#### 토크 한도 근처 P 걸러내기
+
+`LatTorqueLimitPFilter`(고급 토크 › 토크 계수, 2026-11-23)는 쉐보레가 NNFF로 달릴 때(FrogPilot 방식) 조향 토크가 한도에 붙은 커브에서 핸들을 돌렸다 놓았다 하는 것을 줄입니다. 단위는 0.01초이고 0이면 꺼짐(기본값), 30(0.3초)을 권합니다. 다른 브랜드에서는 메뉴에 보이지 않고, NNFF가 아닌 쉐보레·GMC·뷰익·캐딜락에서는 저장해도 아무것도 바뀌지 않습니다.
+
+- 앞먹임(F)만으로 토크가 0.75 아래일 때는 아무것도 바뀌지 않습니다. 0.75~0.9 사이에서 서서히 걸러지기 시작해 0.9부터는 P가 설정한 시간 상수로 다 걸러집니다.
+- 적분(I)은 예전처럼 거르지 않은 P로 계산합니다. 조향이 꺼지면 걸러진 값은 비워져 다시 켤 때 새로 시작합니다.
+- 주행 중에 바꿔도 1초 안에 반영됩니다.
+
+이 설정을 만든 이유: 토크 한도 근처에서는 앞먹임이 0.9쯤을 맡고 P가 나머지 0.1~0.15를 채웁니다. 차가 목표를 따라잡아 오차가 0을 지나면 P가 +에서 -로 뒤집히며 0.5초 만에 토크를 0.3쯤 빼고, 다시 뒤처지면 한도로 돌아갑니다. 트래버스 rlog(2026-11-20~23)에서 한도의 토크 하락 129번 중 125번이 P 때문이었고, 운전자 토크 제한은 80번 중 6번이었습니다. 횡가속 제한(`LateralAccelLimit`)을 3.0 위로 올리면 앞먹임이 한도에 더 오래 붙어 이런 일이 늘어납니다. 기기와 같은 제어 코드에 로그로 맞춘 조향 반응을 붙인 시뮬레이션(커브·회전 47곳)에서 0.3~0.6초로 걸렀더니 한도의 토크 하락이 20~32% 줄었고 목표 추종과 커브 출구는 거의 같았습니다. P를 낮추거나 앞먹임·적분을 늘리는 방법은 효과가 없었습니다. 토크 한도(3Nm) 자체가 물리적 한계라 완전히 없어지지는 않으며, 실차로는 아직 확인하지 않았습니다.
 
 #### 운전자 개입 후 조향 복구
 
