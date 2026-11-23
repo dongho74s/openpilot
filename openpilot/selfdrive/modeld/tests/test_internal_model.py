@@ -1189,3 +1189,41 @@ def test_select_for_modeld_uses_a_request_already_read():
   selected = im.select_for_modeld(*CAM, requested=RDF)
   assert selected is not None and selected.model is RDF
   assert im.select_for_modeld(*CAM) is None                # without it: request.json (stock)
+
+
+def test_turning_the_setting_off_before_the_load_withdraws_the_request(monkeypatch):
+  made = []
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch, create=lambda *a, **k: made.append(1) or (FakeState("x"), None))
+  params.values["InternalModelLiveSwitch"] = False
+  assert sw.acknowledged(SM(fake_sm(sw.requested_at_ns + int(0.3e9))), False) == "off"
+  old = FakeState("old")
+  assert sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2}) is None and made == []   # also right before loading
+  sw.withdraw()
+  assert params.values["InternalModelSwitching"] is False and sw.phase == LiveSwitch.IDLE
+  assert not sw.wanted(40, False, *CAM)                                 # stays pending for the next start
+
+
+def test_turning_the_setting_off_while_warming_keeps_the_block(monkeypatch):
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch)
+  old = FakeState("old")
+  sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
+  params.values["InternalModelLiveSwitch"] = False
+  for _ in range(sw.steps_needed - 1):
+    sw.produced(True, True)
+  assert params.values["InternalModelSwitching"] is True and sw.phase == LiveSwitch.WARMING
+  sw.produced(True, True)
+  assert params.values["InternalModelSwitching"] is False
+
+
+def test_main_loop_withdraws_on_off_and_keeps_a_calibration_received_without_frames():
+  import ast
+  src = (Path(im.__file__).parent / "modeld.py").read_text()
+  fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "main")
+  body = ast.unparse(fn)
+  assert body.count("if ack in ('engaged', 'changed', 'off', 'timeout'):") == 2
+  branch = ast.unparse(next(n for n in ast.walk(fn) if isinstance(n, ast.If) and ast.unparse(n.test) == "frames is None"))
+  assert "calib_pending = calib_pending or sm.updated['liveCalibration']" in branch
+  assert branch.index("sm.update(0)") < branch.index("calib_pending = calib_pending")
+  assert "calib_updated, calib_pending = (sm.updated['liveCalibration'] or calib_pending, False)" in body
+  assert "if calib_updated and sm.seen['roadCameraState'] and sm.seen['deviceState']:" in body
+

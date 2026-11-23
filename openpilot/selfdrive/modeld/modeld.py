@@ -353,7 +353,8 @@ class LiveSwitch:
       self.retry_at_ns = time.monotonic_ns() + int(self.RETRY_AFTER_TIMEOUT_S * 1e9)
 
   def acknowledged(self, sm, engaged: bool) -> str:
-    """REQUESTED: 'go' once the block is confirmed; 'engaged', 'changed' or 'timeout' withdraw it; else 'wait'.
+    """REQUESTED: 'go' once the block is confirmed; 'engaged', 'changed', 'off' (InternalModelLiveSwitch turned off
+    before the load) or 'timeout' withdraw it; else 'wait'.
 
     Confirmed: onroadEvents carries the block event and was published after the request; a selfdriveState published
     after that shows nothing engaged; a carControl published after that state, and after controlsd re-read the flag,
@@ -362,6 +363,8 @@ class LiveSwitch:
     now = time.monotonic_ns()
     if engaged:
       return "engaged"
+    if not self.params.get_bool("InternalModelLiveSwitch"):
+      return "off"  # nothing loaded yet: the selection waits for the next start, as with the setting off
     if internal_model.request_token() != self.pending_token:
       return "changed"  # its readiness was checked for the earlier selection
     if now - self.requested_at_ns > self.ACK_TIMEOUT_S * 1e9:
@@ -385,8 +388,11 @@ class LiveSwitch:
       token = int(request.get("token") or 0)
     except (TypeError, ValueError):
       token = 0
-    if token != self.pending_token:
-      return None  # changed after the confirmation: the caller withdraws and the new selection is checked from the start
+    if token != self.pending_token or not self.params.get_bool("InternalModelLiveSwitch"):
+      # changed after the confirmation (the caller withdraws and the new selection is checked from the start), or the
+      # setting was turned off: nothing is loaded. Once loading starts, turning it off keeps the block until the new
+      # model's history is full (WARMING).
+      return None
     requested = internal_model.find(request.get("id")) or internal_model.stock_model()
     if not requested.stock:
       install_clean_stop_handler()  # as at startup; the stock model keeps the default SIGINT behaviour
@@ -622,6 +628,7 @@ def main(demo=False):
   model_transform_main = np.zeros((3, 3), dtype=np.float32)
   model_transform_extra = np.zeros((3, 3), dtype=np.float32)
   live_calib_seen = False
+  calib_pending = False  # a liveCalibration update received while no camera pair arrived (live switch withdraw path)
   buf_main, buf_extra = None, None
   meta_main = FrameMeta()
   meta_extra = FrameMeta()
@@ -675,9 +682,10 @@ def main(demo=False):
       if live_switch.phase == LiveSwitch.REQUESTED:
         # withdrawing must not wait for the cameras: an engagement or a stale request ends the request now
         sm.update(0)
+        calib_pending = calib_pending or sm.updated['liveCalibration']  # the next sm.update clears the flag
         ack = live_switch.acknowledged(sm, sm['selfdriveState'].enabled or sm['selfdriveState'].active or
                                        sm['carControl'].latActive or sm['carControl'].longActive)
-        if ack in ("engaged", "changed", "timeout"):
+        if ack in ("engaged", "changed", "off", "timeout"):
           cloudlog.warning("internal model live switch withdrawn without camera frames: %s", ack)
           live_switch.withdraw(timed_out=ack == "timeout")
       continue
@@ -695,7 +703,7 @@ def main(demo=False):
       live_switch.request()
     elif live_switch.phase == LiveSwitch.REQUESTED:
       ack = live_switch.acknowledged(sm, engaged)
-      if ack in ("engaged", "changed", "timeout"):
+      if ack in ("engaged", "changed", "off", "timeout"):
         cloudlog.warning("internal model live switch withdrawn: %s", ack)
         live_switch.withdraw(timed_out=ack == "timeout")
       elif ack == "go":
@@ -719,7 +727,8 @@ def main(demo=False):
     frame_id = sm["roadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
     #lat_delay = sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
-    if sm.updated["liveCalibration"] and sm.seen['roadCameraState'] and sm.seen['deviceState']:
+    calib_updated, calib_pending = sm.updated["liveCalibration"] or calib_pending, False
+    if calib_updated and sm.seen['roadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
 
       calib_done = sm["liveCalibration"].calStatus == log.LiveCalibrationData.Status.calibrated

@@ -176,6 +176,8 @@ September 2026 (the history kept inside the model).
     (AlwaysLateral included) all pause meanwhile.
   - While a Jetson or eGPU model drives, the switch waits for the next drive instead.
   - If modeld restarts during a switch, the block lasts until the model it loads again has a full history.
+  - Turning the setting off while a switch waits cancels it (the model is used from the next drive); once loading has
+    started, the block stays until the history is full.
   - A model that is not compiled yet is not compiled while driving (it would share the GPU with the running model).
     It is downloaded and compiled once parked and used from the next drive; after that it switches right away.
 - While parked the comma downloads the model (about 100 MB), checks it against the pinned checksum and the expected
