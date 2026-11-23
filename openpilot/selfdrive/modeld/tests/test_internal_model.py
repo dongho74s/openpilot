@@ -1229,40 +1229,54 @@ def test_main_loop_withdraws_on_off_and_keeps_a_calibration_received_without_fra
 
 
 
+
 def _modeld_functions(*names):
-  """Top-level functions of modeld.py run without its native imports."""
+  """Top-level functions of modeld.py run without its native imports (Plan is the real one)."""
   import ast
-  from types import SimpleNamespace as NS
-  tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
   import numpy as np
+  from openpilot.selfdrive.modeld.constants import Plan
+  tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
   nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
-  scope = {"np": np, "Plan": NS(POSITION=0), "dict": dict}
+  scope = {"np": np, "Plan": Plan, "dict": dict}
   exec(compile(ast.Module(body=nodes, type_ignores=[]), "<modeld>", "exec"), scope)
   return scope
 
 
 def test_an_internal_action_model_gets_no_lateral_smoothing():
   import numpy as np
+  from openpilot.selfdrive.modeld.constants import ModelConstants
   f = _modeld_functions("get_lat_smooth_seconds_dynamic", "lat_smoothing_for_output")["lat_smoothing_for_output"]
-  plan_stds = np.zeros((1, 33, 15, 3), dtype=np.float32)
-  plan_stds[0, 10, 0, 1] = 0.3                                    # an uncertain plan: the stock model gets the extra smoothing
+  # plan_stds as the Parser gives it: (1, IDX_N, PLAN_WIDTH)
+  plan_stds = np.full((1, ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH), 0.3, dtype=np.float32)
   action_model = {"action": np.zeros((1, 4)), "plan_stds": plan_stds}
   plan_model = {"plan_stds": plan_stds}
-  assert f(action_model, 0.14, True) == (0.0, 0.0, 0.0)         # RDF / CH / Polaris on the comma GPU: as upstream
-  assert f(plan_model, 0.14, True)[0] == pytest.approx(0.42)     # CD210 / WMI V11: LatSmoothSec + extra, as before
-  assert f(action_model, 0.14, False)[0] == pytest.approx(0.42)  # a Jetson/eGPU output keeps the current handling
+  assert f(action_model, 0.14, True) == (0.0, 0.0, 0.0)           # RDF / CH / Polaris on the comma GPU: as upstream
+  assert f(plan_model, 0.14, True)[0] == pytest.approx(0.14)       # CD210 / WMI V11: LatSmoothSec, as before
+  assert f(action_model, 0.14, False)[0] == pytest.approx(0.14)    # a Jetson/eGPU output keeps the current handling
   assert f(action_model, 0.0, False) == (0.0, 0.0, 0.0)
 
 
-def test_the_next_lat_action_t_and_the_action_use_the_same_smoothing():
+def test_every_backend_but_an_internal_action_head_keeps_the_previous_action_t():
   import ast
   src = (Path(im.__file__).parent / "modeld.py").read_text()
-  fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "main")
+  tree = ast.parse(src)
+  fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
   body = ast.unparse(fn)
+  # the shared input keeps LatSmoothSec whatever produced the last output, so a Jetson/eGPU join or a switch to a
+  # plan-only model never starts from the shorter delay
+  assert "'action_t': np.array([lat_action_t, long_action_t], dtype=np.float32)" in body
+  assert "lat_action_t = lat_delay_dynamic + frame_delay + action_delay" in body
+  assert "lat_smooth_input, y_std_1s, lat_smooth_extra = get_lat_smooth_seconds_dynamic(model_output, lat_smooth_seconds)" in body
+  assert "lat_delay_dynamic = lat_delay_base + lat_smooth_input" in body
+  assert "'internal_action_t': np.array([lat_delay_base + frame_delay + action_delay, long_action_t], dtype=np.float32)" in body
+  # the action's own smoothing: decided after the run for the output that was produced
   decided = "internal_output = model is small_model or (getattr(model, 'small', None) is small_model and (not getattr(model, 'active', False)))"
-  assert decided in body and body.index(decided) < body.index("live_switch.produced(internal_output, model_output is not None)")
-  call = "lat_smooth_seconds_dynamic, y_std_1s, lat_smooth_extra = lat_smoothing_for_output(model_output, lat_smooth_seconds, internal_output)"
-  assert call in body and body.index(decided) < body.index(call)
-  assert "lat_delay_dynamic = custom_lat_delay + lat_smooth_seconds_dynamic" in body
+  smooth = "lat_smooth_seconds_dynamic = lat_smoothing_for_output(model_output, lat_smooth_seconds, internal_output)[0]"
+  assert decided in body and smooth in body and body.index(decided) < body.index(smooth)
   assert "get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego, lat_smooth_seconds_dynamic, vEgoStopping)" in body
-  assert "get_lat_smooth_seconds_dynamic(" not in body                      # only through lat_smoothing_for_output
+  # only an internal ModelState with an action head reads internal_action_t
+  ms = ast.unparse(next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ModelState"))
+  assert "self.bare_action_t = not usbgpu and 'action' in self.output_slices" in ms
+  assert "self.npy['action_t'][:] = inputs['internal_action_t'] if self.bare_action_t and 'internal_action_t' in inputs else inputs['action_t']" in ms
+  assert ms.count("self.npy['action_t'][:]") == 1
+

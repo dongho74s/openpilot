@@ -97,12 +97,12 @@ def lat_smoothing_for_output(model_output: dict[str, np.ndarray], base_lat_smoot
                              internal_output: bool) -> tuple[float, float, float]:
   """(smooth seconds, y_std_1s, extra) for this output's lateral action.
 
-  An internal (comma GPU) model with its own action head (RDF, CH Driving, Polaris Vega/Vega 2) gets no smoothing, and so no
-  smoothing time in the next lat_action_t either: upstream (commaai 875a6b7e, CH Driving's branch) and StarPilot (where
-  Polaris comes from) feed that head the bare steering delay and use its lateral acceleration unsmoothed
-  (LAT_SMOOTH_SECONDS = 0.0). With LatSmoothSec on top, carrot's turns at 15-45 km/h got only 77-83 % of the curvature
-  actually driven while the same model's plan asked for 90-97 % (0000024f/00000250, 2026-11-24). The stock model and
-  other plan-only models keep LatSmoothSec; Jetson/eGPU outputs keep their current handling."""
+  An internal (comma GPU) model with its own action head (RDF, CH Driving, Polaris Vega/Vega 2) gets no smoothing:
+  upstream (commaai 875a6b7e, CH Driving's branch) and StarPilot (where Polaris comes from) use that head's lateral
+  acceleration unsmoothed (LAT_SMOOTH_SECONDS = 0.0) and feed it the bare steering delay as action_t (ModelState's
+  internal_action_t). In 0000024f/00000250 (2026-11-24) these models' action asked for 77-83 % of the curvature driven
+  in 15-45 km/h turns while the same model's plan asked for 90-97 %. The stock model and other plan-only models keep
+  LatSmoothSec; Jetson/eGPU outputs keep their current handling."""
   if internal_output and 'action' in model_output:
     return 0.0, 0.0, 0.0
   return get_lat_smooth_seconds_dynamic(model_output, base_lat_smooth_seconds)
@@ -158,6 +158,9 @@ class ModelState:
     # camera roles: buffers and transforms are passed per camera, whatever the model names its image inputs
     self.vision_input_names = ['img', 'big_img'] if self.state_model else [k for k in self.input_shapes if 'img' in k]
     self.output_slices = metadata['output_slices']
+    # an internal model with its own action head takes the bare steering delay as action_t (lat_smoothing_for_output);
+    # the eGPU copy of this class and plan-only models keep the delay that includes LatSmoothSec
+    self.bare_action_t = not usbgpu and 'action' in self.output_slices
 
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
     self.usbgpu = usbgpu
@@ -237,7 +240,7 @@ class ModelState:
     self.npy['desire'][:] = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0)
     self.prev_desire[:] = inputs['desire_pulse']
     self.npy['traffic_convention'][:] = inputs['traffic_convention']
-    self.npy['action_t'][:] = inputs['action_t']
+    self.npy['action_t'][:] = inputs['internal_action_t'] if self.bare_action_t and 'internal_action_t' in inputs else inputs['action_t']
     self.npy['tfm'][:,:] = transforms['img'][:,:]
     self.npy['big_tfm'][:,:] = transforms['big_img'][:,:]
 
@@ -672,6 +675,7 @@ def main(demo=False):
   camera_yaw_trim_deg = params.get_float("CameraYawTrimDeg") * 0.01
   calib_done = False
   lat_delay_dynamic = lat_smooth_seconds
+  lat_delay_base = 0.0  # the steering delay alone (SteerActuatorDelay, or the learned delay when that is 0)
   diagnostics = RuntimeDiagnostics('modeld', cloudlog.event)
   while True:
     loop_start, cpu_start = time.monotonic(), time.thread_time()
@@ -787,7 +791,10 @@ def main(demo=False):
     inputs: dict[str, np.ndarray] = {
       'desire_pulse': vec_desire,
       'traffic_convention': traffic_convention,
+      # Jetson/eGPU models and plan-only internal models: the delay including LatSmoothSec, as before
       'action_t': np.array([lat_action_t, long_action_t], dtype=np.float32),
+      # internal models with an action head (ModelState.bare_action_t): the steering delay alone, as upstream
+      'internal_action_t': np.array([lat_delay_base + frame_delay + action_delay, long_action_t], dtype=np.float32),
     }
     inputs.update(map_input.update(model, sm['carState'].vEgo if sm.valid['carState'] else 0.))
     if hasattr(model, 'nav_input_status'):
@@ -849,15 +856,12 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
-      lat_smooth_seconds_dynamic, y_std_1s, lat_smooth_extra = lat_smoothing_for_output(
-          model_output,
-          lat_smooth_seconds,
-          internal_output,
-        )
-      if custom_lat_delay > 0.0:
-        lat_delay_dynamic = custom_lat_delay + lat_smooth_seconds_dynamic
-      else:
-        lat_delay_dynamic = sm["liveDelay"].lateralDelay + lat_smooth_seconds_dynamic
+      # the next frame's action_t keeps LatSmoothSec for every backend (inputs['action_t']); only the action head of an
+      # internal model takes the bare delay (inputs['internal_action_t']) and no smoothing of its output
+      lat_smooth_input, y_std_1s, lat_smooth_extra = get_lat_smooth_seconds_dynamic(model_output, lat_smooth_seconds)
+      lat_delay_base = custom_lat_delay if custom_lat_delay > 0.0 else sm["liveDelay"].lateralDelay
+      lat_delay_dynamic = lat_delay_base + lat_smooth_input
+      lat_smooth_seconds_dynamic = lat_smoothing_for_output(model_output, lat_smooth_seconds, internal_output)[0]
 
       action = get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego, lat_smooth_seconds_dynamic, vEgoStopping)
       prev_action = action

@@ -241,7 +241,7 @@ Laneless driving steers with the model's own curvature, so `PathOffset` (lane-mo
 
 A larger `SteerActuatorDelay` compensates by commanding earlier. A larger `LatSmoothSec` is smoother but may respond more slowly. Changing both together makes diagnosis difficult.
 
-`LatSmoothSec` does not apply to the comma internal models that use their own steering output (action): `RDF`, `CH Driving`, `Polaris Vega` and `Polaris Vega 2` (2026-11-24). As upstream and StarPilot do, they get only the steering delay (`SteerActuatorDelay`, or the learned value when 0) and no smoothing. With smoothing on top, these models commanded only 77-83 % of the curvature actually needed in turns at 15-45 km/h, and the driver often had to help. The stock model (CD210), `WMI V11` and Jetson/eGPU models keep using `LatSmoothSec`.
+`LatSmoothSec` does not apply to the comma internal models that use their own steering output (action): `RDF`, `CH Driving`, `Polaris Vega` and `Polaris Vega 2` (2026-11-24). As upstream and StarPilot do, they get no smoothing, and the delay fed to the model is the steering delay alone (`SteerActuatorDelay`, or the learned value when 0; 0.515 s -> 0.375 s with the current settings). In drives with the smoothing (2026-11-23), these models commanded 77-83 % of the curvature actually driven in 15-45 km/h turns, against 90-97 % from the same model's plan, and the driver often had to help. Whether this change improves that has not been checked on the road yet. The stock model (CD210), `WMI V11` and Jetson/eGPU models keep using `LatSmoothSec`.
 
 The default `SteerRatioRate` of `100%` applies the learned steering ratio without scaling. It is used when `CustomSR=0`; a stored rate outside the allowed range (`30–200%`) safely falls back to `100%`.
 
