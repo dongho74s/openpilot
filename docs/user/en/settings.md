@@ -243,12 +243,12 @@ A larger `SteerActuatorDelay` compensates by commanding earlier. A larger `LatSm
 
 The default `SteerRatioRate` of `100%` applies the learned steering ratio without scaling. It is used when `CustomSR=0`; a stored rate outside the allowed range (`30–200%`) safely falls back to `100%`.
 
-`LateralAccelLimit` (lateral acceleration limit, ×0.1 m/s², `30–45`, default `30`) is the lateral acceleration limit that clips the steering curvature the model requests. The default `30` (3.0 m/s²) is openpilot's stock limit (ISO 11270) and behaves as before.
+`LateralAccelLimit` (lateral acceleration limit, ×0.1 m/s², `30–90`, default `30`) is the lateral acceleration limit that clips the steering curvature the model requests. The default `30` (3.0 m/s²) is openpilot's stock limit (ISO 11270) and behaves as before.
 - Chevrolet with NNFF (the FrogPilot-parity steering path) uses this value at every speed.
-- Other cars keep the 4.5 m/s² allowance below 80 km/h and reduce it to this value between 80 and 120 km/h, so for them it mainly changes highway speeds.
+- Other cars keep the 4.5 m/s² allowance below 80 km/h (or this value if it is higher) and move to this value between 80 and 120 km/h, so for them it mainly changes highway speeds.
 - Road roll compensation is still added, and the steering-rate (jerk) limit of 5.0 m/s³ is unchanged.
 - A change while driving is read within about a second and applied gradually, 0.5 m/s² per second.
-- The car still cannot steer beyond its maximum steering torque and its own steering limits. Cars that reach their torque limit first, such as the Traverse, may show little difference.
+- The car still cannot steer beyond its maximum steering torque and its own steering limits. Cars that reach their torque limit first, such as the Traverse, may not steer any harder. Above 4.5 most cars sit at their maximum torque for longer, where the wheel can turn and let go (for example a Traverse curve at 45 km/h asking for 4.4: the maximum torque gave only 3.0-3.6 and the wheel oscillated).
 - Above 3.0 the car may steer harder than openpilot's stock safety limit; the driver must be ready to take over at any time. A stored value that is outside the range or unreadable is treated as `30`.
 
 `LatJerkMax` (lateral jerk limit, ×0.1 m/s³, `20–100`, default `50`) is the upper limit on how fast the requested steering curvature may change. The default `50` (5.0) matches stock openpilot. Higher turns the wheel faster into a curve but can feel abrupt; lower is smoother but follows later. It is separate from `LateralAccelLimit` and applies within about a second after saving.
