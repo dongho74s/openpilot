@@ -93,6 +93,21 @@ def get_lat_smooth_seconds_dynamic(model_output: dict[str, np.ndarray],
   return dynamic_lat_smooth_seconds, y_std_1s, extra_smooth_seconds
 
 
+def lat_smoothing_for_output(model_output: dict[str, np.ndarray], base_lat_smooth_seconds: float,
+                             internal_output: bool) -> tuple[float, float, float]:
+  """(smooth seconds, y_std_1s, extra) for this output's lateral action.
+
+  An internal (comma GPU) model with its own action head (RDF, CH Driving, Polaris Vega/Vega 2) gets no smoothing, and so no
+  smoothing time in the next lat_action_t either: upstream (commaai 875a6b7e, CH Driving's branch) and StarPilot (where
+  Polaris comes from) feed that head the bare steering delay and use its lateral acceleration unsmoothed
+  (LAT_SMOOTH_SECONDS = 0.0). With LatSmoothSec on top, carrot's turns at 15-45 km/h got only 77-83 % of the curvature
+  actually driven while the same model's plan asked for 90-97 % (0000024f/00000250, 2026-11-24). The stock model and
+  other plan-only models keep LatSmoothSec; Jetson/eGPU outputs keep their current handling."""
+  if internal_output and 'action' in model_output:
+    return 0.0, 0.0, 0.0
+  return get_lat_smooth_seconds_dynamic(model_output, base_lat_smooth_seconds)
+
+
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                           lat_action_t: float, long_action_t: float, v_ego: float, lat_smooth_seconds: float, vEgoStopping: float) -> log.ModelDataV2.Action:
   plan = model_output['plan'][0]
@@ -818,8 +833,9 @@ def main(demo=False):
       last_vipc_frame_id = meta_main.frame_id
       continue
     mt2 = time.perf_counter()
-    live_switch.produced(model is small_model or (getattr(model, 'small', None) is small_model and not getattr(model, 'active', False)),
-                         model_output is not None)
+    # decided after the run: a Jetlink wrapper may have run the Jetson model or fallen back to the internal one
+    internal_output = model is small_model or (getattr(model, 'small', None) is small_model and not getattr(model, 'active', False))
+    live_switch.produced(internal_output, model_output is not None)
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
     model_execution_time = mt2 - mt1
     inference_backend, inference_usbgpu = type(model).__name__, model.usbgpu
@@ -833,9 +849,10 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
-      lat_smooth_seconds_dynamic, y_std_1s, lat_smooth_extra = get_lat_smooth_seconds_dynamic(
+      lat_smooth_seconds_dynamic, y_std_1s, lat_smooth_extra = lat_smoothing_for_output(
           model_output,
           lat_smooth_seconds,
+          internal_output,
         )
       if custom_lat_delay > 0.0:
         lat_delay_dynamic = custom_lat_delay + lat_smooth_seconds_dynamic

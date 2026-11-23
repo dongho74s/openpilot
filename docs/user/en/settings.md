@@ -241,6 +241,8 @@ Laneless driving steers with the model's own curvature, so `PathOffset` (lane-mo
 
 A larger `SteerActuatorDelay` compensates by commanding earlier. A larger `LatSmoothSec` is smoother but may respond more slowly. Changing both together makes diagnosis difficult.
 
+`LatSmoothSec` does not apply to the comma internal models that use their own steering output (action): `RDF`, `CH Driving`, `Polaris Vega` and `Polaris Vega 2` (2026-11-24). As upstream and StarPilot do, they get only the steering delay (`SteerActuatorDelay`, or the learned value when 0) and no smoothing. With smoothing on top, these models commanded only 77-83 % of the curvature actually needed in turns at 15-45 km/h, and the driver often had to help. The stock model (CD210), `WMI V11` and Jetson/eGPU models keep using `LatSmoothSec`.
+
 The default `SteerRatioRate` of `100%` applies the learned steering ratio without scaling. It is used when `CustomSR=0`; a stored rate outside the allowed range (`30–200%`) safely falls back to `100%`.
 
 `LateralAccelLimit` (lateral acceleration limit, ×0.1 m/s², `30–90`, default `30`) is the lateral acceleration limit that clips the steering curvature the model requests. The default `30` (3.0 m/s²) is openpilot's stock limit (ISO 11270) and behaves as before.

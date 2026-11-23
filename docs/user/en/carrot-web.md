@@ -151,7 +151,7 @@ September 2026 (the history kept inside the model).
   - `RDF` (recommended, experimental): an unmerged model comma tested in August 2026.
   - `WMI V11` (experimental): sunnypilot's `WMI V11`, which reverted V10, so its weights equal `WMI V9`. Its vision
     is the stock one; only the policy (path and speed planning) differs. In sunnypilot V9 and V11 differ only in
-    lateral smoothing (0.1 s → 0 s); carrot uses the `LatSmoothSec` setting for every model instead.
+    lateral smoothing (0.1 s → 0 s); carrot uses the `LatSmoothSec` setting for it instead.
   - `CH Driving` (experimental): an unmerged test model comma pushed only to a branch on 5 November 2026
     (commaai/openpilot `875a6b7e`). It is newly trained, not a retrain of an earlier model, and keeps its
     32-frame history inside the model (the newer layout). It downloads from comma's Hugging Face storage.

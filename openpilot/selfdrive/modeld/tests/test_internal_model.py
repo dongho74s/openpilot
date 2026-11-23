@@ -1227,3 +1227,42 @@ def test_main_loop_withdraws_on_off_and_keeps_a_calibration_received_without_fra
   assert "calib_updated, calib_pending = (sm.updated['liveCalibration'] or calib_pending, False)" in body
   assert "if calib_updated and sm.seen['roadCameraState'] and sm.seen['deviceState']:" in body
 
+
+
+def _modeld_functions(*names):
+  """Top-level functions of modeld.py run without its native imports."""
+  import ast
+  from types import SimpleNamespace as NS
+  tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
+  import numpy as np
+  nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+  scope = {"np": np, "Plan": NS(POSITION=0), "dict": dict}
+  exec(compile(ast.Module(body=nodes, type_ignores=[]), "<modeld>", "exec"), scope)
+  return scope
+
+
+def test_an_internal_action_model_gets_no_lateral_smoothing():
+  import numpy as np
+  f = _modeld_functions("get_lat_smooth_seconds_dynamic", "lat_smoothing_for_output")["lat_smoothing_for_output"]
+  plan_stds = np.zeros((1, 33, 15, 3), dtype=np.float32)
+  plan_stds[0, 10, 0, 1] = 0.3                                    # an uncertain plan: the stock model gets the extra smoothing
+  action_model = {"action": np.zeros((1, 4)), "plan_stds": plan_stds}
+  plan_model = {"plan_stds": plan_stds}
+  assert f(action_model, 0.14, True) == (0.0, 0.0, 0.0)         # RDF / CH / Polaris on the comma GPU: as upstream
+  assert f(plan_model, 0.14, True)[0] == pytest.approx(0.42)     # CD210 / WMI V11: LatSmoothSec + extra, as before
+  assert f(action_model, 0.14, False)[0] == pytest.approx(0.42)  # a Jetson/eGPU output keeps the current handling
+  assert f(action_model, 0.0, False) == (0.0, 0.0, 0.0)
+
+
+def test_the_next_lat_action_t_and_the_action_use_the_same_smoothing():
+  import ast
+  src = (Path(im.__file__).parent / "modeld.py").read_text()
+  fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "main")
+  body = ast.unparse(fn)
+  decided = "internal_output = model is small_model or (getattr(model, 'small', None) is small_model and (not getattr(model, 'active', False)))"
+  assert decided in body and body.index(decided) < body.index("live_switch.produced(internal_output, model_output is not None)")
+  call = "lat_smooth_seconds_dynamic, y_std_1s, lat_smooth_extra = lat_smoothing_for_output(model_output, lat_smooth_seconds, internal_output)"
+  assert call in body and body.index(decided) < body.index(call)
+  assert "lat_delay_dynamic = custom_lat_delay + lat_smooth_seconds_dynamic" in body
+  assert "get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego, lat_smooth_seconds_dynamic, vEgoStopping)" in body
+  assert "get_lat_smooth_seconds_dynamic(" not in body                      # only through lat_smoothing_for_output
