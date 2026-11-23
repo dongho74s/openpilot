@@ -867,6 +867,8 @@ def test_large_constant_gathers_become_a_matmul_with_the_same_values(monkeypatch
   want = orig(Tensor(x), idx, axis).numpy()
   ci.gather_large_constant_indices_by_matmul()
   got = onnx.onnx_ops["Gather"](Tensor(x), idx, axis).numpy()
-  assert got.shape == want.shape and np.array_equal(got, want)
+  assert got.shape == want.shape and got.dtype == want.dtype and np.array_equal(got, want)
+  with pytest.raises(Exception):
+    onnx.onnx_ops["Gather"](Tensor(x), [-2 * n] * 40, axis).numpy()   # out of range: rejected, as before
   ints, int_idx = Tensor(np.arange(12, dtype=np.int32)), list(range(-5, 7)) * 4   # integer data: tinygrad's own gather
   assert np.array_equal(onnx.onnx_ops["Gather"](ints, int_idx, 0).numpy(), orig(ints, int_idx, 0).numpy())

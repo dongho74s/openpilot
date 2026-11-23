@@ -18,6 +18,9 @@ import runpy
 import struct
 import sys
 
+# no BEAM search: it would run candidate kernels before keep_kernels_small sees them
+os.environ["BEAM"] = os.environ["JITBEAM"] = "0"
+
 MODELD_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = {"queue": "compile_modeld.py", "state": "compile_modeld_state.py"}
 PVTMEM_LIMIT = 256  # bytes per thread; the stock model's kernels use at most 60
@@ -63,7 +66,10 @@ def gather_large_constant_indices_by_matmul(limit: int = LARGE_CONST_GATHER) -> 
   gated load per index. Polaris Vega/Vega 2 and CH Driving select their desire-history windows with 225 or 300
   constant indices: that kernel compiles to a 184 KB shader that the comma's GPU never finishes ("Wait timeout"). The
   matmul with a constant 0/1 matrix gives the same values (each output is 1 * x + zeros) as a small reduce kernel.
-  Other gathers (tensor indices, few constants, non-float data) keep tinygrad's implementation."""
+  Other gathers (tensor indices, few constants, non-float data, indices out of range) keep tinygrad's implementation.
+  Unlike a copy, the matmul turns a NaN or Inf anywhere in the gathered axis into NaN and may round float32 data to
+  half under IMAGE=1 FLOAT16=1; the gathers it replaces in the catalog models (Codex-checked) all read the 0/1
+  desire history."""
   import numpy as np
   import tinygrad.nn.onnx as onnx
   from tinygrad.dtype import dtypes
@@ -75,13 +81,15 @@ def gather_large_constant_indices_by_matmul(limit: int = LARGE_CONST_GATHER) -> 
       return orig(x, indices, axis)
     axis = x._resolve_dim(axis)
     n = x.shape[axis]
+    if not all(isinstance(i, int) and -n <= i < n for i in indices):
+      return orig(x, indices, axis)  # out of range: tinygrad's own gather rejects it
     index = [n + i if i < 0 else i for i in indices]
     onehot = Tensor(np.eye(n, dtype=np.float32)[index].T.copy()).cast(x.dtype)  # (n, k)
     rest = [d for d in range(x.ndim) if d != axis]
     y = x.permute(*rest, axis) @ onehot                                        # (..., k)
     back = list(range(len(rest)))
     back.insert(axis, len(rest))
-    return y.permute(*back)
+    return y.permute(*back).cast(x.dtype)  # the image matmul may compute in another dtype
 
   onnx.onnx_ops["Gather"] = Gather
 
