@@ -146,6 +146,49 @@ def test_the_ascms_fcw_reaches_the_car(runtime, monkeypatch, alpha):
     assert ci.CS.stock_fcw is None and not dashboard   # stock ACC: the ASCM's own 0x370 is forwarded
 
 
+RADAR_FAULT_BITS = ("FLRRSnstvFltPrsntInt", "FLRRYawRtPlsblityFlt", "FLRRHWFltPrsntInt", "FLRRAntTngFltPrsnt",
+                    "FLRRAlgnFltPrsnt")
+
+
+def radar_frames(packer, header):
+  """One radar cycle on the object bus: the header plus 20 slots, one of them a target 30 m ahead."""
+  frames = [packer.make_can_msg("F_LRR_Obj_Header", CanBus.OBSTACLE, {"FLRRNumValidTargets": 1, **header})]
+  for slot in range(1, 21):
+    values = {"TrkRange": 30.0, "TrkRangeRate": -1.0, "TrkObjectID": 7} if slot == 1 else {}
+    frames.append(packer.make_can_msg(f"LRRObject{slot:02d}", CanBus.OBSTACLE, values))
+  return [tuple(frame) for frame in frames]
+
+
+def radar_data(runtime, cp, header):
+  from opendbc.car.gm.radar_interface import RadarInterface
+  radar = RadarInterface(cp)
+  packer = runtime.CANPacker(DBC[MALIBU_ASCM][Bus.radar])
+  t0 = time.monotonic_ns()
+  ret = None
+  for tick in range(30):
+    ret = radar.update([(t0 + tick * 70_000_000, radar_frames(packer, header))]) or ret
+  assert ret is not None and not ret.errors.canError
+  return ret
+
+
+@pytest.mark.parametrize("alpha,header,fault", [
+  (True, {"FLRRSnsrBlckd": 1}, False),        # SASCM long: the blocked bit alone is ignored...
+  (True, {}, False),
+  (False, {"FLRRSnsrBlckd": 1}, True),        # ...the stock-ACC layout keeps it
+  (False, {}, False),
+  *[(True, {bit: 1}, True) for bit in RADAR_FAULT_BITS],                       # every other fault bit still counts
+  *[(True, {"FLRRSnsrBlckd": 1, bit: 1}, True) for bit in RADAR_FAULT_BITS],
+])
+def test_sascm_long_ignores_only_the_radars_blocked_bit(runtime, alpha, header, fault):
+  """In SASCM long mode the live ASCM feeds the radar a frozen speed, and the radar at some point sets FLRRSnsrBlckd
+  while it keeps reporting usable tracks (rlog 0000002e--304fe75e57--20, user request 2026-11-23)."""
+  cp = malibu_cp(runtime, alpha, radar=True)
+  assert cp.openpilotLongitudinalControl == alpha and not cp.radarUnavailable
+  ret = radar_data(runtime, cp, header)
+  assert ret.errors.radarFault == fault
+  assert [point.dRel for point in ret.points] == pytest.approx([30.0])   # tracks are reported either way
+
+
 def test_frames_match_the_ascms_own_layout(runtime):
   """0x2CB and 0x370 exactly as the friend's ASCM sent them (rlog 0000001d--c1e04a331d--15, 2026-11-21)."""
   from opendbc.car.gm import gmcan

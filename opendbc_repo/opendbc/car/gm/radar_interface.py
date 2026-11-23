@@ -3,7 +3,7 @@ import math
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import DBC, CanBus
+from opendbc.car.gm.values import ASCM_INT_CAR, DBC, CanBus
 from opendbc.car.interfaces import RadarInterfaceBase
 
 RADAR_HEADER_MSG = 1120
@@ -40,6 +40,15 @@ class RadarInterface(RadarInterfaceBase):
 
     self.trigger_msg = LAST_RADAR_MSG
     self.updated_messages = set()
+    # Malibu ASCM harness with a SASCM on openpilot longitudinal. Observed together in the friend's rlogs (2026-11-21):
+    # the SASCM's long mode (0x2FF byte 0 = 1), a frozen ASCM feed to the radar (0x308/0x306 constant for whole drives),
+    # the radar in the mode it otherwise shows only at a standstill (FLRRModeCmdFdbk 5), and once (0000002e--304fe75e57
+    # --20, 16 s) FLRRSnsrBlckd; the frozen feed is the presumed cause, not a confirmed one (another 4 minutes in the same
+    # state never set it). After the bit the radar kept reporting tracks, and their gap to the camera lead was about as
+    # before (camera estimates, not ground truth), so on this layout only that bit is ignored (user request 2026-11-23).
+    # Every other fault bit still raises radarFault; the stock-ACC layout is unchanged. Accepted residual risk (Codex
+    # review): a real blockage that empties the tracks no longer disengages by itself; leads then come from the camera.
+    self.ignore_sensor_blocked = CP.carFingerprint in ASCM_INT_CAR and CP.openpilotLongitudinalControl
 
   def update(self, can_strings):
     if self.rcp is None:
@@ -53,7 +62,8 @@ class RadarInterface(RadarInterfaceBase):
 
     ret = structs.RadarData()
     header = self.rcp.vl[RADAR_HEADER_MSG]
-    fault = header['FLRRSnsrBlckd'] or header['FLRRSnstvFltPrsntInt'] or \
+    sensor_blocked = header['FLRRSnsrBlckd'] and not self.ignore_sensor_blocked
+    fault = sensor_blocked or header['FLRRSnstvFltPrsntInt'] or \
       header['FLRRYawRtPlsblityFlt'] or header['FLRRHWFltPrsntInt'] or \
       header['FLRRAntTngFltPrsnt'] or header['FLRRAlgnFltPrsnt']
     if not self.rcp.can_valid:
