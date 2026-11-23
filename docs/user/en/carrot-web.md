@@ -168,8 +168,11 @@ September 2026 (the history kept inside the model).
     switch waits and happens when you disengage again.
   - While the model loads, the path on the driving screen pauses for a moment (one to a few seconds).
   - The new model starts with an empty history, so engaging stays blocked until the new model itself has run a full
-    history (about 5 s for a 24-frame model, about 6.5 s for a 32-frame one, plus 1 s). Trying to engage meanwhile
-    shows "주행 모델 바꾸는 중" (driving model switching). AlwaysLateral also pauses meanwhile.
+    history (about 5 s for a 24-frame model, about 6.5 s for a 32-frame one, plus 1 s; longer if frames are missed).
+    Trying to engage meanwhile shows "주행 모델 바꾸는 중" (driving model switching), and steering and speed control
+    (AlwaysLateral included) all pause meanwhile.
+  - While a Jetson or eGPU model drives, the switch waits for the next drive instead.
+  - If modeld restarts during a switch, the block lasts until the model it loads again has a full history.
 - A model that is not compiled yet is not compiled while driving (it would share the GPU with the running model). It
   is downloaded and compiled once parked and used from the next drive; after that it switches right away.
 - While parked the comma downloads the model (about 100 MB), checks it against the pinned checksum and the expected

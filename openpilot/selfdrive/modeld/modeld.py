@@ -306,7 +306,7 @@ class LiveSwitch:
   IDLE, REQUESTED, WARMING = "idle", "requested", "warming"
   BLOCK_EVENT = log.OnroadEvent.EventName.internalModelSwitching
 
-  def __init__(self, params, internal_selected, token: int):
+  def __init__(self, params, internal_selected, token: int, history_steps: int = 0):
     self.params = params
     self.token = token  # the request the running model was loaded for, read before loading it
     self.running_sha = internal_selected.model.sha256 if internal_selected is not None else internal_model.stock_model().sha256
@@ -315,7 +315,13 @@ class LiveSwitch:
     self.pending_token = token
     self.steps = self.steps_needed = 0
     self.retry_at_ns = 0
-    self._block(False)
+    if history_steps and params.get_bool("InternalModelSwitching"):
+      # Set at this start: modeld stopped during a switch (the flag is cleared at ignition on and on and offroad, so
+      # a normal start never sees it). The block stays until the model loaded now has a full history of its own.
+      self.phase, self.steps_needed = self.WARMING, history_steps + self.EXTRA_STEPS
+      cloudlog.warning("internal model switch interrupted by a modeld restart; blocking until %d outputs", self.steps_needed)
+    else:
+      self._block(False)
 
   def _block(self, value: bool) -> None:
     self.params.put_bool("InternalModelSwitching", value)
@@ -369,12 +375,15 @@ class LiveSwitch:
     return "go" if fresh and blocked and idle_state and idle_control else "wait"
 
   def switch(self, model, small_model, cam_w: int, cam_h: int, usbgpu_model_loaded: bool, bufs):
-    """Load the selection in place of small_model. Returns (model, small_model, selected); the caller drops the old one."""
+    """Load the selection in place of small_model. Returns (model, small_model, selected), the caller dropping the old
+    one, or None when the selection changed since the confirmation."""
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model
     started = time.monotonic()
     if not internal_model.requested_model().stock:
       install_clean_stop_handler()  # as at startup; the stock model keeps the default SIGINT behaviour
     token = internal_model.request_token()
+    if token != self.pending_token:
+      return None  # changed after the confirmation: the caller withdraws and the new selection is checked from the start
     new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded)
     failed = None
     try:
@@ -543,7 +552,7 @@ def main(demo=False):
   small_model, internal_selected = create_internal_model(vipc_client_main.width, vipc_client_main.height,
                                                          usbgpu_model_loaded) if model is None or USBGPU else (None, None)
   internal_health = internal_model.HealthTracker(internal_selected)
-  live_switch = LiveSwitch(params, internal_selected, start_token)
+  live_switch = LiveSwitch(params, internal_selected, start_token, getattr(small_model, 'history_steps', 0))
   if usbgpu_model_loaded:
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
     try:
@@ -677,15 +686,19 @@ def main(demo=False):
         live_switch.withdraw(timed_out=ack == "timeout")
       elif ack == "go":
         live_bufs = {'img': buf_main, 'big_img': buf_extra if buf_extra is not None else buf_main}
-        model, small_model, internal_selected = live_switch.switch(model, small_model, vipc_client_main.width,
-                                                                  vipc_client_main.height, usbgpu_model_loaded, live_bufs)
-        internal_health = internal_model.HealthTracker(internal_selected)
-        gc.collect()  # drop the previous internal model now that nothing references it
-        # Receive a fresh camera pair after the load. The frames missed meanwhile still count as a gap (prepare_only on
-        # the next frame), and run_count = 0 keeps that gap out of the dropped-frame filter.
-        last_vipc_frame_id = meta_main.frame_id
-        run_count = 0
-        continue
+        switched = live_switch.switch(model, small_model, vipc_client_main.width, vipc_client_main.height,
+                                      usbgpu_model_loaded, live_bufs)
+        if switched is None:
+          live_switch.withdraw()  # nothing was loaded: this frame runs as usual
+        else:
+          model, small_model, internal_selected = switched
+          internal_health = internal_model.HealthTracker(internal_selected)
+          gc.collect()  # drop the previous internal model now that nothing references it
+          # Receive a fresh camera pair after the load. The frames missed meanwhile still count as a gap (prepare_only
+          # on the next frame), and run_count = 0 keeps that gap out of the dropped-frame filter.
+          last_vipc_frame_id = meta_main.frame_id
+          run_count = 0
+          continue
     live_switch.hold_jetlink(model)
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD

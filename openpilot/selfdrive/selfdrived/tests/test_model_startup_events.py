@@ -75,14 +75,26 @@ class Messages(dict):
     self.valid = {'radarState': valid}
     self.seen = {'livePose': True, 'liveParameters': True}
     self.healthy = healthy
+    self.frame = 0
 
   def all_checks(self, services=None):
     return self.healthy
 
 
-def drive(*, valid=False, healthy=False, settling=True, enabled=False):
+def drive(*, valid=False, healthy=False, settling=True, enabled=False, model_switching=False):
   return SimpleNamespace(sm=Messages(valid=valid, healthy=healthy), events=Events(), enabled=enabled, model_startup_complete=False,
-                         CP=SimpleNamespace(notCar=False), _big_model_settling=lambda: settling)
+                         CP=SimpleNamespace(notCar=False), _big_model_settling=lambda: settling,
+                         params=SimpleNamespace(get_bool=lambda key: model_switching and key == "InternalModelSwitching"),
+                         internal_model_switching=False)
+
+
+def test_a_live_model_switch_refuses_engagement_with_its_own_event_only():
+  check = load_policy()
+  for switching in (False, True):
+    d = drive(valid=True, healthy=True, settling=False, model_switching=switching)
+    check(d)
+    assert (EventName.internalModelSwitching in d.events.names) == switching
+    assert EventName.selfdriveInitializing not in d.events.names   # that one also stops card's control messages
 
 
 def test_cold_model_startup_blocks_enable_until_downstream_readiness():

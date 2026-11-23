@@ -190,8 +190,9 @@ class Controls:
     # carrot
     gear = car.CarState.GearShifter
     driving_gear = CS.gearShifter not in (gear.neutral, gear.park, gear.reverse, gear.unknown)
-    # AlwaysLateral also waits while modeld switches the internal model and its new history fills (modeld.LiveSwitch)
-    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral") and not self.params.get_bool("InternalModelSwitching")
+    # modeld is switching the internal model or its new history is filling (modeld.LiveSwitch); read every frame
+    model_switching = self.params.get_bool("InternalModelSwitching")
+    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral") and not model_switching
     #self.soft_hold_active = CS.softHoldActive #car.OnroadEvent.EventName.softHold in [e.name for e in self.sm['onroadEvents']]
 
     # Check which actuators can be enabled
@@ -209,6 +210,12 @@ class Controls:
     # AlwaysLateral must also stop while manager drains workers for this reboot.
     if self.params.get_bool("ImpactDashcamReboot"):
       CC.enabled = CC.latActive = CC.longActive = False
+
+    # Nothing actuates during a live model switch: every carControl computed after this read is inactive, whatever
+    # selfdriveState this frame used. selfdrived refuses to engage meanwhile, and modeld withdraws the switch at once
+    # if the car got engaged before that took effect, so an engagement loses actuation for at most a few frames.
+    if model_switching:
+      CC.latActive = CC.longActive = False
 
     actuators = CC.actuators
 

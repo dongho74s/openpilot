@@ -26,7 +26,7 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
   controls = namespace["Controls"].__new__(namespace["Controls"])
   controls.CP = SimpleNamespace(brand=brand, steerAtStandstill=supported, minSteerSpeed=min_speed,
                                lateralTuning=SimpleNamespace(which=lambda: "angle"))
-  controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda _key: always_lateral)
+  controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda key: always_lateral if key == "AlwaysLateral" else False)
   controls.is_vw_meb = False
   controls.lateral_startup = SimpleNamespace(ready=True, update=lambda *_args: True)
   controls.VM = SimpleNamespace(update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
@@ -89,3 +89,15 @@ def test_standstill_preserves_engagement_fault_and_gear_gates(override):
 @pytest.mark.parametrize("brand", ["tesla", "ford", "volkswagen", "psa", "hyundai"])
 def test_lateral_control_remains_available_above_minimum_speed(brand):
   assert run_lateral_gate(brand=brand, speed=5.1, min_speed=5.0, stopped=False)
+
+
+def test_nothing_actuates_while_modeld_switches_the_internal_model():
+  import ast as _ast
+  src = (Path(__file__).resolve().parents[1] / "controlsd.py").read_text(encoding="utf8")
+  tree = _ast.parse(src)
+  fn = next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == "state_control")
+  body = _ast.unparse(fn)
+  assert body.count('self.params.get_bool(\'InternalModelSwitching\')') == 1          # read once per frame
+  block = "if model_switching:\n        CC.latActive = CC.longActive = False"
+  assert block in body and body.index(block) > body.index("CC.longActive = CC.enabled")   # after both are decided
+  assert body.index(block) < body.index("actuators = CC.actuators")

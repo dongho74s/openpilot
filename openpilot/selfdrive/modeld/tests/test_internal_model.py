@@ -901,8 +901,10 @@ def live_switch_class(create, warm, records, monkeypatch):
 
 
 class FakeSwitchParams:
-  def __init__(self):
-    self.values, self.writes = {}, []
+  def __init__(self, **values):
+    self.values, self.writes = dict(values), []
+  def get_bool(self, key):
+    return bool(self.values.get(key, False))
   def put_bool(self, key, value):
     self.values[key] = value
     self.writes.append(value)
@@ -1099,14 +1101,45 @@ def test_live_switch_falls_back_to_stock_when_the_new_model_fails_its_warmup(mon
   del failed
   def warm(model, bufs):
     if model.name == "rdf":
+      im.write_request(im.find("WMIV11"), now=9)        # changed while warming: the fallback is still the stock model
       raise RuntimeError("NaN")
     gc.collect()
     alive_at_fallback.append(ref() is not None)
   create.stock_state = stock
   sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=create, warm=warm)
-  im.write_request(im.find("WMIV11"), now=9)            # changed while warming: the fallback is still the stock model
   old = FakeState("old")
   model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
   assert model is stock and sel is None and ("runtime_failed", "RDF") in records
   assert alive_at_fallback == [False]                   # the failed model was released before the fallback loaded
   assert sw.running_sha == im.stock_model().sha256 and sw.phase == LiveSwitch.WARMING
+
+
+
+def test_a_modeld_restart_during_a_switch_keeps_the_block_until_the_new_history_is_full(monkeypatch):
+  records = []
+  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  params = FakeSwitchParams(InternalModelSwitching=True)      # left set by the modeld that stopped mid-switch
+  sw = LiveSwitch(params, None, im.request_token(), history_steps=128)
+  assert params.writes == [] and sw.phase == LiveSwitch.WARMING and sw.steps_needed == 128 + LiveSwitch.EXTRA_STEPS
+  joining = type("J", (), {"join_allowed": True})()
+  sw.hold_jetlink(joining)
+  assert joining.join_allowed is False
+  for _ in range(sw.steps_needed - 1):
+    sw.produced(True, True)
+  assert params.values["InternalModelSwitching"] is True
+  sw.produced(True, True)
+  assert params.values["InternalModelSwitching"] is False and sw.phase == LiveSwitch.IDLE
+  normal = FakeSwitchParams()                                  # a normal start: cleared, idle
+  assert LiveSwitch(normal, None, im.request_token(), history_steps=96).phase == LiveSwitch.IDLE and normal.writes == [False]
+  stuck = FakeSwitchParams(InternalModelSwitching=True)        # no internal model to fill a history: cleared as before
+  assert LiveSwitch(stuck, None, im.request_token(), history_steps=0).phase == LiveSwitch.IDLE and stuck.writes == [False]
+
+
+def test_a_selection_changed_after_the_confirmation_loads_nothing(monkeypatch):
+  made = []
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch, create=lambda *a: made.append(1) or (FakeState("x"), None))
+  im.write_request(im.find("WMIV11"), now=11)
+  old = FakeState("old")
+  assert sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2}) is None and made == []
+  sw.withdraw()
+  assert params.values["InternalModelSwitching"] is False
