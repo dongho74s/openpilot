@@ -92,6 +92,7 @@ def roll_pitch_adjust(roll, pitch):
 # the same tracking and curve exit; lowering P or adding feed-forward/integrator did not help. Blend weight 0 below
 # |f| 0.75, full from 0.9, so ordinary steering is untouched; the integrator still sees the raw P as before.
 P_FILTER_FF_BP = [0.75, 0.9]
+P_FILTER_MAX_CS = 60   # setting cap in 0.01 s
 
 
 class FrogPilotWindupPID(PIDController):
@@ -101,6 +102,7 @@ class FrogPilotWindupPID(PIDController):
   dumps the integrator and the torque drops when the spike passes. k_f stays (the LateralTorqueKf setting).
   p_filter_tau > 0 adds the torque-limit P filter (see P_FILTER_FF_BP)."""
   p_filter_tau = 0.0
+  p_filter_bypass = False
 
   def reset(self):
     super().reset()
@@ -126,12 +128,17 @@ class FrogPilotWindupPID(PIDController):
     return self.control
 
   def _torque_limit_p(self, p):
-    if self.p_filter_tau <= 0.0:
-      self._p_lowpass = None
+    if self.p_filter_tau <= 0.0 or self.p_filter_bypass:
+      self._p_lowpass = None   # off, or the driver is steering: plain P, and start fresh afterwards
       return p
+    if not math.isfinite(p):
+      return p                 # never keep a non-finite sample: the next finite P recovers as before (Codex review)
     # keep the low-pass running on every update so it is warm when the feed-forward reaches the limit
     alpha = self.i_rate / (self.p_filter_tau + self.i_rate)
-    self._p_lowpass = p if self._p_lowpass is None else self._p_lowpass + alpha * (p - self._p_lowpass)
+    if self._p_lowpass is None or not math.isfinite(self._p_lowpass):
+      self._p_lowpass = p
+    else:
+      self._p_lowpass += alpha * (p - self._p_lowpass)
     near = float(np.interp(abs(self.f), P_FILTER_FF_BP, [0.0, 1.0]))
     return (1.0 - near) * p + near * self._p_lowpass
 
@@ -225,14 +232,19 @@ class LatControlTorque(LatControl):
     self.torque_params.friction = friction
 
   def read_torque_limit_p_filter(self):
-    """LatTorqueLimitPFilter (0.01 s, 0 = off) for the FrogPilot-parity PID; other cars keep their PID untouched."""
+    """LatTorqueLimitPFilter (0.01 s, 0 = off, at most 0.6 s) for the FrogPilot-parity PID; other cars keep their
+    PID untouched. Params.get casts in Python (a corrupt value becomes the default); get_int's native std::stoi would
+    abort controlsd on one (Codex review). The cap is the range the closed-loop sim checked: a longer filter delays
+    the P correction at a curve exit while the feed-forward is still high."""
     if not isinstance(self.pid, FrogPilotWindupPID):
       return
     try:
-      value = self.params.get_int("LatTorqueLimitPFilter")
-    except Exception:  # an unknown key (params not rebuilt yet) must never stop lateral control
-      value = 0
-    self.pid.p_filter_tau = float(np.clip(value, 0, 100)) * 0.01
+      value = float(self.params.get("LatTorqueLimitPFilter") or 0)
+    except Exception:  # an unknown key (params not rebuilt yet) or a bad value must never stop lateral control
+      value = 0.0
+    if not math.isfinite(value):
+      value = 0.0
+    self.pid.p_filter_tau = float(np.clip(value, 0, P_FILTER_MAX_CS)) * 0.01
 
   def update(self, active, CS, VM, params, steer_limited_by_controls, desired_curvature, CC, curvature_limited, model_data=None):
     self.frame += 1
@@ -403,6 +415,8 @@ class LatControlTorque(LatControl):
       error_rate = (pid_log.error - self.prev_error) / DT_CTRL
       self.prev_error = pid_log.error
       error_rate = self.error_rate_filter.update(error_rate)
+      if isinstance(self.pid, FrogPilotWindupPID):
+        self.pid.p_filter_bypass = bool(CS.steeringPressed)   # no P filter while the driver steers
       output_torque = self.pid.update(pid_log.error,
                                       error_rate=error_rate,
                                       feedforward=ff,
