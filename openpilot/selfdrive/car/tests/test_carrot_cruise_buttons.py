@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from openpilot.cereal import car
-from openpilot.selfdrive.car.cruise import ButtonType, VCruiseCarrot, is_hold_interlock_active
+from openpilot.selfdrive.car.cruise import GM_GAP_MENU_FRAMES, ButtonType, VCruiseCarrot, has_gm_gap_menu, is_hold_interlock_active
 from openpilot.selfdrive.carrot.cruise_gap import cruise_gap_levels
 from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL
 from opendbc.car.gm.carstate import create_stock_long_cancel_button_events
@@ -45,6 +45,9 @@ def make_cruise_helper(button_kph, cruise_button_mode, carrot_cruise_active, cru
   helper._paddle_mode = 0
   helper.v_ego_kph_set = 70
   helper.carrot_cruise_active = carrot_cruise_active
+  helper.frame = 0
+  helper._gm_gap_menu = False
+  helper._gm_gap_menu_last_press = -GM_GAP_MENU_FRAMES
 
   CS = car.CarState(cruiseState={"standstill": False})
   CC = car.CarControl(enabled=cruise_enabled)
@@ -1224,3 +1227,54 @@ def test_gap_long_press_still_changes_driving_mode():
   helper.params = SimpleNamespace(get_int=values.__getitem__, put_int_nonblocking=values.__setitem__)
   helper._update_cruise_buttons(CS, CC, 80)
   assert values == {"MyDrivingMode": 1, "LongitudinalPersonality": 1}
+
+
+def gm_gap_helper(remote=None):
+  helper, CS, CC = make_cruise_helper(80, 0, False, True)
+  helper._prepare_buttons = lambda CS, speed, remote=None: (speed, ButtonType.gapAdjustCruise, False)
+  if remote is not None:
+    helper.bluetooth_commands = SimpleNamespace(read=lambda **kwargs: remote)
+  helper.CP = SimpleNamespace(openpilotLongitudinalControl=True)
+  helper._gm_gap_menu = True
+  values = {"LongitudinalPersonalityMax": 3, "CruiseGapLevels": 4, "LongitudinalPersonality": 0}
+  helper.params = SimpleNamespace(get_int=values.__getitem__, put_int_nonblocking=values.__setitem__)
+  CS.pcmCruiseGap = 0
+  return helper, CS, CC, values
+
+
+def gm_gap_press(helper, CS, CC, frame):
+  helper.frame = frame
+  helper._update_cruise_buttons(CS, CC, 80)
+
+
+def test_gm_first_gap_press_only_opens_the_cluster_menu():
+  """rlog 00000034--85cda4f166--12 (Bolt ACC w Pedal, 2026-11-23): one press moved the comma from 1 to 3 bars while the
+  cluster only showed its menu. As StarPilot: the first press opens it, presses within 3.5 s change the gap."""
+  helper, CS, CC, values = gm_gap_helper()
+  gm_gap_press(helper, CS, CC, 1000)
+  assert values["LongitudinalPersonality"] == 0
+  gm_gap_press(helper, CS, CC, 1100)
+  assert values["LongitudinalPersonality"] == 2
+  gm_gap_press(helper, CS, CC, 1100 + GM_GAP_MENU_FRAMES - 1)  # each press keeps the menu up
+  assert values["LongitudinalPersonality"] == 1
+  gm_gap_press(helper, CS, CC, 1100 + 2 * GM_GAP_MENU_FRAMES)  # closed again: only reopens it
+  assert values["LongitudinalPersonality"] == 1
+  gm_gap_press(helper, CS, CC, 1100 + 2 * GM_GAP_MENU_FRAMES + 50)
+  assert values["LongitudinalPersonality"] == 0
+
+
+def test_gm_remote_gap_and_other_cars_change_at_once():
+  helper, CS, CC, values = gm_gap_helper(remote="gapAdjustCruise")
+  gm_gap_press(helper, CS, CC, 1000)
+  assert values["LongitudinalPersonality"] == 2
+  helper, CS, CC, values = gm_gap_helper()
+  helper._gm_gap_menu = False
+  gm_gap_press(helper, CS, CC, 1000)
+  assert values["LongitudinalPersonality"] == 2
+
+
+def test_gm_gap_menu_cars():
+  assert has_gm_gap_menu(SimpleNamespace(brand="gm", flags=0))
+  assert has_gm_gap_menu(SimpleNamespace(brand="gm", flags=1))  # PEDAL_LONG (Bolt ACC w Pedal mode 2)
+  assert not has_gm_gap_menu(SimpleNamespace(brand="gm", flags=4))  # NO_CAMERA: no stock cluster menu
+  assert not has_gm_gap_menu(SimpleNamespace(brand="hyundai", flags=0))

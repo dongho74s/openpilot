@@ -9,7 +9,7 @@ from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL, Command
 from openpilot.selfdrive.car.toyota_pcm_speed import ToyotaPcmSetSpeedSync
 
 from opendbc.car import structs
-from opendbc.car.gm.values import CAR as GM_CAR
+from opendbc.car.gm.values import CAR as GM_CAR, GMFlags
 # Stock-ACC cars whose cluster set speed is always shown. Not the Malibu CC: openpilot drives it with cruise buttons
 # while it reports pcmCruise, so its own target must stay on screen (Codex review 2026-11-20).
 STOCK_SET_SPEED_DISPLAY_CARS = (GM_CAR.CHEVROLET_TRAVERSE, GM_CAR.CHEVROLET_MALIBU_ASCM)
@@ -172,6 +172,14 @@ from openpilot.common.params import Params
 #from openpilot.selfdrive.selfdrived.events import Events
 #EventName = log.OnroadEvent.EventName
 
+GM_GAP_MENU_FRAMES = 350  # 3.5 s at 100 Hz, StarPilot's display_timer
+
+
+def has_gm_gap_menu(CP) -> bool:
+  """GM with its camera: the cluster shows a following-gap menu for the wheel's distance button."""
+  return getattr(CP, "brand", "") == "gm" and not (int(getattr(CP, "flags", 0)) & GMFlags.NO_CAMERA.value)
+
+
 class VCruiseCarrot:
   def __init__(self, CP):
     self.CP = CP
@@ -190,6 +198,12 @@ class VCruiseCarrot:
     self.long_pressed = False
     self.button_cnt = 0
     self.button_prev = ButtonType.unknown
+    # A GM cluster (any GM with its camera) opens its following-gap menu on the first distance press and changes the
+    # gap only on presses while that menu is up. StarPilot does the same ("Only change driving personality if the menu
+    # is open (GM only)": display_timer 350 frames). Changing on every press left the comma one step ahead of the
+    # cluster (Bolt ACC w Pedal rlog 00000034--85cda4f166--12, user report 2026-11-23).
+    self._gm_gap_menu = has_gm_gap_menu(CP)
+    self._gm_gap_menu_last_press = -GM_GAP_MENU_FRAMES
     self.button_long_time = 40
     self.button_big_step = False  # VW stage-2 (swipe) press -> immediate +10 (round) on release
     self._resume_button_active = False
@@ -358,6 +372,12 @@ class VCruiseCarrot:
       self.desiredSpeed = 250
       self.carrot_cmd = ""
       self.carrot_arg = ""
+
+  def _open_gm_gap_menu(self) -> bool:
+    """A wheel distance press on a GM cluster: True when it only opens the gap menu (no change)."""
+    was_open = self.frame - self._gm_gap_menu_last_press < GM_GAP_MENU_FRAMES
+    self._gm_gap_menu_last_press = self.frame
+    return not was_open
 
   def update_v_cruise(self, CS, sm, is_metric):
     prior_cruise_kph = self.v_cruise_kph
@@ -732,6 +752,9 @@ class VCruiseCarrot:
         self._v_cruise_kph_at_brake = 0
         self._cruise_speed_initialized = True
 
+      elif button_type == ButtonType.gapAdjustCruise and self._gm_gap_menu and remote != 'gapAdjustCruise' and \
+           self._open_gm_gap_menu():
+        pass  # the first press only shows the cluster's gap menu
       elif button_type == ButtonType.gapAdjustCruise:
         longitudinalPersonalityMax = supported_gap_levels(self.params.get_int("LongitudinalPersonalityMax"))
         gap_levels = cruise_gap_levels(self.params.get_int("CruiseGapLevels"), longitudinalPersonalityMax)

@@ -193,6 +193,8 @@ On other brands, tune delay first only if acceleration and braking are both cons
 
 Changes apply on the next gap-button press. If the current level is outside the new range, the first press selects the configured maximum. Unused TF and gap-specific following responsiveness values are preserved. Holding the gap button still changes driving mode. This applies with openpilot longitudinal control; stock ACC retains its own levels.
 
+On GM (Chevrolet and others with the stock camera), the first press of the wheel's gap button does not change the level; it only opens the cluster's gap menu. Presses while the menu is up (within 3.5 s of the last press) change it one step each. The stock cluster and StarPilot work this way, and changing on every press left the comma one step ahead of the cluster (a 2026-11-23 Bolt ACC w Pedal log). Remote gap presses (Carrot Web, Bluetooth and so on) still change it at once.
+
 ### Four base time gaps
 
 Multiply stored values by 0.01 seconds. All four range from 40 to 300 in steps of 5.
