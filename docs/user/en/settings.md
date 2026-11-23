@@ -214,7 +214,7 @@ With `NavigationSetSpeed` enabled, `WIP-FR` SET engagement uses the greater of c
 | Steering feel | `SteerActuatorDelay`, `LatSmoothSec`, `LatSuspendAngleDeg`, `CustomSR`, `SteerRatioRate`, `LateralAccelLimit`, `LatJerkMax` | Timing, smoothing, suspension angle, steering ratio, lateral acceleration and jerk limits |
 | [Lane change](lane-change.md) and automatic turn | `LaneChangeNeedTorque`, `LaneChangeDelay`, `LaneChangeBsd`, `LaneLineCheck`, `BlinkerLatchedTurn`, `LaneChangeLeverWait`, `AutoTurnControl`, `AutoTurnControlSpeedTurn`, `AutoTurnControlTurnEnd`, `AutoTurnMapChange` | Lane-change entry conditions and ATC behavior |
 | Lane mode | `LatMpcPathCost`, `LatMpcMotionCost`, `LatMpcAccelCost`, `LatMpcJerkCost`, `LatMpcSteeringRateCost`, `LatMpcInputOffset`, `UseLaneLineSpeed`, `UseLaneLineCurveSpeed`, `AdjustLaneOffset` | Lane-mode MPC weights and lane-line conditions |
-| Advanced torque | `ChevroletSteerFF`, `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd` | Custom torque-control gains |
+| Advanced torque | `ChevroletSteerFF`, `LateralTorqueCustom`, `LateralTorqueAccelFactor`, `LateralTorqueFriction`, `LateralTorqueKpV`, `LateralTorqueKiV`, `LateralTorqueKf`, `LateralTorqueKd`, `LatTorqueLimitPFilter` | Custom torque-control gains |
 | Advanced torque, search only | `NNFF` | Neural-network feedforward for torque steering |
 | Steering limits | `CustomSteerMax`, `CustomSteerDeltaUp`, `CustomSteerDeltaDown`, `CustomSteerDeltaUpLC`, `CustomSteerDeltaDownLC` | Maximum torque and torque-rate limits |
 
@@ -323,6 +323,16 @@ Disabling turns off this NNFF option without changing the separate `NNFFLite` va
 1, 2 and 3 apply whatever the `NNFF` toggle says and come before comma's own NN. With 1 or 2 the startup notice shows `CHEVROLET TRAILBLAZER (selected)` or `CHEVROLET VOLT (selected)`; 3 shows none. It is read each time a drive starts (ignition on), when the car settings are built afresh, so a change made while driving does not affect that drive and applies from the next start; no reboot is needed. With `LateralTorqueCustom` on, its values override the lateral accel factor and friction. The Trailblazer-only low-speed error blend still applies on the Trailblazer (CHEVROLET_TRAILBLAZER) running NNFF whichever model is chosen.
 
 Why: in a 2026-11-21 Malibu ASCM harness log (85-94 km/h) the car weaved in its lane with a period of about 10 s. The torque rose from 0.12 to 0.25 over 3 s while the wheel stayed put, then the wheel let go all at once when the torque eased. Run on the same inputs, the two models give steady steering torque within about 10% of each other, but when the car is off target the Trailblazer model pushes through friction with 1/4-1/6 of the Volt model's torque. Highway segments of the Traverse the same day held the wheel against torque about as often (43-60%, Malibu 46%). Which choice suits each car has not been compared on the road.
+
+#### Torque-limit P filter
+
+`LatTorqueLimitPFilter` (Advanced torque › Torque coefficients, 2026-11-23) reduces the wheel turning and letting go in curves where the steering torque sits at its limit, on Chevrolets running NNFF (FrogPilot parity). The unit is 0.01 s; 0 is off (the default) and 30 (0.3 s) is recommended. Other brands do not see it in the menu, and on a Chevrolet without NNFF or on a GMC, Buick or Cadillac the saved value changes nothing.
+
+- Nothing changes while the feed-forward (F) alone gives less than 0.75 torque. Between 0.75 and 0.9 the filter fades in, and from 0.9 the P term is fully low-passed with the chosen time constant.
+- The integrator (I) still uses the unfiltered P, as before. When steering turns off the filtered value is cleared, so it starts fresh when steering resumes.
+- A change applies within a second, also while driving.
+
+Why: near the torque limit the feed-forward carries about 0.9 and P the last 0.1-0.15. When the car catches up and the error crosses zero, P flips from + to - and takes about 0.3 of torque away in 0.5 s, then the car falls behind and P pushes back to the limit. In Traverse rlogs (2026-11-20 to 23), P caused 125 of 129 torque drops at the limit and the driver torque limit 6 of 80. Raising `LateralAccelLimit` above 3.0 keeps the feed-forward at the limit longer, so this happens more. In a simulation running the device's control code against a steering response fitted to the logs (47 curves and turns), filtering with 0.3-0.6 s cut the torque drops at the limit by 20-32% with nearly the same tracking and curve exit; lowering P or adding feed-forward or integrator did not help. The torque limit (3 Nm) itself is a physical limit, so it does not disappear entirely, and it has not been checked in a real car yet.
 
 #### Steering recovery after driver intervention
 

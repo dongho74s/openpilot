@@ -99,11 +99,28 @@ def get_lookahead_value(future_vals, current_val):
 def roll_pitch_adjust(roll, pitch):
   return roll * math.cos(pitch)
 
+# Torque-limit P filter (LatTorqueLimitPFilter, user request 2026-11-23): low-pass the P term while the feed-forward
+# alone is close to the torque limit. At the limit the feed-forward carries ~0.9 and P the last ~0.1; when the car
+# catches up P swings from + to - and takes 0.3 of torque away in 0.5 s, then the car falls behind and P pushes back
+# to the limit: the wheel turns and lets go. Traverse rlogs 11/20-11/23: P caused 125 of 129 such drops, the driver
+# torque limit 6 of 80. In the closed-loop sim (repo controller, fitted plant, 0.3-0.6 s) the drops fell 20-32% with
+# the same tracking and curve exit; lowering P or adding feed-forward/integrator did not help. Blend weight 0 below
+# |f| 0.75, full from 0.9, so ordinary steering is untouched; the integrator still sees the raw P as before.
+P_FILTER_FF_BP = [0.75, 0.9]
+
+
 class FrogPilotWindupPID(PIDController):
   """FrogPilot's (stock openpilot's) integrator handling for the FrogPilot-parity cars: while the output is
   clipping the integrator is kept from growing, but it is never cut back to the room the other terms leave.
   carrot's PIDController trims it to that room on every update, so a short P/FF spike at the torque limit
-  dumps the integrator and the torque drops when the spike passes. k_f stays (the LateralTorqueKf setting)."""
+  dumps the integrator and the torque drops when the spike passes. k_f stays (the LateralTorqueKf setting).
+  p_filter_tau > 0 adds the torque-limit P filter (see P_FILTER_FF_BP)."""
+  p_filter_tau = 0.0
+
+  def reset(self):
+    super().reset()
+    self._p_lowpass = None
+
   def update(self, error, error_rate=0.0, speed=0.0, override=False, feedforward=0., freeze_integrator=False):
     self.speed = speed
     self.p = float(error) * self.k_p
@@ -118,9 +135,20 @@ class FrogPilotWindupPID(PIDController):
       i_lowerbound = self.i if test_control < self.neg_limit else self.neg_limit
       self.i = float(np.clip(i, i_lowerbound, i_upperbound))
 
+    self.p = self._torque_limit_p(self.p)
     control = self.p + self.i + self.d + self.f
     self.control = float(np.clip(control, self.neg_limit, self.pos_limit))
     return self.control
+
+  def _torque_limit_p(self, p):
+    if self.p_filter_tau <= 0.0:
+      self._p_lowpass = None
+      return p
+    # keep the low-pass running on every update so it is warm when the feed-forward reaches the limit
+    alpha = self.i_rate / (self.p_filter_tau + self.i_rate)
+    self._p_lowpass = p if self._p_lowpass is None else self._p_lowpass + alpha * (p - self._p_lowpass)
+    near = float(np.interp(abs(self.f), P_FILTER_FF_BP, [0.0, 1.0]))
+    return (1.0 - near) * p + near * self._p_lowpass
 
 
 class LatControlTorque(LatControl):
@@ -142,6 +170,7 @@ class LatControlTorque(LatControl):
     self.frame = 0
     self.params = Params()
     self.lateralTorqueCustom = self.params.get_int("LateralTorqueCustom")
+    self.read_torque_limit_p_filter()
     self.latAccelFactor_default = self.torque_params.latAccelFactor
     self.latAccelOffset_default = self.torque_params.latAccelOffset
     self.friction_default = self.torque_params.friction
@@ -220,8 +249,20 @@ class LatControlTorque(LatControl):
     self.torque_params.latAccelOffset = latAccelOffset
     self.torque_params.friction = friction
 
+  def read_torque_limit_p_filter(self):
+    """LatTorqueLimitPFilter (0.01 s, 0 = off) for the FrogPilot-parity PID; other cars keep their PID untouched."""
+    if not isinstance(self.pid, FrogPilotWindupPID):
+      return
+    try:
+      value = self.params.get_int("LatTorqueLimitPFilter")
+    except Exception:  # an unknown key (params not rebuilt yet) must never stop lateral control
+      value = 0
+    self.pid.p_filter_tau = float(np.clip(value, 0, 100)) * 0.01
+
   def update(self, active, CS, VM, params, steer_limited_by_controls, desired_curvature, CC, curvature_limited, model_data=None):
     self.frame += 1
+    if self.frame % 100 == 0:
+      self.read_torque_limit_p_filter()
     if self.frame % 10 == 0:
       lateralTorqueCustom = self.params.get_int("LateralTorqueCustom")
       if lateralTorqueCustom > 0:
@@ -248,6 +289,8 @@ class LatControlTorque(LatControl):
       output_torque = 0.0
       pid_log.active = False
       angle_steers_des = float(CS.steeringAngleDeg)
+      if isinstance(self.pid, FrogPilotWindupPID):
+        self.pid._p_lowpass = None   # the P filter starts fresh when steering resumes
     else:
       angle_steers_des = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des += params.angleOffsetDeg
