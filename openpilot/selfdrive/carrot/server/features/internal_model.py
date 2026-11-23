@@ -34,6 +34,7 @@ def build_payload(params: Any | None = None) -> dict[str, Any]:
   active = im.find(runtime.get("active_id")) or im.stock_model()
   onroad = _params_bool(params, "IsOnroad")
   engaged = _params_bool(params, "IsEngaged")
+  live_switch = _params_bool(params, "InternalModelLiveSwitch")
   downloaded, total = status.get("downloaded_bytes"), status.get("total_bytes")
   progress = None
   if status.get("phase") == "downloading" and isinstance(downloaded, int) and isinstance(total, int) and total > 0:
@@ -60,9 +61,11 @@ def build_payload(params: Any | None = None) -> dict[str, Any]:
     "fallback_reason": runtime.get("fallback_reason") if runtime.get("sha256") == requested.sha256 else None,
     "onroad": onroad,
     "engaged": engaged,
-    # Selecting is always allowed: modeld switches to a ready (compiled) model while driving as soon as nothing is
-    # engaged (modeld.LiveSwitch); a model that still has to be compiled waits for the parked manager.
-    "can_select": True,
+    # InternalModelLiveSwitch on: selecting is allowed while driving and modeld switches to a ready (compiled) model as
+    # soon as nothing is engaged (modeld.LiveSwitch); a model that still has to be compiled waits for the parked
+    # manager. Off (the default): only while parked, as before.
+    "live_switch": live_switch,
+    "can_select": live_switch or (not onroad and not engaged),
   }
 
 
@@ -79,6 +82,9 @@ async def api_select(request: web.Request) -> web.Response:
   if model is None:
     return web.json_response({"ok": False, "error": "unknown model"}, status=400)
   params = _params()
+  if not _params_bool(params, "InternalModelLiveSwitch") and (_params_bool(params, "IsOnroad") or _params_bool(params, "IsEngaged")):
+    return web.json_response({"ok": False, "error": "park and turn the ignition off before changing the driving model"},
+                             status=409)
   im.reset_runtime_block(model)
   im.write_request(model)
   return web.json_response(build_payload(params))

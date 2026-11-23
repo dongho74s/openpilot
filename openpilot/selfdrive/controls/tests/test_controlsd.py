@@ -101,3 +101,14 @@ def test_nothing_actuates_while_modeld_switches_the_internal_model():
   block = "if model_switching:\n        CC.latActive = CC.longActive = False"
   assert block in body and body.index(block) > body.index("CC.longActive = CC.enabled")   # after both are decided
   assert body.index(block) < body.index("actuators = CC.actuators")
+
+
+def test_no_stock_acc_resume_while_modeld_switches_the_internal_model():
+  import ast as _ast
+  src = (Path(__file__).resolve().parents[1] / "controlsd.py").read_text(encoding="utf8")
+  tree = _ast.parse(src)
+  state = _ast.unparse(next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == "state_control"))
+  assert "model_switching = self.model_switching = self.params.get_bool('InternalModelSwitching')" in state
+  publish = _ast.unparse(next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == "publish"))
+  resume = next(line for line in publish.splitlines() if "CC.cruiseControl.resume =" in line)
+  assert "not getattr(self, 'model_switching', False)" in resume

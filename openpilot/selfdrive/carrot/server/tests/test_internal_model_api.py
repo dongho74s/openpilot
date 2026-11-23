@@ -17,8 +17,9 @@ def feature(monkeypatch, tmp_path):
   )
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
-  module.state = {"onroad": False, "engaged": False}
-  params = SimpleNamespace(get_bool=lambda key: {"IsOnroad": module.state["onroad"], "IsEngaged": module.state["engaged"]}.get(key, False))
+  module.state = {"onroad": False, "engaged": False, "live": False}
+  params = SimpleNamespace(get_bool=lambda key: {"IsOnroad": module.state["onroad"], "IsEngaged": module.state["engaged"],
+                                                 "InternalModelLiveSwitch": module.state["live"]}.get(key, False))
   monkeypatch.setattr(module, "_params", lambda: params)
   return module
 
@@ -53,11 +54,21 @@ def test_select_writes_the_request_offroad(feature):
 
 
 @pytest.mark.parametrize("key", ["onroad", "engaged"])
-def test_select_is_accepted_while_driving_and_modeld_switches_when_disengaged(feature, key):
+def test_select_is_accepted_while_driving_with_the_live_switch_on(feature, key):
+  feature.state[key] = True
+  feature.state["live"] = True
+  status, payload = call(feature.api_select, {"id": "RDF"})
+  assert status == 200 and payload["ok"] and payload["can_select"] is True and payload["live_switch"] is True
+  assert im.requested_model().id == "RDF" and payload[key] is True
+
+
+@pytest.mark.parametrize("key", ["onroad", "engaged"])
+def test_select_is_refused_while_driving_with_the_live_switch_off(feature, key):
   feature.state[key] = True
   status, payload = call(feature.api_select, {"id": "RDF"})
-  assert status == 200 and payload["ok"] and payload["can_select"] is True
-  assert im.requested_model().id == "RDF" and payload[key] is True
+  assert status == 409 and not payload["ok"] and im.requested_model().id == im.STOCK_ID
+  _, payload = call(feature.api_status)
+  assert payload["can_select"] is False and payload["live_switch"] is False
 
 
 @pytest.mark.parametrize("body", [{"id": "NOPE"}, {}, ["RDF"], ValueError("bad json")])

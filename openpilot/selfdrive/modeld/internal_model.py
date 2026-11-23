@@ -395,10 +395,11 @@ def _write_runtime(active: InternalModel, sha256: str | None, pending: bool, unh
   })
 
 
-def select_for_modeld(cam_w: int, cam_h: int, now: float | None = None) -> Selected | None:
-  """The selected custom model for this modeld start, or None for the stock model. Never raises."""
+def select_for_modeld(cam_w: int, cam_h: int, now: float | None = None, requested: InternalModel | None = None) -> Selected | None:
+  """The selected custom model for this modeld start, or None for the stock model. Never raises. requested: the model
+  of a request already read (a live switch), instead of reading request.json again."""
   try:
-    model = requested_model()
+    model = requested or requested_model()
     stock = stock_model()
     if model.stock:
       _write_runtime(stock, None, False, 0, None, now)

@@ -546,16 +546,19 @@ The Replay event timeline also identifies Carrot Navi connection and route-sessi
 <a id="system"></a>
 ## System
 
-The 12 system settings cover recording, power, network, maps, sound, and software menus.
+The 13 system settings cover recording, power, the driving model, network, maps, sound, and software menus.
 
 | Group | Parameters | Purpose |
 |---|---|---|
 | Recording and power | `RecordRoadCam`, `MaxTimeOffroadMin` | Road-camera storage and delayed shutdown |
+| Driving model | `InternalModelLiveSwitch` | Switch to a compiled driving model while disengaged, without restarting (test) |
 | Network and map | `HotspotOnBoot`, `MapboxStyle` | Boot hotspot and map background style |
 | Sound | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage` | Prompt language and volume |
 | Software | `SoftwareMenu` | Carrot Web software-menu availability |
 
 Check storage use for recording and network use, heat, and privacy before enabling live streaming.
+
+`InternalModelLiveSwitch` (switch driving model while driving, test, `0/1`, default `0`): when on, a model can be picked in Tools → Driving model while driving, and a model that is already compiled (or the stock model) replaces the current one without restarting the car or rebooting the comma, as soon as openpilot is disengaged. While it switches and until the new model's history has filled (about 6-8 s), engaging is blocked ("주행 모델 바꾸는 중", driving model switching) and all steering and speed control (`AlwaysLateral` included) as well as the stock cruise resume after a stop pause. While a Jetson or eGPU model drives, it switches from the next drive. Off (the default) keeps the previous behavior: models can only be picked while parked with the ignition off and are used from the next drive. It has not been checked on the road yet: try it parked (P) first. See [Carrot Web driving model](carrot-web.md) for details.
 
 In this migration branch, `MaxTimeOffroadMin` supports up to `4320` minutes (three days); existing saved values are unchanged. Automatic shutdown happens only while the harness is detected as connected, and never while ignition is on: USB power such as a phone charger or laptop, detected as no harness, never powers off by itself (unless the harness is misdetected as connected). The offroad timer requests shutdown only after the longer of the setting and five minutes offroad, and only once the device has gone onroad (ignition ON) since hardwared started or an hour after booting (so even a setting of 0 does not power off right after an install or power-up, 2026-11-16). The low-voltage shutdown has no such wait. Low-voltage shutdown follows after both raw and filtered battery voltage stay below `11.0V` (changed from `11.3V` on 2026-11-16) for ten seconds with fresh measurements. Ignition ON, voltage recovery or missing measurements reset that confirmation. The manager checks fresh ignition, offroad and harness state again immediately before requesting poweroff; stale automatic requests cannot latch a manual shutdown. The estimated battery-capacity cutoff is not used. Manual shutdown/reboot behavior is unchanged. Long operation and a low voltage threshold increase depletion and no-start risk.
 

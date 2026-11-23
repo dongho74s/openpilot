@@ -51,8 +51,11 @@ const FALLBACK_STRINGS = {
   live: "Switches when disengaged",
   live_detail: "{name} is ready. It replaces the current driving model as soon as openpilot is disengaged (while a Jetson or eGPU model drives, from the next drive instead); engaging stays blocked for about 6-8 seconds after the switch.",
   live_stock_detail: "The stock model replaces the current one as soon as openpilot is disengaged (while a Jetson or eGPU model drives, from the next drive instead); engaging stays blocked for about 6 seconds after the switch.",
-  confirm: "Switch the driving model to {name}? If it is already compiled it switches as soon as openpilot is disengaged. Otherwise it is downloaded and compiled while parked (about 10-20 minutes) and used from the next drive.",
-  confirm_stock: "Switch back to the stock driving model? It switches as soon as openpilot is disengaged.",
+  onroad_note: "The driving model can only be changed while parked with the ignition off.",
+  confirm: "Switch the driving model to {name}? It is downloaded and compiled while parked (about 10-20 minutes) and used from the next drive.",
+  confirm_stock: "Switch back to the stock driving model? It is used from the next drive.",
+  confirm_live: "Switch the driving model to {name}? If it is already compiled it switches as soon as openpilot is disengaged. Otherwise it is downloaded and compiled while parked (about 10-20 minutes) and used from the next drive.",
+  confirm_stock_live: "Switch back to the stock driving model? It switches as soon as openpilot is disengaged.",
   applied: "Driving model selection saved.",
 };
 
@@ -87,7 +90,7 @@ function describe(status) {
   const changing = !!status?.active && status.active !== status?.requested;
   if (!requested || requested.stock) {
     // while driving modeld switches as soon as nothing is engaged (the stock model is always ready)
-    if (changing && status.onroad) return { state: "live", detailKey: "live_stock_detail" };
+    if (changing && status.onroad && status.live_switch) return { state: "live", detailKey: "live_stock_detail" };
     return { state: "stock", detailKey: changing ? "stock_next_detail" : "stock_detail" };
   }
   const phase = String(status.phase || "waiting");
@@ -99,7 +102,7 @@ function describe(status) {
     if (status.active === requested.id && status.in_use !== false) return { state: "active", detailKey: "active_detail" };
     const key = `fallback_${status.fallback_reason}`;
     if (status.fallback_reason && Object.hasOwn(FALLBACK_STRINGS, key)) return { state: "ready", detailKey: key };
-    if (status.onroad && changing) return { state: "live", detailKey: "live_detail" };
+    if (status.onroad && status.live_switch && changing) return { state: "live", detailKey: "live_detail" };
     return { state: "ready", detailKey: "ready_detail" };
   }
   if (["downloading", "verifying", "validating", "compiling"].includes(phase)) return { state: phase, detailKey: `${phase}_detail` };
@@ -140,7 +143,7 @@ function render(status = lastStatus) {
     }));
     select.value = userChoice || status.requested;
   }
-  if (select) select.disabled = applying;
+  if (select) select.disabled = !status.can_select || applying;
 
   const percent = Number(status.progress);
   const showProgress = state === "downloading" && Number.isFinite(percent);
@@ -148,12 +151,12 @@ function render(status = lastStatus) {
   document.getElementById("internalModelProgressBar").style.width = `${Math.min(100, Math.max(0, percent || 0))}%`;
   document.getElementById("internalModelAmount").textContent = showProgress
     ? `${formatBytes(status.downloaded_bytes)} / ${formatBytes(status.total_bytes)} · ${percent.toFixed(1)}%`
-    : (state === "compiling" ? elapsedText(status.started_at) : "");
+    : (state === "compiling" ? elapsedText(status.started_at) : (status.can_select ? "" : t("onroad_note")));
 
   const button = document.getElementById("btnInternalModelApply");
   if (button) {
     button.textContent = applying ? t("checking") : t("apply");
-    button.disabled = applying || !select || (select.value === status.requested && !canRetry(status));
+    button.disabled = applying || !status.can_select || !select || (select.value === status.requested && !canRetry(status));
   }
 }
 
@@ -172,7 +175,9 @@ async function applySelection() {
   const select = document.getElementById("internalModelSelect");
   const model = modelById(lastStatus, select?.value);
   if (!model || (model.id === lastStatus?.requested && !canRetry(lastStatus))) return;
-  const message = model.stock ? t("confirm_stock") : t("confirm", { name: model.name });
+  // InternalModelLiveSwitch on: a ready model switches once disengaged; off: from the next drive, as before
+  const live = !!lastStatus?.live_switch;
+  const message = model.stock ? t(live ? "confirm_stock_live" : "confirm_stock") : t(live ? "confirm_live" : "confirm", { name: model.name });
   if (typeof appConfirm === "function" && !await appConfirm(message, { title: t("title") })) return;
   applying = true;
   render();

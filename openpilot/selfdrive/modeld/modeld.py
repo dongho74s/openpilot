@@ -249,7 +249,7 @@ class ModelState:
     return outputs_dict
 
 
-def create_internal_model(cam_w: int, cam_h: int, usbgpu_model_loaded: bool, model_state=None):
+def create_internal_model(cam_w: int, cam_h: int, usbgpu_model_loaded: bool, model_state=None, requested=None):
   """The internal (comma GPU) model and the user selection it runs (None for the stock model).
 
   A model selected in carrot web replaces the stock one only when its artifact matches this build and camera; any
@@ -257,7 +257,7 @@ def create_internal_model(cam_w: int, cam_h: int, usbgpu_model_loaded: bool, mod
   shadow stays off for it.
   """
   model_state = model_state or ModelState
-  selected = internal_model.select_for_modeld(cam_w, cam_h)
+  selected = internal_model.select_for_modeld(cam_w, cam_h, requested=requested)
   if selected is not None:
     try:
       model = model_state(cam_w, cam_h, False, pkl_path=selected.pkl_path, enable_shadow=False, check_finite=True)
@@ -327,9 +327,10 @@ class LiveSwitch:
     self.params.put_bool("InternalModelSwitching", value)
 
   def wanted(self, frame: int, engaged: bool, cam_w: int, cam_h: int, internal_only: bool = True) -> bool:
-    """IDLE: a new, ready selection of another model while nothing is engaged and the internal model alone drives."""
+    """IDLE: a new, ready selection of another model while nothing is engaged and the internal model alone drives,
+    with InternalModelLiveSwitch on (off by default: the selection then waits for the next start, as before)."""
     if (self.phase != self.IDLE or frame % self.CHECK_FRAMES or engaged or not internal_only or
-        time.monotonic_ns() < self.retry_at_ns):
+        time.monotonic_ns() < self.retry_at_ns or not self.params.get_bool("InternalModelLiveSwitch")):
       return False
     token = internal_model.request_token()
     if token == self.token or not internal_model.live_switch_ready(cam_w, cam_h):
@@ -379,12 +380,17 @@ class LiveSwitch:
     one, or None when the selection changed since the confirmation."""
     from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model
     started = time.monotonic()
-    if not internal_model.requested_model().stock:
-      install_clean_stop_handler()  # as at startup; the stock model keeps the default SIGINT behaviour
-    token = internal_model.request_token()
+    request = internal_model.read_json(internal_model.request_path())  # one snapshot: token and model together
+    try:
+      token = int(request.get("token") or 0)
+    except (TypeError, ValueError):
+      token = 0
     if token != self.pending_token:
       return None  # changed after the confirmation: the caller withdraws and the new selection is checked from the start
-    new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded)
+    requested = internal_model.find(request.get("id")) or internal_model.stock_model()
+    if not requested.stock:
+      install_clean_stop_handler()  # as at startup; the stock model keeps the default SIGINT behaviour
+    new_small, selected = create_internal_model(cam_w, cam_h, usbgpu_model_loaded, requested=requested)
     failed = None
     try:
       if selected is not None:
@@ -666,6 +672,14 @@ def main(demo=False):
     frames = receive_camera_pair(vipc_client_main, vipc_client_extra if use_extra_client else None)
     if frames is None:
       cloudlog.debug("camera pair unavailable or out of sync")
+      if live_switch.phase == LiveSwitch.REQUESTED:
+        # withdrawing must not wait for the cameras: an engagement or a stale request ends the request now
+        sm.update(0)
+        ack = live_switch.acknowledged(sm, sm['selfdriveState'].enabled or sm['selfdriveState'].active or
+                                       sm['carControl'].latActive or sm['carControl'].longActive)
+        if ack in ("engaged", "changed", "timeout"):
+          cloudlog.warning("internal model live switch withdrawn without camera frames: %s", ack)
+          live_switch.withdraw(timed_out=ack == "timeout")
       continue
     buf_main, meta_main, buf_extra, meta_extra = frames
 

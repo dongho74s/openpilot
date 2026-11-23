@@ -36,14 +36,20 @@ test("progress and failures map to their own messages", () => {
   assert.deepEqual(describe({ ...base, phase: undefined }), { state: "waiting", detailKey: "waiting_detail" });
 });
 
-test("while driving a ready selection switches as soon as openpilot is disengaged", () => {
-  assert.deepEqual(describe({ ...base, phase: "ready", onroad: true }), { state: "live", detailKey: "live_detail" });
-  assert.deepEqual(describe({ ...base, requested: "CD210", active: "RDF", onroad: true }), { state: "live", detailKey: "live_stock_detail" });
+test("with the live switch on, a ready selection switches as soon as openpilot is disengaged", () => {
+  const live = { ...base, live_switch: true, onroad: true };
+  assert.deepEqual(describe({ ...live, phase: "ready" }), { state: "live", detailKey: "live_detail" });
+  assert.deepEqual(describe({ ...live, requested: "CD210", active: "RDF" }), { state: "live", detailKey: "live_stock_detail" });
   // already running, blocked or not compiled yet: no live switch is announced
-  assert.deepEqual(describe({ ...base, phase: "ready", active: "RDF", onroad: true }), { state: "active", detailKey: "active_detail" });
-  assert.deepEqual(describe({ ...base, phase: "ready", onroad: true, fallback_reason: "crashed" }), { state: "ready", detailKey: "fallback_crashed" });
-  assert.deepEqual(describe({ ...base, phase: "compiling", onroad: true }), { state: "compiling", detailKey: "compiling_detail" });
-  assert.deepEqual(describe({ ...base, phase: undefined, onroad: true }), { state: "waiting", detailKey: "waiting_detail" });
+  assert.deepEqual(describe({ ...live, phase: "ready", active: "RDF" }), { state: "active", detailKey: "active_detail" });
+  assert.deepEqual(describe({ ...live, phase: "ready", fallback_reason: "crashed" }), { state: "ready", detailKey: "fallback_crashed" });
+  assert.deepEqual(describe({ ...live, phase: "compiling" }), { state: "compiling", detailKey: "compiling_detail" });
+  assert.deepEqual(describe({ ...live, phase: undefined }), { state: "waiting", detailKey: "waiting_detail" });
+});
+
+test("with the live switch off (the default) nothing announces a switch while driving", () => {
+  assert.deepEqual(describe({ ...base, phase: "ready", onroad: true }), { state: "ready", detailKey: "ready_detail" });
+  assert.deepEqual(describe({ ...base, requested: "CD210", active: "RDF", onroad: true }), { state: "stock", detailKey: "stock_next_detail" });
 });
 
 test("the requested model can be applied again only to retry a failure or a crash block", () => {

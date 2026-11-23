@@ -423,6 +423,15 @@ class Car:
         CC.cruiseControl.resume = CC.cruiseControl.override = False
         CC.cruiseControl.cancel = CS.cruiseState.enabled
         CC = CC.as_reader()
+      # A live driving model switch (modeld.LiveSwitch): nothing actuates, also for a command controlsd computed
+      # before it read the flag and this process applies late. CC.enabled and cancel are left to their own logic.
+      if self.params.get_bool("InternalModelSwitching") and (CC.latActive or CC.longActive or CC.cruiseControl.resume):
+        CC = CC.as_builder()
+        CC.latActive = CC.longActive = False
+        CC.actuators = car.CarControl.Actuators.new_message()
+        CC.actuators.steeringAngleDeg = CS.steeringAngleDeg
+        CC.cruiseControl.resume = False
+        CC = CC.as_reader()
       # Independently confirm startup once at the final application boundary.
       # Later input failures do not rearm this process-lifetime latch.
       lateral_ready = self.lateral_startup.update(self.sm, CS, 'carControl')

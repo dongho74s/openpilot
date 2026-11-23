@@ -884,7 +884,8 @@ def live_switch_class(create, warm, records, monkeypatch):
   tree = ast.parse((Path(im.__file__).parent / "modeld.py").read_text())
   nodes = [n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in ("LiveSwitch", "install_clean_stop_handler")]
   monkeypatch.setitem(sys.modules, "openpilot.selfdrive.modeld.internal_model_warmup", NS(warm_internal_model=warm))
-  internal = NS(**{k: getattr(im, k) for k in ("request_token", "live_switch_ready", "requested_model", "stock_model")})
+  internal = NS(**{k: getattr(im, k) for k in ("request_token", "live_switch_ready", "requested_model", "stock_model",
+                                                "read_json", "request_path", "find")})
   internal.STOCK_ID = im.STOCK_ID
   internal.record_runtime_failure = lambda selected: records.append(("runtime_failed", selected.model.id))
   internal.mark_loading = lambda selected: records.append(("loading", selected.model.id))
@@ -902,7 +903,7 @@ def live_switch_class(create, warm, records, monkeypatch):
 
 class FakeSwitchParams:
   def __init__(self, **values):
-    self.values, self.writes = dict(values), []
+    self.values, self.writes = {"InternalModelLiveSwitch": True, **values}, []
   def get_bool(self, key):
     return bool(self.values.get(key, False))
   def put_bool(self, key, value):
@@ -944,7 +945,7 @@ class SM(dict):
 
 def requested_switch(monkeypatch, create=None, warm=None, token_model=RDF):
   records, params = [], FakeSwitchParams()
-  LiveSwitch = live_switch_class(create or (lambda *a: (FakeState("x"), None)), warm or (lambda m, b: None), records, monkeypatch)
+  LiveSwitch = live_switch_class(create or (lambda *a, **k: (FakeState("x"), None)), warm or (lambda m, b: None), records, monkeypatch)
   compile_ok(RDF)
   sw = LiveSwitch(params, None, im.request_token())
   im.write_request(token_model, now=7)
@@ -955,7 +956,7 @@ def requested_switch(monkeypatch, create=None, warm=None, token_model=RDF):
 
 def test_live_switch_requests_only_a_new_ready_selection_while_nothing_is_engaged(monkeypatch):
   records, params = [], FakeSwitchParams()
-  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  LiveSwitch = live_switch_class(lambda *a, **k: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
   sw = LiveSwitch(params, None, im.request_token())
   assert params.writes == [False]
   assert not sw.wanted(20, False, *CAM)                 # nothing selected since modeld started
@@ -972,7 +973,7 @@ def test_live_switch_requests_only_a_new_ready_selection_while_nothing_is_engage
 
 def test_a_selection_made_while_modeld_loads_is_still_switched_to(monkeypatch):
   records, params = [], FakeSwitchParams()
-  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  LiveSwitch = live_switch_class(lambda *a, **k: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
   compile_ok(RDF)
   im.write_request(RDF, now=1)
   start_token = im.request_token()                       # modeld reads it, then loads RDF...
@@ -983,7 +984,7 @@ def test_a_selection_made_while_modeld_loads_is_still_switched_to(monkeypatch):
 
 def test_live_switch_ignores_the_running_model_selected_again(monkeypatch):
   records, params = [], FakeSwitchParams()
-  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  LiveSwitch = live_switch_class(lambda *a, **k: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
   compile_ok(RDF)
   sw = LiveSwitch(params, im.Selected(RDF, im.pkl_path(RDF)), im.request_token())
   im.write_request(RDF, now=5)
@@ -1027,7 +1028,7 @@ def test_a_selection_changed_while_waiting_withdraws_the_request(monkeypatch):
 
 def test_no_live_switch_while_an_external_model_drives_and_jetlink_is_held_meanwhile(monkeypatch):
   records, params = [], FakeSwitchParams()
-  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  LiveSwitch = live_switch_class(lambda *a, **k: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
   compile_ok(RDF)
   sw = LiveSwitch(params, None, im.request_token())
   im.write_request(RDF, now=3)
@@ -1059,7 +1060,7 @@ def test_an_unconfirmed_or_interrupted_request_is_withdrawn_and_retried(monkeypa
 def test_the_block_lasts_until_the_new_model_itself_produced_a_full_history(monkeypatch):
   selected = im.Selected(RDF, im.pkl_path(RDF))
   new = FakeState("new", steps=128)
-  sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=lambda *a: (new, selected))
+  sw, params, records, LiveSwitch = requested_switch(monkeypatch, create=lambda *a, **k: (new, selected))
   old = FakeState("old")
   model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
   assert (model, small, sel) == (new, new, selected)
@@ -1095,7 +1096,7 @@ def test_live_switch_falls_back_to_stock_when_the_new_model_fails_its_warmup(mon
   ref = weakref.ref(failed)
   alive_at_fallback = []
   stock = FakeState("stock")
-  def create(*a):
+  def create(*a, **k):
     return failed_holder.pop(), selected
   failed_holder = [failed]
   del failed
@@ -1117,7 +1118,7 @@ def test_live_switch_falls_back_to_stock_when_the_new_model_fails_its_warmup(mon
 
 def test_a_modeld_restart_during_a_switch_keeps_the_block_until_the_new_history_is_full(monkeypatch):
   records = []
-  LiveSwitch = live_switch_class(lambda *a: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  LiveSwitch = live_switch_class(lambda *a, **k: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
   params = FakeSwitchParams(InternalModelSwitching=True)      # left set by the modeld that stopped mid-switch
   sw = LiveSwitch(params, None, im.request_token(), history_steps=128)
   assert params.writes == [] and sw.phase == LiveSwitch.WARMING and sw.steps_needed == 128 + LiveSwitch.EXTRA_STEPS
@@ -1137,9 +1138,54 @@ def test_a_modeld_restart_during_a_switch_keeps_the_block_until_the_new_history_
 
 def test_a_selection_changed_after_the_confirmation_loads_nothing(monkeypatch):
   made = []
-  sw, params, _, LiveSwitch = requested_switch(monkeypatch, create=lambda *a: made.append(1) or (FakeState("x"), None))
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch, create=lambda *a, **k: made.append(1) or (FakeState("x"), None))
   im.write_request(im.find("WMIV11"), now=11)
   old = FakeState("old")
   assert sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2}) is None and made == []
   sw.withdraw()
   assert params.values["InternalModelSwitching"] is False
+
+
+def test_live_switch_is_off_unless_the_carrot_web_setting_is_on(monkeypatch):
+  records, params = [], FakeSwitchParams(InternalModelLiveSwitch=False)
+  LiveSwitch = live_switch_class(lambda *a, **k: (FakeState("x"), None), lambda m, b: None, records, monkeypatch)
+  compile_ok(RDF)
+  sw = LiveSwitch(params, None, im.request_token())
+  im.write_request(RDF, now=12)
+  assert not sw.wanted(20, False, *CAM) and sw.phase == LiveSwitch.IDLE and params.writes == [False]
+  params.values["InternalModelLiveSwitch"] = True        # turned on later: the pending selection is switched to
+  assert sw.wanted(40, False, *CAM)
+
+
+def test_the_switch_loads_the_model_of_the_confirmed_request(monkeypatch):
+  seen = []
+  selected = im.Selected(RDF, im.pkl_path(RDF))
+  def create(cam_w, cam_h, usbgpu, requested=None):
+    seen.append(requested)
+    im.write_request(im.stock_model(), now=13)            # a later selection never replaces the confirmed one
+    return FakeState("new"), selected
+  sw, params, _, LiveSwitch = requested_switch(monkeypatch, create=create)
+  old = FakeState("old")
+  model, small, sel = sw.switch(old, old, *CAM, False, {"img": 1, "big_img": 2})
+  assert seen == [RDF] and sel is selected
+  assert sw.wanted(80, False, *CAM) is False              # still warming
+  assert sw.token != im.request_token()                   # the stock selection made meanwhile stays pending
+
+
+def test_a_request_is_withdrawn_even_while_camera_frames_are_missing():
+  import ast
+  src = (Path(im.__file__).parent / "modeld.py").read_text()
+  fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "main")
+  branch = next(n for n in ast.walk(fn) if isinstance(n, ast.If) and ast.unparse(n.test) == "frames is None")
+  body = ast.unparse(branch)
+  assert "live_switch.phase == LiveSwitch.REQUESTED" in body and "sm.update(0)" in body
+  assert "live_switch.acknowledged(sm" in body and "live_switch.withdraw(timed_out=ack == 'timeout')" in body
+  assert body.index("live_switch.withdraw") < body.index("continue")
+
+
+def test_select_for_modeld_uses_a_request_already_read():
+  compile_ok(RDF)
+  im.write_request(im.stock_model(), now=14)
+  selected = im.select_for_modeld(*CAM, requested=RDF)
+  assert selected is not None and selected.model is RDF
+  assert im.select_for_modeld(*CAM) is None                # without it: request.json (stock)

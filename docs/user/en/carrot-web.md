@@ -160,10 +160,13 @@ September 2026 (the history kept inside the model).
     the best comma models (distillation) and fills the cases they all miss with human driving data. 32-frame history.
     `Vega` came out on 7 November and `Vega 2` on 22 November. The files download from StarPilot's public Hugging
     Face storage; their checksums are pinned, so if the source changes the comma does not use it and the card says why.
-- To change it, pick a model and press **Apply**. This also works while driving.
-- A model that is already compiled (and the stock model) switches **without restarting the car or rebooting the
-  comma**: as soon as openpilot is disengaged and neither steering nor speed control is active. If you apply it while
-  engaged, it switches the moment you disengage.
+- To change it, park with the ignition off, pick a model and press **Apply**. With the default settings it cannot be
+  changed while driving.
+- **Switching while driving (test, off by default):** with `Switch Driving Model While Driving (test)`
+  (`InternalModelLiveSwitch`, Settings → System → Driving Model) on, a model can be picked while driving, and a model
+  that is already compiled (and the stock model) switches **without restarting the car or rebooting the comma**: as
+  soon as openpilot is disengaged and neither steering nor speed control is active. If you apply it while engaged, it
+  switches the moment you disengage. It is still a test feature: try it parked (P) first.
   - Engaging is blocked first, and the model loads only once that block is confirmed. If you engage meanwhile, the
     switch waits and happens when you disengage again.
   - While the model loads, the path on the driving screen pauses for a moment (one to a few seconds).
@@ -173,8 +176,8 @@ September 2026 (the history kept inside the model).
     (AlwaysLateral included) all pause meanwhile.
   - While a Jetson or eGPU model drives, the switch waits for the next drive instead.
   - If modeld restarts during a switch, the block lasts until the model it loads again has a full history.
-- A model that is not compiled yet is not compiled while driving (it would share the GPU with the running model). It
-  is downloaded and compiled once parked and used from the next drive; after that it switches right away.
+  - A model that is not compiled yet is not compiled while driving (it would share the GPU with the running model).
+    It is downloaded and compiled once parked and used from the next drive; after that it switches right away.
 - While parked the comma downloads the model (about 100 MB), checks it against the pinned checksum and the expected
   inputs/outputs, then compiles it on the comma (about 10-20 minutes). Turning the ignition on pauses this until you park again.
   - Upstream published `WMI V11` only as a separate policy file, so the comma downloads that file (about 14 MB) and

@@ -117,7 +117,7 @@ def test_standby_preserves_internal_model_without_spawning_comparison(external_r
   def model_state(*args, **kwargs):
     calls.append((args, kwargs))
     return 'internal'
-  module, scope = _internal_model_creation(model_state, lambda w, h: None)
+  module, scope = _internal_model_creation(model_state, lambda w, h, requested=None: None)
   scope.update({'vipc_client_main': SimpleNamespace(width=1344, height=760),
                 'model': object() if external_ready else None, 'USBGPU': external_requested,
                 'usbgpu_model_loaded': external_ready})
@@ -133,7 +133,7 @@ def test_selected_internal_model_never_starts_the_stock_comparison_and_checks_ou
     calls.append((args, kwargs))
     return 'selected'
   loaded = []
-  module, scope = _internal_model_creation(model_state, lambda w, h: selected, mark_loaded=loaded.append)
+  module, scope = _internal_model_creation(model_state, lambda w, h, requested=None: selected, mark_loaded=loaded.append)
   scope.update({'vipc_client_main': SimpleNamespace(width=1344, height=760), 'model': None, 'USBGPU': False,
                 'usbgpu_model_loaded': False})
   exec(compile(module, '<selected>', 'exec'), scope)
@@ -149,7 +149,7 @@ def test_selected_internal_model_that_fails_to_load_falls_back_to_stock():
     if 'pkl_path' in kwargs:
       raise RuntimeError('bad pkl')
     return 'stock'
-  module, scope = _internal_model_creation(model_state, lambda w, h: selected, blocked.append)
+  module, scope = _internal_model_creation(model_state, lambda w, h, requested=None: selected, blocked.append)
   scope.update({'vipc_client_main': SimpleNamespace(width=1344, height=760), 'model': None, 'USBGPU': False,
                 'usbgpu_model_loaded': False})
   exec(compile(module, '<fallback>', 'exec'), scope)

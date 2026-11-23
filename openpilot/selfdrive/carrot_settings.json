@@ -634,6 +634,15 @@
           ]
         },
         {
+          "id": "SYS_MODEL",
+          "ko": "주행 모델",
+          "en": "Driving Model",
+          "zh": "驾驶模型",
+          "params": [
+            "InternalModelLiveSwitch"
+          ]
+        },
+        {
           "id": "SYS_NET",
           "ko": "네트워크·지도",
           "en": "Network & Map",
@@ -2269,6 +2278,24 @@
       "min": 0,
       "max": 1,
       "default": 1,
+      "unit": 1,
+      "control": "toggle",
+      "risk": "high"
+    },
+    {
+      "group": "시스템",
+      "name": "InternalModelLiveSwitch",
+      "title": "주행 중 주행 모델 즉시 전환(시험)",
+      "descr": "켜면 도구 → 주행 모델 카드에서 고른 모델이 이미 컴파일돼 있을 때, 시동을 다시 걸지 않고 디스인게이지 상태에서 바로 바뀝니다. 바꾸는 동안과 새 모델의 기록이 찰 때까지(약 6~8초) 인게이지와 조향·가감속 제어(항상 조향 포함)를 모두 막습니다. 젯슨·eGPU 모델로 달리는 중이면 다음 시동부터 바뀝니다. 아직 시험 기능이라 주차(P) 상태에서 먼저 확인하세요. 끄면(기본) 지금처럼 다음 시동부터 바뀝니다.",
+      "egroup": "SYSTEM",
+      "etitle": "Switch Driving Model While Driving (test)",
+      "edescr": "When on, a driving model picked in Tools → Driving model that is already compiled replaces the current one without restarting the car, as soon as openpilot is disengaged. While it switches and until the new model's history has filled (about 6-8 s), engaging and all steering and speed control (AlwaysLateral included) are blocked. While a Jetson or eGPU model drives, it switches from the next drive. Still a test feature: try it parked (P) first. Off (the default) keeps switching from the next drive.",
+      "cgroup": "系统",
+      "ctitle": "行驶中即时切换驾驶模型（测试）",
+      "cdescr": "开启后，在 工具 → 驾驶模型 中选择且已编译的模型，无需重新启动车辆，在 openpilot 解除接管后立即切换。切换期间及新模型历史填满之前（约 6~8 秒），会阻止接管以及所有转向与加减速控制（包括常时转向）。使用 Jetson 或 eGPU 模型行驶时，下次行驶起切换。仍为测试功能，请先在驻车（P）状态下确认。关闭（默认）时仍为下次行驶起切换。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
       "unit": 1,
       "control": "toggle",
       "risk": "high"
