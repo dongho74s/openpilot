@@ -22,6 +22,10 @@ GearShifter = structs.CarState.GearShifter
 CAMERA_CANCEL_DELAY_FRAMES = 10
 # Enforce a minimum interval between steering messages to avoid a fault
 MIN_STEER_MSG_INTERVAL_MS = 15
+# 정지 덜컥 완화: 정지 직전 고정 브레이크(트레일블레이저 stopAccel -0.4 → 40)로
+# 한 프레임에 뚝 떨어지지 않게, 하향만 초당 이 값만큼 천천히 줄인다.
+# 95 → 40 계단은 약 0.46초에 걸쳐 내려간다. 상향(더 세게)은 즉시.
+STOP_BRAKE_SLEW_RATE = 120.  # [브레이크 단위 / 초]
 
 # constants for pitch compensation
 PITCH_DEADZONE = 0.01 # [radians] 0.01 ? 1% grade
@@ -35,6 +39,7 @@ class CarController(CarControllerBase):
     self.apply_torque_last = 0
     self.apply_gas = 0
     self.apply_brake = 0
+    self._prev_apply_brake = 0  # 정지 브레이크 램프용 직전 프레임 값
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -288,6 +293,14 @@ class CarController(CarControllerBase):
           # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
           can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx,
                                                           acc_engaged, at_full_stop, self.CP.carFingerprint))
+          # 정지 덜컥 완화: near_stop/at_full_stop 구간에서만 브레이크 하향을
+          # 천천히 줄인다. 정지 직전 테이블 값(51~95)이 고정값 40으로 한 프레임에
+          # 뚝 떨어지면서 차가 뒤로 밀리는 게 덜컥의 원인이다. 가스·RES로 출발할
+          # 때는 near_stop/at_full_stop이 꺼져 제한이 안 걸리므로 즉시 풀린다.
+          if near_stop or at_full_stop:
+            max_drop = STOP_BRAKE_SLEW_RATE * DT_CTRL
+            self.apply_brake = max(self.apply_brake, self._prev_apply_brake - max_drop)
+          self._prev_apply_brake = self.apply_brake
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
