@@ -36,12 +36,12 @@ def previous_limit(v_ego, low_speed_allowance):
   return float(np.interp(v_ego, [80 / 3.6, 120 / 3.6], [MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED, MAX_LATERAL_ACCEL_NO_ROLL]))
 
 
-@pytest.mark.parametrize("setting, expected", [(30, 3.0), (31, 3.1), (37, 3.7), (45, 4.5)])
+@pytest.mark.parametrize("setting, expected", [(30, 3.0), (31, 3.1), (37, 3.7), (45, 4.5), (60, 6.0), (90, 9.0)])
 def test_setting_reads_in_tenths(setting, expected):
   assert lateral_accel_limit(setting) == pytest.approx(expected)
 
 
-@pytest.mark.parametrize("setting", [0, 29, 46, 100, -30, 2 ** 31, None, True, "40", "", "abc", 40.0, 45.9,
+@pytest.mark.parametrize("setting", [0, 29, 91, 100, -30, 2 ** 31, None, True, "40", "", "abc", 40.0, 45.9,
                                      math.nan, math.inf])
 def test_unreadable_or_out_of_range_setting_keeps_the_stock_limit(setting):
   assert lateral_accel_limit(setting) == MAX_LATERAL_ACCEL_NO_ROLL
@@ -79,7 +79,7 @@ class StoredParams:
 
 
 @pytest.mark.parametrize("raw, expected", [
-  (b"30", 3.0), (b"45", 4.5), (b"38", 3.8), (b"", 3.0), (b"46", 3.0), (b"abc", 3.0), (b"nan", 3.0), (b"inf", 3.0),
+  (b"30", 3.0), (b"45", 4.5), (b"38", 3.8), (b"", 3.0), (b"46", 4.6), (b"90", 9.0), (b"91", 3.0), (b"abc", 3.0), (b"nan", 3.0), (b"inf", 3.0),
   (b"2147483648", 3.0), (b"45.9", 3.0), (b"45junk", 3.0), (b"45e99", 3.0), (KeyError("LateralAccelLimit"), 3.0),
 ])
 def test_controlsd_reads_through_params_get_and_falls_back_on_corrupt_values(raw, expected):
@@ -96,7 +96,7 @@ def test_default_keeps_the_previous_limit_on_both_paths(kph, low_speed_allowance
                   max_lat_accel_no_roll=lateral_accel_limit(30)) == pytest.approx(expected, abs=1e-9)
 
 
-@pytest.mark.parametrize("setting", [30, 36, 45])
+@pytest.mark.parametrize("setting", [30, 36, 45, 90])
 @pytest.mark.parametrize("kph", SPEEDS_KPH)
 def test_frogpilot_parity_path_uses_the_setting_at_every_speed(kph, setting):
   limit = lateral_accel_limit(setting)
@@ -134,7 +134,7 @@ def test_jerk_limit_is_unchanged():
 def test_setting_is_registered_with_the_stock_default_and_shown_in_steering_feel():
   settings = json.loads((ROOT / "selfdrive" / "carrot_settings.json").read_text(encoding="utf-8"))
   entry = next(p for p in settings["params"] if p["name"] == "LateralAccelLimit")
-  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (30, 45, 30, 1)
+  assert (entry["min"], entry["max"], entry["default"], entry["unit"]) == (30, 90, 30, 1)
   assert entry.get("risk") == "high"
 
   def menus(node):

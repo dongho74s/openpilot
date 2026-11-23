@@ -27,8 +27,9 @@ MAX_LATERAL_JERK = 5.0  # m/s^3
 MAX_LATERAL_ACCEL_NO_ROLL = 3.0  # m/s^2
 MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 4.5  # m/s^2
 # LateralAccelLimit (Carrot Web, whole 0.1 m/s^2 steps): the lateral acceleration limit used in place of the 3.0 above.
-# The default 30 keeps the stock limit; anything but an integer 30-45 (as Params.get returns it) falls back to it.
-LATERAL_ACCEL_LIMIT_SETTING_RANGE = (30, 45)
+# The default 30 keeps the stock limit; anything but an integer 30-90 (as Params.get returns it) falls back to it.
+# Up to 9.0 on user request (2026-11-23): above what most cars can steer, so in practice the car's torque limit decides.
+LATERAL_ACCEL_LIMIT_SETTING_RANGE = (30, 90)
 
 
 def lateral_accel_limit(setting) -> float:
