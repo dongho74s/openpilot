@@ -44,7 +44,7 @@
 // which is also offered right here in the panel.
 //
 // "360° 전체" mode shows the whole circle in one frame instead of a
-// rotating 100-degree viewport: both camera halves side by side — wide
+// rotating 120-degree viewport: both camera halves side by side — wide
 // road on the left, driver on the right. Dragging and the compass stops
 // only apply to the rotating view.
 
@@ -54,9 +54,11 @@ const LIVE360_ICE_TIMEOUT_MS = 1500;
 const LIVE360_FETCH_TIMEOUT_MS = 10000;
 const LIVE360_PARKED_STARTUP_WAIT_MS = 4000;
 const LIVE360_ROTATE_MS = 400;
-// Horizontal field of view of the panorama viewport, in degrees. A wide
-// viewport like this is what makes the rotation feel like a 360 video.
-const LIVE360_FOV_DEG = 100;
+// Horizontal field of view of the panorama viewport, in degrees. It
+// matches the wide road camera's real field of view (about 120 deg), so
+// the A-pillars at the camera's left and right edges (+/-60 deg) sit at
+// the viewport edges in the front view instead of just outside it.
+const LIVE360_FOV_DEG = 120;
 // Real horizontal field of view of each camera, in degrees (TICI device
 // camera config: the wide road and driver cameras are fisheye, about
 // 120 deg each). The panorama is a true compass, so each camera occupies
@@ -104,7 +106,7 @@ let live360Drag = null;
 let live360Tween = 0;
 let live360Raf = 0;
 // Flat full-strip mode: the whole 360-degree circle in one frame instead
-// of the rotating 100-degree viewport.
+// of the rotating 120-degree viewport.
 let live360Flat = false;
 
 function live360DeviceId() {
@@ -213,27 +215,28 @@ function live360DrawFrame() {
   }
 }
 
-// Draw one camera feed cover-fit into a target rect (no distortion, the
-// overflow is cropped), the way object-fit: cover works for <video>.
-function live360DrawCover(ctx, video, x, y, w, h) {
+// Draw one camera feed fit inside a target rect (no distortion, the
+// whole frame stays visible with letterboxing), so the wide camera's far
+// left and right edges — where the A-pillars sit — stay in view.
+function live360DrawContain(ctx, video, x, y, w, h) {
   if (!video || !video.videoWidth || !video.videoHeight || video.readyState < 2) return false;
-  const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
-  const sw = w / scale;
-  const sh = h / scale;
-  const sx = (video.videoWidth - sw) / 2;
-  const sy = (video.videoHeight - sh) / 2;
-  ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+  const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
+  const dw = video.videoWidth * scale;
+  const dh = video.videoHeight * scale;
+  const dx = x + (w - dw) / 2;
+  const dy = y + (h - dh) / 2;
+  ctx.drawImage(video, dx, dy, dw, dh);
   return true;
 }
 
 // Flat full-strip view: both camera halves side by side — wide road on
-// the left, driver on the right — with a seam line between them. (Cover
-// fit crops the wide camera's far left and right edges here, so the
-// A-pillars show in the rotating view, not in this overview.)
+// the left, driver on the right — with a seam line between them. Contain
+// fit keeps the whole frame, so the A-pillars at the wide camera's far
+// left and right edges stay visible here too (cover fit cropped them).
 function live360DrawFlatFrame(ctx, W, H) {
   const half = W / 2;
-  live360DrawCover(ctx, live360Els.roadVideo, 0, 0, half, H);
-  live360DrawCover(ctx, live360Els.driverVideo, half, 0, half, H);
+  live360DrawContain(ctx, live360Els.roadVideo, 0, 0, half, H);
+  live360DrawContain(ctx, live360Els.driverVideo, half, 0, half, H);
   ctx.fillStyle = "rgba(255,255,255,0.55)";
   ctx.fillRect(half - 1, 0, 2, H);
 }
@@ -351,7 +354,7 @@ function live360OnCompassClick(event) {
   else if (view === "road") live360RotateTo(0);
 }
 
-// Switch between the rotating 100-degree viewport and the flat full-strip
+// Switch between the rotating 120-degree viewport and the flat full-strip
 // view (whole 360 degrees in one frame). Dragging and the compass stops
 // only apply to the rotating view.
 function live360SetFlat(flat) {

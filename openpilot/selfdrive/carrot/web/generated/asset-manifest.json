@@ -34,14 +34,14 @@
       "kind": "bundle",
       "source": "src/entries/tools.js",
       "path": "js/generated/tools.js",
-      "hash": "80506944599c63107f0542072d2f04befd3ecbe7c8fefe6099b1015515fb27ad"
+      "hash": "4cb95cfc31a6ed550adb3302ca9d9615e3ab75b51bb88015a422109df21106fd"
     },
     {
       "id": "logs.runtime",
       "kind": "bundle",
       "source": "src/entries/logs.js",
       "path": "js/generated/logs.js",
-      "hash": "81e422c322fb599dfabe9559211bcf7c593b1e803acc3c34ac202f56be1564aa"
+      "hash": "e315dced260a1b0c44ff4899e941f4a55493e5459c71e1876f177b9542d2542f"
     },
     {
       "id": "terminal.runtime",
