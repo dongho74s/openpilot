@@ -108,12 +108,14 @@ class CarState(CarStateBase):
     self.resume_needs_set_speed = CP.carFingerprint == CAR.CHEVROLET_TRAVERSE and not CP.pcmCruise
     self.ecm_resume_ready = False
     self.ecm_active_frames = 0
+    self.ecm_acc_active = False
+    self.ecm_acc_msg_age = 0
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
       for b in buttonEvents:
         # The ECM allows enabling on falling edge of set, but only rising edge of resume
-        if (b.type == ButtonType.accelCruise and b.pressed and self.resume_allowed()) or \
+        if (b.type == ButtonType.accelCruise and b.pressed and CarState.resume_allowed(self)) or \
           (b.type == ButtonType.decelCruise and not b.pressed):
           return True
     return False
@@ -124,20 +126,29 @@ class CarState(CarStateBase):
     (rlog 0000024c 11:25:20 and 11:25:29, 00000252 12:21:33). Our commands were not the cause: 11:25:20 and 11:25:23
     sent the same gas and brake frames and only 11:25:20 faulted. Every SET engagement, and every RES engagement after
     one in the same MAIN session, kept the cruise."""
-    return not self.resume_needs_set_speed or self.ecm_resume_ready
+    return not getattr(self, "resume_needs_set_speed", False) or getattr(self, "ecm_resume_ready", False)
 
-  def update_ecm_resume_ready(self, cruise_main_on: bool, acc_state: int) -> None:
-    """The ECM holds a set speed once its cruise stayed active for a second (AcceleratorPedal2 CruiseState 1); it loses it
-    with MAIN off and on a fault."""
-    if not cruise_main_on or acc_state == AccState.FAULTED:
-      self.ecm_resume_ready = False
+  def update_ecm_resume_ready(self, main_on_values, acc_state_values) -> None:
+    """The ECM holds a set speed once its cruise stayed active for a second (AcceleratorPedal2 CruiseState 1). The
+    values are the ones received in this update (oldest first), not the parser's last value, so a message that stops
+    arriving is not counted again: a pause over 0.1 s restarts the second. MAIN off, a fault, or AcceleratorPedal2
+    missing for half a second drops a set speed already seen."""
+    self.ecm_acc_msg_age = 0 if acc_state_values else self.ecm_acc_msg_age + 1
+    if (self.ecm_acc_msg_age > int(0.5 / DT_CTRL) or any(int(v) == 0 for v in main_on_values) or
+        any(int(v) == AccState.FAULTED for v in acc_state_values)):
+      self.ecm_resume_ready = self.ecm_acc_active = False
       self.ecm_active_frames = 0
-    elif acc_state == AccState.ACTIVE:
+      return
+    if acc_state_values:
+      if any(int(v) != AccState.ACTIVE for v in acc_state_values):
+        self.ecm_active_frames = 0
+      self.ecm_acc_active = int(acc_state_values[-1]) == AccState.ACTIVE
+    if self.ecm_acc_msg_age > int(0.1 / DT_CTRL):
+      self.ecm_active_frames = 0   # the 33 Hz message paused: the active spell is not seen continuously
+    elif self.ecm_acc_active:
       self.ecm_active_frames += 1
       if self.ecm_active_frames >= int(1.0 / DT_CTRL):
         self.ecm_resume_ready = True
-    else:
-      self.ecm_active_frames = 0
 
   def update(self, can_parsers) -> structs.CarState:
     pt_cp = can_parsers[Bus.pt]
@@ -313,7 +324,7 @@ class CarState(CarStateBase):
     ret.accFaulted = (pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.FAULTED or
                       pt_cp.vl["EBCMFrictionBrakeStatus"]["FrictionBrakeUnavailable"] == 1)
     if self.resume_needs_set_speed:
-      self.update_ecm_resume_ready(ret.cruiseState.available, pt_cp.vl["AcceleratorPedal2"]["CruiseState"])
+      self.update_ecm_resume_ready(pt_cp.vl_all["ECMEngineStatus"]["CruiseMainOn"], pt_cp.vl_all["AcceleratorPedal2"]["CruiseState"])
 
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL

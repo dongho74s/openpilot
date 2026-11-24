@@ -236,6 +236,8 @@ class VCruiseCarrot:
     # Cars whose panda grants longitudinal control only from the driver's SET/RES (see _cruise_control and
     # driver_button_engage_only).
     self._driver_button_engage_only = driver_button_engage_only(CP)
+    # card sets it every frame from the car's CarState.resume_allowed() (GM Traverse: the ECM holds a set speed)
+    self.resume_allowed = True
     self._cruise_available = False
     self._hold_interlock_active = False
     self._steering_interlock_active = False
@@ -640,10 +642,16 @@ class VCruiseCarrot:
       CS.gearShifter == GearShifter.drive and not CS.buttonEvents and self.button_cnt == 0))
     if getattr(self.bluetooth_commands, 'is_repeat', False) and not CC.enabled:
       remote = None  # Holding a remote must never re-engage after disengagement.
+    # RES that must not engage yet (GM Traverse before the ECM holds a set speed, opendbc CarState.resume_allowed): the
+    # press is refused, and its hold and release are consumed like an engaging press, so it does not raise the speed.
+    resume_refused = not CC.enabled and not getattr(self, "resume_allowed", True)
+    if resume_refused and remote in ('accelCruise', 'accelCruiseLong'):
+      self._add_log("Cruise on (Bluetooth RES) > no set speed in the car yet: press SET")
+      remote = None   # neither engages nor changes the speed, as the wheel's RES
     resume_on_press = False
     if any(b.type == ButtonType.accelCruise and b.pressed for b in CS.buttonEvents):
-      self._resume_button_active = not CC.enabled and CS.buttonEnable
-      resume_on_press = self._resume_button_active
+      self._resume_button_active = not CC.enabled and (CS.buttonEnable or resume_refused)
+      resume_on_press = self._resume_button_active and not resume_refused
     button_kph, button_type, long_pressed = self._prepare_buttons(CS, v_cruise_kph, remote)
     # GM engages on RES press, before release/hold speed handling sees enabled=True.
     # Select the resume speed once, then consume the rest of that physical gesture.

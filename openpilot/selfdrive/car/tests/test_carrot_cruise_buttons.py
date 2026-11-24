@@ -1278,3 +1278,45 @@ def test_gm_gap_menu_cars():
   assert has_gm_gap_menu(SimpleNamespace(brand="gm", flags=1))  # PEDAL_LONG (Bolt ACC w Pedal mode 2)
   assert not has_gm_gap_menu(SimpleNamespace(brand="gm", flags=4))  # NO_CAMERA: no stock cluster menu
   assert not has_gm_gap_menu(SimpleNamespace(brand="hyundai", flags=0))
+
+
+@pytest.mark.parametrize('held_frames', [3, 55, 130])
+def test_gm_refused_resume_neither_engages_nor_changes_speed(held_frames):
+  """Traverse before the ECM holds a set speed (opendbc CarState.resume_allowed False): the whole RES gesture is consumed"""
+  helper, CS, CC = make_remote_helper(None)
+  helper._cruise_button_mode = 2
+  helper._cruise_speed_unit_basic = 5
+  helper._cruise_speed_table = [80, 90, 100]
+  helper.resume_allowed = False
+  speed = 80
+  for frame in range(held_frames + 1):
+    CS.buttonEvents = ([{'type': 'accelCruise', 'pressed': True}] if frame == 0 else
+                       [{'type': 'accelCruise', 'pressed': False}] if frame == held_frames else [])
+    CS.buttonEnable = False
+    speed = helper._update_cruise_buttons(CS, CC, speed)
+    assert speed == 80 and helper._activate_cruise <= 0, frame
+
+
+@pytest.mark.parametrize('action', ['accelCruise', 'accelCruiseLong'])
+def test_gm_bluetooth_resume_waits_for_the_ecm_set_speed(action):
+  helper, CS, CC = make_remote_helper(action)
+  helper.resume_allowed = False
+  assert helper._update_cruise_buttons(CS, CC, 80) == 80
+  assert helper._activate_cruise <= 0
+  helper.resume_allowed = True
+  helper._update_cruise_buttons(CS, CC, 80)
+  assert helper._activate_cruise == 1
+
+
+@pytest.mark.parametrize('action', ['decelCruise', 'decelCruiseLong'])
+def test_gm_bluetooth_set_still_engages_without_a_set_speed(action):
+  helper, CS, CC = make_remote_helper(action)
+  helper.resume_allowed = False
+  helper._update_cruise_buttons(CS, CC, 80)
+  assert helper._activate_cruise == 1
+
+
+def test_gm_engaged_resume_still_raises_the_speed():
+  helper, CS, CC = make_remote_helper('accelCruiseLong', enabled=True)
+  helper.resume_allowed = False
+  assert helper._update_cruise_buttons(CS, CC, 83) == 90
