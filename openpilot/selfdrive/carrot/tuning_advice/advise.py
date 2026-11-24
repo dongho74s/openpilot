@@ -11,18 +11,31 @@ from __future__ import annotations
 
 import numpy as np
 
-# (param, step, low, high); LatTorqueLimitPFilter toggles between off and the recommended 30 (0.3 s)
+# (param, step, low, high); LatTorqueLimitPFilter toggles between off and the recommended 30 (0.3 s). The GM torque rate
+# limits step from the value in effect (a 0 setting means the car's own) and stay inside the panda's limits.
 CANDIDATES = (
   ("LateralAccelLimit", +5, 30, 90),
   ("LateralAccelLimit", -5, 30, 90),
+  ("LatJerkMax", +10, 20, 100),
+  ("LatJerkMax", -10, 20, 100),
   ("LateralTorqueKiV", +20, 0, 200),
   ("LateralTorqueKiV", -20, 0, 200),
+  ("LateralTorqueKf", +10, 0, 200),
+  ("LateralTorqueKf", -10, 0, 200),
   ("LatTorqueLimitPFilter", 0, 0, 60),
+  ("CustomSteerDeltaUp", +2, 1, 50),
+  ("CustomSteerDeltaUp", -2, 1, 50),
+  ("CustomSteerDeltaDown", +3, 1, 50),
+  ("CustomSteerDeltaDown", -3, 1, 50),
   ("LateralTorqueKpV", +10, 0, 200),
   ("LateralTorqueKpV", -10, 0, 200),
+  ("LateralTorqueKd", +10, 0, 10000),
 )
-REFERENCE_ONLY = frozenset({"LateralTorqueKpV"})
-CUSTOM_ONLY = frozenset({"LateralTorqueKpV", "LateralTorqueKiV"})   # used only with LateralTorqueCustom on
+# shown for reference only: P is judged from real drives; the replay has no sensor noise, which is what D reacts to
+REFERENCE_ONLY = frozenset({"LateralTorqueKpV", "LateralTorqueKd"})
+# used only with LateralTorqueCustom on
+CUSTOM_ONLY = frozenset({"LateralTorqueKpV", "LateralTorqueKiV", "LateralTorqueKf", "LateralTorqueKd"})
+DELTA_KEYS = ("CustomSteerDeltaUp", "CustomSteerDeltaDown")
 P_FILTER_ON = 30
 
 MIN_LAT_MINUTES = 3.0
@@ -43,15 +56,15 @@ def as_int(values: dict, key: str, default: int) -> int:
     return default
 
 
+SETTING_DEFAULTS = {   # carrot_settings.json defaults
+  "LateralTorqueCustom": 0, "LateralTorqueKpV": 100, "LateralTorqueKiV": 10, "LateralTorqueKf": 100, "LateralTorqueKd": 0,
+  "LateralAccelLimit": 30, "LatJerkMax": 50, "LatTorqueLimitPFilter": 0, "CustomSteerDeltaUp": 0, "CustomSteerDeltaDown": 0,
+  "CustomSR": 0, "SteerRatioRate": 100, "SteerActuatorDelay": 30,
+}
+
+
 def drive_settings(tuning: dict[str, str]) -> dict[str, int]:
-  return {
-    "LateralTorqueCustom": as_int(tuning, "LateralTorqueCustom", 0),
-    "LateralTorqueKpV": as_int(tuning, "LateralTorqueKpV", 100),
-    "LateralTorqueKiV": as_int(tuning, "LateralTorqueKiV", 10),
-    "LateralAccelLimit": as_int(tuning, "LateralAccelLimit", 30),
-    "LatJerkMax": as_int(tuning, "LatJerkMax", 50),
-    "LatTorqueLimitPFilter": as_int(tuning, "LatTorqueLimitPFilter", 0),
-  }
+  return {key: as_int(tuning, key, default) for key, default in SETTING_DEFAULTS.items()}
 
 
 def lal_value(setting: int) -> float:
@@ -62,19 +75,27 @@ def jerk_value(setting: int) -> float:
   return setting / 10.0 if 20 <= setting <= 100 else 5.0
 
 
-def candidate_list(settings: dict[str, int], p_filter_available: bool) -> list[tuple[str, int, int]]:
-  """(param, from, to) for each one-step change that stays inside the setting's range."""
+def candidate_list(settings: dict[str, int], p_filter_available: bool, torque_limits: dict | None = None) -> list[tuple[str, int, int]]:
+  """(param, from, to) for each one-step change that stays inside the setting's range. torque_limits (GM): the car's
+  own CustomSteerDeltaUp/Down values and their panda maxima, {key: (car default, max)}; without it they are skipped."""
   out = []
   for key, step, lo, hi in CANDIDATES:
-    if key in CUSTOM_ONLY and settings["LateralTorqueCustom"] <= 0:
+    if key in CUSTOM_ONLY and settings.get("LateralTorqueCustom", 0) <= 0:
       continue
+    cur = settings.get(key, SETTING_DEFAULTS[key])
     if key == "LatTorqueLimitPFilter":
-      if not p_filter_available:
-        continue
-      cur = settings[key]
-      out.append((key, cur, 0 if cur > 0 else P_FILTER_ON))
+      if p_filter_available:
+        out.append((key, cur, 0 if cur > 0 else P_FILTER_ON))
       continue
-    cur = settings[key]
+    if key in DELTA_KEYS:
+      if not torque_limits or key not in torque_limits:
+        continue
+      default, top = torque_limits[key]
+      in_effect = min(cur, top) if cur > 0 else default
+      new = in_effect + step
+      if lo <= new <= min(hi, top) and new != in_effect:
+        out.append((key, cur, new))
+      continue
     new = cur + step
     if lo <= new <= hi and lo <= cur <= hi:
       out.append((key, cur, new))
@@ -183,7 +204,7 @@ def change_review(current: dict, history: list[dict]) -> dict | None:
     if prev.get("route") == current.get("route"):
       continue
     ps = prev.get("settings") or {}
-    diff = [k for k in cur if ps.get(k) != cur.get(k)]
+    diff = [k for k in cur if k in ps and ps.get(k) != cur.get(k)]   # an older result may not have every key
     if (cur.get("LateralTorqueCustom") or 0) <= 0 and (ps.get("LateralTorqueCustom") or 0) <= 0:
       diff = [k for k in diff if k not in CUSTOM_ONLY]   # stored P and I do nothing with custom torque off
     if len(diff) == 0:

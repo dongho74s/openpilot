@@ -98,6 +98,23 @@ const FALLBACK_STRINGS = {
   apply_failed: "Not applied: {error}",
   on: "on",
   name_LateralTorqueCustom: "Custom torque tuning",
+  reason_delay: "Learned {learned} s · setting {setting} s",
+  reason_delay_learned: "This car uses the learned delay {learned} s (this setting is not used)",
+  reason_sr_check: "{pct}% from the comma's learned {learned}: unless intended, consider {match}",
+  reason_sr_ok: "Within {pct}% of the comma's learned {learned}: keep it",
+  reason_kd: "Kd is for reference only (the replay has no sensor noise to judge it)",
+  badge_info: "Info",
+  badge_check: "Check",
+  sr_learned: "learned",
+  car_default: "car default {v}",
+  name_SteerActuatorDelay: "Steering delay",
+  name_SteerRatioRate: "Steer ratio scale",
+  name_CustomSR: "Steer ratio",
+  name_CustomSteerDeltaDown: "Torque fall rate",
+  name_CustomSteerDeltaUp: "Torque rise rate",
+  name_LateralTorqueKd: "Steering Kd",
+  name_LateralTorqueKf: "Steering Kf (feed-forward)",
+  name_LatJerkMax: "Lateral jerk limit",
   rec_no_simulation_mismatch: "The drive's steering requests include something the replay does not reproduce (lane mode, the minimum-distance clamp), so nothing was compared.",
   stale_note: "This result is from the {when} drive; the newest drive is not analysed yet.",
   r_match_pct: "Match",
@@ -114,21 +131,36 @@ function t(key, values = {}) {
 }
 
 // setting value -> what the user sees (units of the Carrot web setting)
-function formatValue(param, value, translate = t) {
+let carDefaults = {};   // the car's own GM torque rate limits (result.torque_defaults), for a 0 = "car default" setting
+
+function formatValue(param, value, translate = t, defaults = carDefaults) {
   const v = Number(value);
   if (!Number.isFinite(v)) return String(value ?? "-");
   if (param === "LateralAccelLimit") return `${(v / 10).toFixed(1)} m/s²`;
-  if (param === "LateralTorqueKpV" || param === "LateralTorqueKiV") return (v / 100).toFixed(2);
+  if (param === "LatJerkMax") return `${(v / 10).toFixed(1)} m/s³`;
+  if (["LateralTorqueKpV", "LateralTorqueKiV", "LateralTorqueKf", "LateralTorqueKd"].includes(param)) return (v / 100).toFixed(2);
   if (param === "LatTorqueLimitPFilter") return v <= 0 ? translate("off") : translate("seconds", { v: (v / 100).toFixed(2) });
   if (param === "LateralTorqueCustom") return translate(v > 0 ? "on" : "off");
+  if (param === "CustomSteerDeltaUp" || param === "CustomSteerDeltaDown") {
+    return v <= 0 && defaults?.[param] !== undefined ? translate("car_default", { v: defaults[param] }) : String(v);
+  }
+  if (param === "CustomSR") return v / 10 > 1 ? (v / 10).toFixed(1) : translate("sr_learned");
+  if (param === "SteerRatioRate") return `${v}%`;
+  if (param === "SteerActuatorDelay") return translate("seconds", { v: (v / 100).toFixed(2) });
   return String(v);
 }
 
+// "70 (0.70)": the setting's number with its meaning, or the number alone when they read the same
+function valueText(param, value, translate = t, defaults = carDefaults) {
+  const meant = formatValue(param, value, translate, defaults);
+  return meant === String(value) ? String(value) : `${value} (${meant})`;
+}
+
 // the setting's own numbers (as typed in Carrot web), with what they mean when that differs
-function rawChange(param, from, to, translate = t) {
+function rawChange(param, from, to, translate = t, defaults = carDefaults) {
   const raw = `${from} → ${to}`;
-  let a = formatValue(param, from, translate);
-  const b = formatValue(param, to, translate);
+  let a = formatValue(param, from, translate, defaults);
+  const b = formatValue(param, to, translate, defaults);
   const unit = b.match(/(\s?[^\d\s.,-]+)$/)?.[1];
   if (unit && a.endsWith(unit) && /\d/.test(a)) a = a.slice(0, -unit.length);   // "3.5 → 4.0 m/s²", unit once
   const meant = `${a} → ${b}`;
@@ -139,7 +171,8 @@ function formatChange(param, from, to, translate = t) {
   return `${translate(`name_${param}`)} ${rawChange(param, from, to, translate)}`;
 }
 
-const ROW_ORDER = ["LateralAccelLimit", "LateralTorqueKiV", "LatTorqueLimitPFilter", "LateralTorqueKpV"];
+const ROW_ORDER = ["LateralAccelLimit", "LatJerkMax", "LateralTorqueKpV", "LateralTorqueKiV", "LateralTorqueKf", "LateralTorqueKd",
+  "LatTorqueLimitPFilter", "CustomSteerDeltaUp", "CustomSteerDeltaDown"];
 
 // what one one-step change did: no_effect / small / mixed / worse (from judge() in advise.py)
 function candidateKind(row) {
@@ -162,7 +195,7 @@ function settingRows(result) {
     const change = rec.status === "change" && rec.param === param;
     let reason = "no_effect";
     if (change) reason = "change";
-    else if (mine.some((c) => c.reference_only)) reason = "p";
+    else if (mine.some((c) => c.reference_only)) reason = param === "LateralTorqueKd" ? "kd" : "p";
     else {
       const kinds = mine.map(candidateKind);
       if (kinds.includes("accepted")) reason = "also_ok";
@@ -171,8 +204,29 @@ function settingRows(result) {
       else if (kinds.includes("worse")) reason = "worse";
     }
     if (change && (rec.delta?.worse || 0) > 0) reason = "change_some";
-    return { param, now, to: change ? rec.to : now, change, reason, delta: change ? (rec.delta || {}) : null };
-  });
+    const values = change ? { better: rec.delta?.better ?? 0, worse: rec.delta?.worse ?? 0, windows: rec.delta?.windows ?? 0 } : {};
+    return { param, now, to: change ? rec.to : now, change, badge: change ? "change" : "keep", reason, values };
+  }).concat(learnedRows(result));
+}
+
+// steer ratio and delay: what the comma learned while driving beside the setting (the replay cannot judge them)
+function learnedRows(result) {
+  const learned = result?.learned || {};
+  const rows = [];
+  const sr = learned.steer_ratio;
+  if (sr) {
+    const match = valueText(sr.param, sr.match);
+    rows.push({ param: sr.param, now: sr.now, to: sr.now, change: false, badge: sr.check ? "check" : "keep",
+      reason: sr.check ? "sr_check" : "sr_ok", values: { learned: Number(sr.learned).toFixed(1), pct: Math.abs(Number(sr.diff_pct)).toFixed(1), match } });
+  }
+  const delay = learned.lat_delay;
+  if (delay) {
+    const now = result?.settings?.SteerActuatorDelay ?? Math.round(Number(delay.setting) * 100);
+    rows.push({ param: "SteerActuatorDelay", now, to: now, change: false, badge: "info",
+      reason: delay.uses_learned ? "delay_learned" : "delay",
+      values: { learned: Number(delay.learned).toFixed(2), setting: Number(delay.setting).toFixed(2) } });
+  }
+  return rows;
 }
 
 function pct(value) {
@@ -322,6 +376,7 @@ function render(payload = lastPayload) {
   const body = document.getElementById("tuningAdviceBody");
   if (!card || !body || !payload?.ok) return;
   lastPayload = payload;
+  carDefaults = payload.result?.torque_defaults || {};
   card.hidden = false;
   const { state, pct: progress } = describe(payload);
   card.dataset.state = state;
@@ -426,17 +481,16 @@ function render(payload = lastPayload) {
     const box = el("div", "tuning-advice__table");
     box.append(el("strong", "tuning-advice__table-title", t("table_title")), el("span", "tuning-advice__table-hint", t("table_hint")));
     for (const row of rows) {
-      const item = el("button", `tuning-advice__row${row.change ? " is-change" : ""}`);
+      const item = el("button", `tuning-advice__row is-${row.badge}`);
       item.type = "button";
       item.setAttribute("aria-label", `${t(`name_${row.param}`)} · ${t("open_setting")}`);
       const name = el("span", "tuning-advice__row-name");
       name.append(el("strong", "", t(`name_${row.param}`)), el("small", "", row.param));
-      const badge = el("span", `tuning-advice__badge${row.change ? " is-change" : ""}`, t(row.change ? "badge_change" : "badge_keep"));
+      const badge = el("span", `tuning-advice__badge is-${row.badge}`, t(`badge_${row.badge}`));
       const detail = el("span", "tuning-advice__row-detail");
       detail.append(
-        el("strong", "tuning-advice__row-value", row.change ? rawChange(row.param, row.now, row.to) : (
-          formatValue(row.param, row.now) === String(row.now) ? String(row.now) : `${row.now} (${formatValue(row.param, row.now)})`)),
-        el("span", "tuning-advice__row-reason", t(`reason_${row.reason}`, { better: row.delta?.better ?? 0, worse: row.delta?.worse ?? 0, windows: row.delta?.windows ?? 0 })),
+        el("strong", "tuning-advice__row-value", row.change ? rawChange(row.param, row.now, row.to) : valueText(row.param, row.now)),
+        el("span", "tuning-advice__row-reason", t(`reason_${row.reason}`, row.values)),
       );
       item.append(name, badge, el("span", "tuning-advice__row-go", "›"), detail);
       item.addEventListener("click", () => {
@@ -514,6 +568,6 @@ const CarrotTuningAdvice = Object.freeze({ init, refresh, render });
 globalThis.CarrotTuningAdvice = CarrotTuningAdvice;
 
 export {
-  CarrotTuningAdvice, FALLBACK_STRINGS, applyState, changedNote, describe, formatChange, formatValue, metricLines, rawChange, recommendationText,
-  settingRows, statusNotes,
+  CarrotTuningAdvice, FALLBACK_STRINGS, applyState, changedNote, describe, formatChange, formatValue, learnedRows, metricLines, rawChange,
+  recommendationText, settingRows, statusNotes, valueText,
 };

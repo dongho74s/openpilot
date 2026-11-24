@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyState, changedNote, describe, formatChange, formatValue, metricLines, rawChange, recommendationText, settingRows, statusNotes } from "../src/features/tools/tuning_advice.js";
+import { applyState, changedNote, describe, learnedRows, valueText, formatChange, formatValue, metricLines, rawChange, recommendationText, settingRows, statusNotes } from "../src/features/tools/tuning_advice.js";
 
 const change = { status: "change", param: "LateralAccelLimit", from: 35, to: 40, delta: { better: 4, windows: 5, err_pct: -9.5, outward_cm: -3.2 } };
 const base = { ok: true, onroad: false, running: false, can_run: true, status: { state: "done" }, current: { LateralAccelLimit: 35 } };
@@ -94,14 +94,14 @@ test("one row per setting: keep or change, and why", () => {
   const rows = settingRows(result);
   assert.deepEqual(rows.map((r) => [r.param, r.now, r.to, r.change, r.reason]), [
     ["LateralAccelLimit", 35, 35, false, "no_effect"],
+    ["LateralTorqueKpV", 160, 160, false, "p"],
     ["LateralTorqueKiV", 70, 70, false, "mixed"],
     ["LatTorqueLimitPFilter", 0, 0, false, "worse"],
-    ["LateralTorqueKpV", 160, 160, false, "p"],
   ]);
   const changed = settingRows({ ...result, recommendation: { ...result.recommendation, status: "change", param: "LateralAccelLimit", from: 35, to: 40,
     delta: { windows: 5, better: 4 } } });
   assert.deepEqual([changed[0].to, changed[0].change, changed[0].reason], [40, true, "change"]);
-  assert.equal(changed[1].change, false);
+  assert.equal(changed.find((r) => r.param === "LateralTorqueKiV").change, false);
 });
 
 test("a change that made some curves worse says so, and a passed but unchosen value is not called small", () => {
@@ -125,4 +125,44 @@ test("a setting changed during the drive is named with when, and which part was 
   ] } };
   assert.equal(changedNote(result), "Settings were changed during this drive (Steering I 70 → 50 (12:22)), so only the part after the change was analysed.");
   assert.equal(changedNote({}), null);
+});
+
+test("every tuning value reads in its own unit, the torque rates with the car default", () => {
+  const ko = (k, v = {}) => ({ car_default: `차 기본값 ${v.v}`, sr_learned: "학습값 사용", seconds: `${v.v}초` })[k] ?? k;
+  const defaults = { CustomSteerDeltaUp: 10, CustomSteerDeltaDown: 15 };
+  assert.equal(valueText("LateralTorqueKf", 115, ko), "115 (1.15)");
+  assert.equal(valueText("LateralTorqueKd", 0, ko), "0 (0.00)");
+  assert.equal(valueText("LatJerkMax", 100, ko), "100 (10.0 m/s³)");
+  assert.equal(valueText("CustomSteerDeltaUp", 0, ko, defaults), "0 (차 기본값 10)");
+  assert.equal(valueText("CustomSteerDeltaDown", 18, ko, defaults), "18");
+  assert.equal(rawChange("CustomSteerDeltaUp", 0, 12, ko, defaults), "0 → 12 (차 기본값 10 → 12)");
+  assert.equal(valueText("CustomSR", 161, ko), "161 (16.1)");
+  assert.equal(valueText("CustomSR", 0, ko), "0 (학습값 사용)");
+  assert.equal(valueText("SteerRatioRate", 87, ko), "87 (87%)");
+  assert.equal(valueText("SteerActuatorDelay", 30, ko), "30 (0.30초)");
+});
+
+test("learned steer ratio and delay rows: check when the ratio is off, info for the delay", () => {
+  const result = {
+    settings: { SteerActuatorDelay: 30 },
+    learned: {
+      steer_ratio: { learned: 18.0, used: 16.1, diff_pct: -10.6, param: "CustomSR", now: 161, match: 180, check: true },
+      lat_delay: { learned: 0.42, setting: 0.3, uses_learned: true },
+    },
+  };
+  const rows = learnedRows(result);
+  assert.deepEqual(rows.map((r) => [r.param, r.now, r.badge, r.reason]), [
+    ["CustomSR", 161, "check", "sr_check"],
+    ["SteerActuatorDelay", 30, "info", "delay_learned"],
+  ]);
+  assert.deepEqual(rows[0].values, { learned: "18.0", pct: "10.6", match: "180 (18.0)" });
+  const ok = learnedRows({ learned: { steer_ratio: { learned: 16.2, diff_pct: -0.6, param: "CustomSR", now: 161, match: 162, check: false } } });
+  assert.deepEqual([ok[0].badge, ok[0].reason], ["keep", "sr_ok"]);
+  assert.deepEqual(learnedRows({}), []);
+});
+
+test("Kd gets its own reference reason", () => {
+  const rows = settingRows({ settings: { LateralTorqueKd: 0 }, recommendation: { status: "keep", candidates: [
+    { param: "LateralTorqueKd", from: 0, to: 10, rejected: [], reference_only: true, delta: { windows: 3 } }] } });
+  assert.deepEqual([rows[0].param, rows[0].badge, rows[0].reason], ["LateralTorqueKd", "keep", "kd"]);
 });

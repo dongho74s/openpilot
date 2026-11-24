@@ -98,3 +98,40 @@ def test_change_review_counts_the_custom_torque_switch():
   off = dict(SETTINGS, LateralTorqueCustom=0)
   r = A.change_review({"route": "b", "settings": off, "metrics": {}}, [{"route": "a", "settings": dict(off, LateralTorqueKiV=90), "metrics": {}}])
   assert r is None                                 # stored I does nothing with custom torque off on both drives
+
+
+def test_every_tuning_value_gets_its_one_step_candidates():
+  full = A.drive_settings({"LateralTorqueCustom": "1", "LateralTorqueKpV": "160", "LateralTorqueKiV": "50", "LateralTorqueKf": "115",
+                           "LateralAccelLimit": "35", "LatJerkMax": "100", "CustomSteerDeltaUp": "0", "CustomSteerDeltaDown": "0"})
+  limits = {"CustomSteerDeltaUp": (10, 12), "CustomSteerDeltaDown": (15, 25)}
+  c = A.candidate_list(full, p_filter_available=True, torque_limits=limits)
+  assert ("LateralTorqueKf", 115, 125) in c and ("LateralTorqueKf", 115, 105) in c
+  assert ("LatJerkMax", 100, 90) in c and ("LatJerkMax", 100, 110) not in c          # 100 is the top of the range
+  # 0 = the car's own (10 up, 15 down): one step from there, never past the panda limit (12 up)
+  assert ("CustomSteerDeltaUp", 0, 12) in c and ("CustomSteerDeltaUp", 0, 8) in c
+  assert ("CustomSteerDeltaDown", 0, 18) in c and ("CustomSteerDeltaDown", 0, 12) in c
+  up = A.candidate_list(dict(full, CustomSteerDeltaUp=12), True, limits)
+  assert [x for x in up if x[0] == "CustomSteerDeltaUp"] == [("CustomSteerDeltaUp", 12, 10)]
+  assert ("LateralTorqueKd", 0, 10) in c
+  assert not [x for x in A.candidate_list(full, True) if x[0] in A.DELTA_KEYS]           # no limits known: skipped
+  off = A.candidate_list(dict(full, LateralTorqueCustom=0), True, limits)
+  assert not [x for x in off if x[0] in A.CUSTOM_ONLY]
+
+
+def test_kd_is_reference_only_like_p():
+  agg = A.aggregate(windows(0.05, label="LateralTorqueKd:0->10"))
+  row = A.table(agg, SETTINGS)[0]
+  assert row["reference_only"] and A.recommend(METRICS, agg, SETTINGS)["status"] == "keep"
+
+
+def test_change_review_ignores_keys_an_older_result_did_not_have():
+  old = {"route": "a", "settings": dict(SETTINGS, LateralTorqueKiV=70), "metrics": {"lat_minutes": 10}}   # 6 keys only
+  new = {"route": "b", "settings": A.drive_settings({k: str(v) for k, v in dict(SETTINGS, LateralTorqueKiV=50).items()}),
+         "metrics": {"lat_minutes": 10}}
+  r = A.change_review(new, [old])
+  assert r["comparable"] and r["param"] == "LateralTorqueKiV"
+
+
+def test_every_setting_the_advice_reads_comes_from_the_drive():
+  from openpilot.selfdrive.carrot.tuning_advice.extract import TUNING_PARAMS
+  assert set(A.SETTING_DEFAULTS) <= set(TUNING_PARAMS)

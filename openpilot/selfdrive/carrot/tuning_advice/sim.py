@@ -238,6 +238,14 @@ class Simulator:
       gm.STEER_DELTA_DOWN = min(delta_down, gm.PANDA_MAX_RATE_DOWN)
     return gm
 
+  def car_torque_limits(self) -> dict[str, tuple[int, int]]:
+    """{setting: (the car's own value, the most a setting may give)} for the GM torque rate limits, before any
+    CustomSteerDelta* setting (a 0 setting keeps the car's own)."""
+    from opendbc.car.gm.values import CarControllerParams
+    gm = CarControllerParams(self.CP)
+    return {"CustomSteerDeltaUp": (int(gm.STEER_DELTA_UP), int(gm.max_custom_steer_delta_up())),
+            "CustomSteerDeltaDown": (int(gm.STEER_DELTA_DOWN), int(gm.PANDA_MAX_RATE_DOWN))}
+
   def steer_ratio_settings(self) -> tuple[float, float]:
     """(SteerRatioRate, CustomSR) as controlsd reads them for the vehicle model."""
     p = StandInParams()

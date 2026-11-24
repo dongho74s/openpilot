@@ -20,7 +20,8 @@ C = {k: i for i, k in enumerate(COLS)}
 # settings shown in the result (initData carries every Param at loggerd start; tokens and keys stay in memory only)
 TUNING_PARAMS = ("LateralTorqueCustom", "LateralTorqueKpV", "LateralTorqueKiV", "LateralTorqueKf", "LateralTorqueKd",
                  "LateralTorqueFriction", "LateralTorqueAccelFactor", "LateralAccelLimit", "LatJerkMax",
-                 "LatTorqueLimitPFilter", "ChevroletSteerFF", "NNFF", "NNFFLite", "SteerActuatorDelay")
+                 "LatTorqueLimitPFilter", "ChevroletSteerFF", "NNFF", "NNFFLite", "SteerActuatorDelay", "CustomSR",
+                 "SteerRatioRate", "CustomSteerDeltaUp", "CustomSteerDeltaDown", "CustomSteerMax")
 SEGMENT_RE = re.compile(r"^([0-9a-f]{8}--[0-9a-f]{10})--(\d+)$")
 LAT_MIN_SPEED = 8 / 3.6
 

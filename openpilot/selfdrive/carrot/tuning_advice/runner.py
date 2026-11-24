@@ -19,7 +19,7 @@ import sys
 import time
 import traceback
 
-VERSION = 2          # 2: settings changed during the drive are taken from the settings history
+VERSION = 3          # 2: settings changed during the drive from the settings history; 3: every tuning value and learned SR/delay
 STATE_DIR = os.environ.get("CARROT_STATE_DIR", "/data/carrot/state")
 RESULT_NAME = "tuning_advice.json"
 STATUS_NAME = "tuning_advice_status.json"
@@ -255,8 +255,12 @@ def simulate(drive, settings: dict, job: Job):
   W = sim.windows(segs, checkpoint=job.checkpoint)
   info["windows"] = {k: sum(1 for w in W if w[3] == k) for k in ("curve", "turn", "straight")}
   from openpilot.selfdrive.controls.lib.latcontrol_torque import FrogPilotWindupPID
-  p_filter = isinstance(simulator.controller({})[0].pid, FrogPilotWindupPID)   # the only PID that has the P filter
-  cands = advise.candidate_list(settings, p_filter)
+  lac0 = simulator.controller({})[0]
+  p_filter = isinstance(lac0.pid, FrogPilotWindupPID)   # the only PID that has the P filter
+  info["parity"] = bool(getattr(lac0, "nnff_frogpilot_parity", False))
+  torque_limits = simulator.car_torque_limits()
+  info["torque_defaults"] = {key: default for key, (default, _top) in torque_limits.items()}
+  cands = advise.candidate_list(settings, p_filter, torque_limits)
   lal, jerk = advise.lal_value(settings["LateralAccelLimit"]), advise.jerk_value(settings["LatJerkMax"])
   t0 = time.time()
   per_window, rms = [], []
@@ -285,10 +289,11 @@ def simulate(drive, settings: dict, job: Job):
     w = {"kind": kind, "ref": sim.window_metrics(ref, ref, kind), "noise": sim.window_metrics(noise, ref, kind), "cand": {}}
     for key, frm, to in cands:
       job.checkpoint()
-      over = {key: to}
+      # the two curvature limits are controlsd arguments; everything else is a Params value the controller reads
       c_lal = advise.lal_value(to) if key == "LateralAccelLimit" else lal
-      r = simulator.run(seg.a, seg.models, s, e, {} if key == "LateralAccelLimit" else over, c_lal, jerk,
-                        checkpoint=job.checkpoint)
+      c_jerk = advise.jerk_value(to) if key == "LatJerkMax" else jerk
+      over = {} if key in ("LateralAccelLimit", "LatJerkMax") else {key: to}
+      r = simulator.run(seg.a, seg.models, s, e, over, c_lal, c_jerk, checkpoint=job.checkpoint)
       w["cand"][advise.label(key, frm, to)] = sim.window_metrics(r, ref, kind)
       done += 1
       job.update(step="simulating", progress=50 + int(49 * done / total))
@@ -300,6 +305,47 @@ def simulate(drive, settings: dict, job: Job):
     info["error"] = "mismatch" if skipped else "no_windows"
     return None, info
   return advise.aggregate(per_window), info
+
+
+SR_CHECK_PCT = 8.0     # a steer ratio this far from paramsd's learned one is worth a look
+
+
+def learned_values(segments, settings: dict, parity: bool | None) -> dict:
+  """What the comma learned while driving, beside the settings: paramsd's steer ratio (liveParameters) against the one
+  the vehicle model used (CustomSR, or the learned one x SteerRatioRate), and the learned lateral delay (liveDelay)
+  against SteerActuatorDelay. The replay cannot judge either (it runs in lateral-accel space, where the steer ratio
+  cancels out), so these come from the drive alone."""
+  import numpy as np
+  from openpilot.selfdrive.carrot.tuning_advice.extract import C
+  from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
+  sr, delay = [], []
+  for seg in segments:
+    a = seg.a
+    on = (a[:, C["latActive"]] > 0.5) & (a[:, C["v"]] > 10.0)
+    x = a[on, C["sR"]]
+    sr.append(x[np.isfinite(x) & (x > 1.0)])
+    d = a[on, C["latDelay"]]
+    delay.append(d[np.isfinite(d) & (d > 0.0)])
+  out = {}
+  sr = np.concatenate(sr) if sr else np.array([])
+  if len(sr) >= 1000:
+    learned = float(np.median(sr))
+    used = resolve_vehicle_model_steer_ratio(learned, float(settings["SteerRatioRate"]), float(settings["CustomSR"]))
+    diff = (used - learned) / learned * 100
+    custom = settings["CustomSR"] / 10.0 > 1.0
+    out["steer_ratio"] = {
+      "learned": round(learned, 2), "used": round(used, 2), "diff_pct": round(diff, 1),
+      "param": "CustomSR" if custom else "SteerRatioRate",
+      "now": settings["CustomSR"] if custom else settings["SteerRatioRate"],
+      # the setting that would make the model use the learned ratio
+      "match": int(round(learned * 10)) if custom else 100,
+      "check": abs(diff) > SR_CHECK_PCT,
+    }
+  delay = np.concatenate(delay) if delay else np.array([])
+  if len(delay) >= 1000:
+    out["lat_delay"] = {"learned": round(float(np.median(delay)), 3), "setting": round(settings["SteerActuatorDelay"] / 100.0, 2),
+                        "uses_learned": parity}
+  return out
 
 
 def tuning_changes(state_dir: str, start: float, end: float, keys) -> list[dict]:
@@ -386,6 +432,8 @@ def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_c
   rec = advise.recommend(m, sim_result, settings, sim_info.get("error"))
   result = dict(base, route=route, car=drive.car_fingerprint, drive_start=drive.wall_start, settings=settings,
                 settings_changed=settings_note,
+                learned=learned_values(drive.segments, settings, sim_info.get("parity")),
+                torque_defaults=sim_info.get("torque_defaults") or {},
                 segments=len(drive.segments), partial_segments=drive.partial, metrics=m,
                 simulation=dict(sim_info, reference=(sim_result or {}).get("_ref")), recommendation=rec)
   history_path = os.path.join(state_dir, HISTORY_NAME)

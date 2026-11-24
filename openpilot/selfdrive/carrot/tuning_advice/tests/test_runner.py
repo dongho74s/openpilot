@@ -245,3 +245,26 @@ def test_the_replay_runs_with_the_values_of_the_part_analysed(tmp_path, monkeypa
   R.analyse(str(tmp_path), str(tmp_path), "r", lambda: R.OFFROAD)
   assert seen["params"]["LateralTorqueKiV"] == b"50" and seen["settings"]["LateralTorqueKiV"] == 50
   assert seen["segments"] == list(range(4, 10))
+
+
+
+def test_learned_steer_ratio_and_delay_beside_the_settings():
+  import numpy as np
+  from types import SimpleNamespace
+  from openpilot.selfdrive.carrot.tuning_advice import advise, extract
+  a = np.zeros((6000, len(extract.COLS)))
+  a[:, extract.C["latActive"]] = 1
+  a[:, extract.C["v"]] = 20.0
+  a[:, extract.C["sR"]] = 18.0
+  a[:, extract.C["latDelay"]] = 0.42
+  segs = [SimpleNamespace(a=a)]
+  custom = advise.drive_settings({"CustomSR": "161", "SteerRatioRate": "87", "SteerActuatorDelay": "30"})
+  out = R.learned_values(segs, custom, parity=True)
+  sr = out["steer_ratio"]
+  assert (sr["learned"], sr["used"], sr["param"], sr["now"], sr["match"]) == (18.0, 16.1, "CustomSR", 161, 180)
+  assert sr["check"] and sr["diff_pct"] == -10.6
+  assert out["lat_delay"] == {"learned": 0.42, "setting": 0.3, "uses_learned": True}
+  learned = advise.drive_settings({"CustomSR": "0", "SteerRatioRate": "100"})
+  sr = R.learned_values(segs, learned, parity=None)["steer_ratio"]
+  assert (sr["used"], sr["param"], sr["now"], sr["match"], sr["check"]) == (18.0, "SteerRatioRate", 100, 100, False)
+  assert R.learned_values([SimpleNamespace(a=a[:500])], custom, None) == {}          # too little to say

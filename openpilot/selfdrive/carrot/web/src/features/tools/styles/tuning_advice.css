@@ -149,6 +149,10 @@
   border-color: color-mix(in srgb, #9be38f 70%, var(--md-outline-var));
 }
 
+.tuning-advice__row.is-check {
+  border-color: color-mix(in srgb, #f2d36b 70%, var(--md-outline-var));
+}
+
 .tuning-advice__row-name {
   grid-area: name;
   display: flex;
@@ -176,6 +180,15 @@
 .tuning-advice__badge.is-change {
   color: #10240c;
   background: #9be38f;
+}
+
+.tuning-advice__badge.is-check {
+  color: #2a2107;
+  background: #f2d36b;
+}
+
+.tuning-advice__badge.is-info {
+  background: color-mix(in srgb, #6fd3ff 25%, transparent);
 }
 
 .tuning-advice__row-go {
