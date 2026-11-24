@@ -191,3 +191,29 @@ def test_checks_are_spaced_but_the_rest_matches_the_work(tmp_path):
   clock.t += 0.3                                   # 0.4 s of work since the last check
   job.checkpoint()
   assert clock.slept == [pytest.approx(0.4)]
+
+
+def test_settings_changed_mid_drive_come_from_the_history_and_the_later_part_is_used(tmp_path):
+  import json as _json
+  from types import SimpleNamespace
+  start = 1795490331.0
+  lines = [
+    {"ts": start - 100, "name": "LateralTorqueKiV", "prev": 60, "next": 70},          # before the drive
+    {"ts": start + 200, "name": "LateralTorqueKiV", "prev": 70, "next": 60},          # 12:22-ish, during
+    {"ts": start + 205, "name": "LateralTorqueKiV", "prev": 60, "next": 50},
+    {"ts": start + 210, "name": "CameraOffset", "prev": 0, "next": 5},                # not a tuning value
+    {"ts": start + 9000, "name": "LateralAccelLimit", "prev": 35, "next": 40},        # after the drive
+  ]
+  (tmp_path / R.PARAM_CHANGES_NAME).write_text("\n".join(_json.dumps(x) for x in lines) + "\nnot json\n")
+  keys = {"LateralTorqueKiV", "LateralAccelLimit"}
+  changes = R.tuning_changes(str(tmp_path), start, start + 1320, keys)
+  assert [(c["prev"], c["next"]) for c in changes] == [(70, 60), (60, 50)]
+  drive = SimpleNamespace(wall_start=start, segments=[SimpleNamespace(number=n) for n in range(22)])
+  tuning = {"LateralTorqueKiV": "70", "LateralAccelLimit": "35"}
+  segs, after, note = R.settled_part(drive, tuning, changes, lambda parts: len(parts) * 0.5)
+  assert [s.number for s in segs] == list(range(4, 22))     # segment 4 starts after the last change (start + 205)
+  assert after["LateralTorqueKiV"] == "50" and note["used"] == "after"
+  segs, before, note = R.settled_part(drive, tuning, changes, lambda parts: 3.0 if parts[0].number == 0 else 1.0)
+  assert [s.number for s in segs] == [0, 1, 2] and before["LateralTorqueKiV"] == "70" and note["used"] == "before"
+  segs, _, note = R.settled_part(drive, tuning, [], lambda parts: 10.0)
+  assert len(segs) == 22 and note is None

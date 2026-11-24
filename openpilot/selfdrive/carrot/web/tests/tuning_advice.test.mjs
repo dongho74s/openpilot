@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyState, describe, formatChange, formatValue, metricLines, rawChange, recommendationText, settingRows, statusNotes } from "../src/features/tools/tuning_advice.js";
+import { applyState, changedNote, describe, formatChange, formatValue, metricLines, rawChange, recommendationText, settingRows, statusNotes } from "../src/features/tools/tuning_advice.js";
 
 const change = { status: "change", param: "LateralAccelLimit", from: 35, to: 40, delta: { better: 4, windows: 5, err_pct: -9.5, outward_cm: -3.2 } };
 const base = { ok: true, onroad: false, running: false, can_run: true, status: { state: "done" }, current: { LateralAccelLimit: 35 } };
@@ -116,4 +116,13 @@ test("a change that made some curves worse says so, and a passed but unchosen va
   };
   const rows = settingRows(result);
   assert.deepEqual(rows.map((r) => r.reason), ["change_some", "also_ok"]);
+});
+
+test("a setting changed during the drive is named with when, and which part was analysed", () => {
+  const at = new Date(2026, 10, 24, 12, 22).getTime() / 1000;
+  const result = { settings_changed: { used: "after", changes: [
+    { name: "LateralTorqueKiV", prev: 70, next: 60, at }, { name: "LateralTorqueKiV", prev: 60, next: 50, at: at + 5 },
+  ] } };
+  assert.equal(changedNote(result), "Settings were changed during this drive (Steering I 70 → 50 (12:22)), so only the part after the change was analysed.");
+  assert.equal(changedNote({}), null);
 });

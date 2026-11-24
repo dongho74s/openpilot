@@ -19,6 +19,9 @@ const FALLBACK_STRINGS = {
   state_none: "Not enough data",
   state_error: "Analysis failed",
   drive_line: "Drive {when} · steering {min} min · {segments} segments",
+  changed_none: "Settings were changed during this drive ({changes}); no part with one setting has 3 minutes of steering.",
+  changed_before: "Settings were changed during this drive ({changes}) with too little steering afterwards, so only the part before the change was analysed.",
+  changed_after: "Settings were changed during this drive ({changes}), so only the part after the change was analysed.",
   match_title: "Model intent vs actual",
   match_value: "{pct}% match",
   match_detail: "Curves {curve} · straights {straight} (debug plot 6: green = requested, yellow = actual lateral accel)",
@@ -288,6 +291,24 @@ function el(tag, className, text) {
   return node;
 }
 
+// "Steering I 70 → 50 (12:22)" for each setting changed during the analysed drive (first value → last value)
+function changedNote(result, translate = t) {
+  const note = result?.settings_changed;
+  if (!note?.changes?.length) return null;
+  const byName = new Map();
+  for (const c of note.changes) {
+    const seen = byName.get(c.name);
+    byName.set(c.name, { name: c.name, prev: seen ? seen.prev : c.prev, next: c.next, at: c.at });
+  }
+  const two = (n) => String(n).padStart(2, "0");
+  const changes = [...byName.values()].map((c) => {
+    const d = new Date(Number(c.at) * 1000);
+    return `${translate(`name_${c.name}`)} ${c.prev} → ${c.next} (${two(d.getHours())}:${two(d.getMinutes())})`;
+  }).join(", ");
+  const key = ["after", "before", "none"].includes(note.used) ? note.used : "none";
+  return translate(`changed_${key}`, { changes });
+}
+
 function driveWhen(result) {
   const start = Number(result?.drive_start);
   if (!Number.isFinite(start) || start <= 0) return String(result?.route || "").split("--")[0];
@@ -329,8 +350,10 @@ function render(payload = lastPayload) {
     nodes.push(box);
   }
 
+  const changed = changedNote(result);
   if (result?.route) {
     nodes.push(el("p", "egpu-model-card__detail", t("drive_line", { when: driveWhen(result), min: Number(m?.lat_minutes ?? 0).toFixed(1), segments: result.segments ?? 0 })));
+    if (changed) nodes.push(el("p", "egpu-model-card__detail tuning-advice__changed", changed));
   }
 
   // plot 6 agreement, always first
@@ -491,6 +514,6 @@ const CarrotTuningAdvice = Object.freeze({ init, refresh, render });
 globalThis.CarrotTuningAdvice = CarrotTuningAdvice;
 
 export {
-  CarrotTuningAdvice, FALLBACK_STRINGS, applyState, describe, formatChange, formatValue, metricLines, rawChange, recommendationText,
+  CarrotTuningAdvice, FALLBACK_STRINGS, applyState, changedNote, describe, formatChange, formatValue, metricLines, rawChange, recommendationText,
   settingRows, statusNotes,
 };

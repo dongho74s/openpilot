@@ -204,3 +204,8 @@
   padding: 4px 10px;
   font-size: 0.85em;
 }
+
+.tuning-advice__changed {
+  margin-top: 4px;
+  color: #f2d36b;
+}

@@ -19,10 +19,11 @@ import sys
 import time
 import traceback
 
-VERSION = 1
+VERSION = 2          # 2: settings changed during the drive are taken from the settings history
 STATE_DIR = os.environ.get("CARROT_STATE_DIR", "/data/carrot/state")
 RESULT_NAME = "tuning_advice.json"
 STATUS_NAME = "tuning_advice_status.json"
+PARAM_CHANGES_NAME = "param_changes.jsonl"   # Carrot web's settings history (server/services/param_changes.py)
 HISTORY_NAME = "tuning_advice_history.json"
 HISTORY_LIMIT = 20
 ROUTES_TO_SEARCH = 6
@@ -301,6 +302,43 @@ def simulate(drive, settings: dict, job: Job):
   return advise.aggregate(per_window), info
 
 
+def tuning_changes(state_dir: str, start: float, end: float, keys) -> list[dict]:
+  """Changes of the tuning settings recorded by Carrot web between start and end (unix s), oldest first. initData
+  only has the values at the drive's start, so a value changed from the web while driving shows up only here."""
+  out = []
+  try:
+    with open(os.path.join(state_dir, PARAM_CHANGES_NAME), encoding="utf-8") as f:
+      for line in f:
+        try:
+          rec = json.loads(line)
+        except ValueError:
+          continue
+        if rec.get("name") in keys and isinstance(rec.get("ts"), (int, float)) and start < rec["ts"] < end:
+          out.append({"name": rec["name"], "prev": rec.get("prev"), "next": rec.get("next"), "at": rec["ts"]})
+  except OSError:
+    return []
+  return sorted(out, key=lambda r: r["at"])
+
+
+def settled_part(drive, tuning: dict, changes: list[dict], minutes) -> tuple[list, dict, dict | None]:
+  """(segments, tuning) the analysis should use: the whole drive when nothing changed; otherwise the segments after
+  the last change with the values then (enough steering there), else the ones before the first change."""
+  if not changes or drive.wall_start is None:
+    return drive.segments, tuning, None
+  after = dict(tuning)
+  for c in changes:
+    after[c["name"]] = str(c["next"])
+  last, first = changes[-1]["at"], changes[0]["at"]
+  late = [s for s in drive.segments if drive.wall_start + 60.0 * s.number >= last]
+  early = [s for s in drive.segments if drive.wall_start + 60.0 * (s.number + 1) <= first]
+  note = {"changes": changes}
+  if late and minutes(late) >= 3.0:
+    return late, after, dict(note, used="after", segments=[s.number for s in late])
+  if early and minutes(early) >= 3.0:
+    return early, tuning, dict(note, used="before", segments=[s.number for s in early])
+  return [], after, dict(note, used="none", segments=[])
+
+
 def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_current: bool = False,
             job: Job | None = None) -> dict:
   from openpilot.selfdrive.carrot.tuning_advice import advise, extract, metrics
@@ -319,6 +357,14 @@ def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_c
                              progress=lambda k, n: job.update(step="reading", progress=1 + int(48 * k / max(n, 1)),
                                                               segment=k + 1, segments=n))
   tuning = drive.tuning()
+  settings_note = None
+  if drive.wall_start is not None and drive.segments:
+    end = drive.wall_start + 60.0 * (max(s.number for s in drive.segments) + 1)
+    changes = tuning_changes(state_dir, drive.wall_start, end, set(advise.drive_settings({})))
+
+    def lat_minutes(parts):
+      return metrics.drive_metrics([(s.a, extract.C) for s in parts], 3.0)["lat_minutes"]
+    drive.segments, tuning, settings_note = settled_part(drive, tuning, changes, lat_minutes)
   settings = advise.drive_settings(tuning)
   segs = [(s.a, extract.C) for s in drive.segments]
   m = metrics.drive_metrics(segs, advise.lal_value(settings["LateralAccelLimit"]), checkpoint=job.checkpoint)
@@ -334,6 +380,7 @@ def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_c
       traceback.print_exc()
   rec = advise.recommend(m, sim_result, settings, sim_info.get("error"))
   result = dict(base, route=route, car=drive.car_fingerprint, drive_start=drive.wall_start, settings=settings,
+                settings_changed=settings_note,
                 segments=len(drive.segments), partial_segments=drive.partial, metrics=m,
                 simulation=dict(sim_info, reference=(sim_result or {}).get("_ref")), recommendation=rec)
   history_path = os.path.join(state_dir, HISTORY_NAME)
