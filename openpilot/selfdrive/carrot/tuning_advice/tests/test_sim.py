@@ -60,3 +60,21 @@ def test_stand_in_params_only_in_the_analysis_process(monkeypatch):
   monkeypatch.delenv(S.PROCESS_ENV, raising=False)
   with pytest.raises(RuntimeError):
     S.install_stand_in_params({})
+
+
+def test_steer_ratio_and_gm_torque_limits_follow_the_drive_settings():
+  from types import SimpleNamespace
+  sim = object.__new__(S.Simulator)
+  sim.base_params = {"SteerRatioRate": b"95", "CustomSR": b"0", "CustomSteerMax": b"250", "CustomSteerDeltaUp": b"40",
+                     "CustomSteerDeltaDown": b"6"}
+  assert sim.steer_ratio_settings() == (95.0, 0.0)
+  gm = SimpleNamespace(STEER_MAX=300, STEER_MAX_EPS=300, STEER_DELTA_UP=10, STEER_DELTA_DOWN=15, PANDA_MAX_RATE_DOWN=25,
+                       max_custom_steer_delta_up=lambda: 20)
+  S.StandInParams.values = sim.base_params
+  sim.torque_limits(gm)
+  assert (gm.STEER_MAX, gm.STEER_DELTA_UP, gm.STEER_DELTA_DOWN) == (250, 20, 6)   # up clipped to the panda limit
+  gm = SimpleNamespace(STEER_MAX=300, STEER_MAX_EPS=300, STEER_DELTA_UP=10, STEER_DELTA_DOWN=15, PANDA_MAX_RATE_DOWN=25,
+                       max_custom_steer_delta_up=lambda: 20)
+  S.StandInParams.values = {}
+  sim.torque_limits(gm)
+  assert (gm.STEER_MAX, gm.STEER_DELTA_UP, gm.STEER_DELTA_DOWN) == (300, 10, 15)  # unset: the car's own

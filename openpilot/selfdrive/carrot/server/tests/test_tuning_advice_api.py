@@ -28,7 +28,7 @@ def feature(monkeypatch, tmp_path):
   monkeypatch.setattr(F, "_params", lambda: params)
   job = F.Job()
   starts = []
-  monkeypatch.setattr(job, "start", lambda gentle=False: starts.append("gentle" if gentle else 1) or True)
+  monkeypatch.setattr(job, "start", lambda: starts.append(1) or True)
   monkeypatch.setattr(job, "stop", lambda: starts.append("stop"))
   monkeypatch.setattr(F, "JOB", job)
   return SimpleNamespace(state=state, logs=logs, flags=flags, params=params, starts=starts, job=job)
@@ -60,13 +60,12 @@ def test_a_new_drive_needs_an_analysis(feature):
   assert call(F.api_status)[1]["result"] is None
 
 
-def test_the_button_runs_gently_while_driving(feature):
+def test_the_button_runs_with_the_ignition_on_or_off(feature):
   feature.flags["IsOnroad"] = True
-  status, p = call(F.api_run)
-  assert status == 200 and feature.starts == ["gentle"]
+  assert call(F.api_run)[0] == 200
   feature.flags["IsOnroad"] = False
-  status, p = call(F.api_run)
-  assert status == 200 and feature.starts == ["gentle", 1]
+  assert call(F.api_run)[0] == 200
+  assert feature.starts == [1, 1]
 
 
 def test_while_driving_the_target_is_the_drive_before(feature):
@@ -95,21 +94,18 @@ def test_automatic_run_once_per_drive_after_a_parked_minute(feature):
   assert feature.starts == [1, 1]
 
 
-def test_switching_the_car_on_stops_a_parked_run_and_the_drive_gets_a_gentle_one(feature, monkeypatch):
-  route(feature, "00000252--3d51466b37")
-  F.tick(feature.params, 0.0)
-  F.tick(feature.params, F.PARKED_BEFORE_START)
-  assert feature.starts == [1]
+def test_the_ignition_does_not_stop_a_run(feature, monkeypatch):
   monkeypatch.setattr(feature.job, "running", lambda: True)
-  route(feature, "00000253--121bd0b631")          # the car is switched on: a new route is recorded
+  elapsed = [0.0]
+  monkeypatch.setattr(feature.job, "elapsed", lambda: elapsed[0])
   feature.flags["IsOnroad"] = True
-  F.tick(feature.params, 100.0)
-  assert feature.starts == [1, "stop"] and feature.job.offroad_since is None
-  monkeypatch.setattr(feature.job, "running", lambda: False)
-  F.tick(feature.params, 100.0 + F.DRIVING_BEFORE_START - 1)
-  assert feature.starts == [1, "stop"]
-  F.tick(feature.params, 100.0 + F.DRIVING_BEFORE_START + F.AUTO_CHECK_INTERVAL)
-  assert feature.starts == [1, "stop", "gentle"]   # 252 again, gently, not the drive being recorded
+  F.tick(feature.params, 10.0)
+  feature.flags["IsOnroad"] = False
+  F.tick(feature.params, 20.0)
+  assert feature.starts == []
+  elapsed[0] = F.RUN_TIMEOUT + 1
+  F.tick(feature.params, 30.0)                     # only a run that hangs for an hour is stopped
+  assert feature.starts == ["stop"]
 
 
 def test_without_permanent_power_the_next_drive_analyses_the_one_before(feature):
@@ -118,15 +114,87 @@ def test_without_permanent_power_the_next_drive_analyses_the_one_before(feature)
   feature.flags["IsOnroad"] = True
   F.tick(feature.params, 0.0)
   assert feature.starts == []
-  F.tick(feature.params, F.DRIVING_BEFORE_START)
-  assert feature.starts == ["gentle"]
-  F.tick(feature.params, F.DRIVING_BEFORE_START + 1000)
-  assert feature.starts == ["gentle"]              # once per drive
+  F.tick(feature.params, F.ONROAD_BEFORE_START)
+  assert feature.starts == [1]
+  write_result(feature, "00000252--3d51466b37")   # done: nothing more during this drive
+  F.tick(feature.params, F.ONROAD_BEFORE_START + 1000)
+  assert feature.starts == [1]
 
 
-def test_a_gentle_run_is_not_killed_by_the_ignition(feature, monkeypatch):
-  feature.job.gentle = True
-  monkeypatch.setattr(feature.job, "running", lambda: True)
+def test_a_runner_left_from_before_a_server_restart_still_counts(feature):
+  import os
+  fd = runner.acquire_lock(str(feature.state))     # held by "another" runner
+  try:
+    job = F.Job()
+    assert job.running() and job.other_pid() == os.getpid()
+    assert job.start() is False                    # no second analysis
+  finally:
+    os.close(fd)
+  assert not F.Job().running()
+
+
+def test_a_put_off_run_is_tried_again_after_the_ignition_changes(feature):
+  route(feature, "00000252--3d51466b37")
+  route(feature, "00000253--121bd0b631")
   feature.flags["IsOnroad"] = True
-  F.tick(feature.params, 10.0)
-  assert feature.starts == []
+  F.tick(feature.params, 0.0)
+  F.tick(feature.params, F.ONROAD_BEFORE_START)
+  assert feature.starts == [1]                     # say it was put off (memory): no result
+  F.tick(feature.params, F.ONROAD_BEFORE_START + 100)
+  assert feature.starts == [1]
+  feature.flags["IsOnroad"] = False                # parked: the newest drive is 253 now
+  F.tick(feature.params, 1000.0)
+  F.tick(feature.params, 1000.0 + F.PARKED_BEFORE_START)
+  assert feature.starts == [1, 1]
+
+
+class ApplyRequest:
+  def __init__(self, body):
+    self.body = body
+
+  async def json(self):
+    return self.body
+
+
+def apply(body):
+  response = asyncio.run(F.api_apply(ApplyRequest(body)))
+  return response.status, json.loads(response.body)
+
+
+@pytest.fixture
+def advice(feature, monkeypatch):
+  import openpilot.selfdrive.carrot.server.services.param_changes as pc
+  import openpilot.selfdrive.carrot.server.services.params as sp
+  import openpilot.selfdrive.carrot.server.services.settings as ss
+  writes, records = [], []
+  monkeypatch.setattr(sp, "set_param_value", lambda name, value, setting=None: writes.append((name, value)))
+  monkeypatch.setattr(pc, "append_param_change", lambda *a, **k: records.append((a, k)))
+  monkeypatch.setattr(ss, "get_settings_cached", lambda: (None, None, {}, None))
+  route(feature, "00000252--3d51466b37")
+  (feature.state / runner.RESULT_NAME).write_text(json.dumps({
+    "version": runner.VERSION, "newest_route": "00000252--3d51466b37", "route": "00000252--3d51466b37",
+    "recommendation": {"status": "change", "param": "LateralAccelLimit", "from": 35, "to": 40}}))
+  return SimpleNamespace(writes=writes, records=records)
+
+
+def test_apply_writes_the_recommendation_when_parked(feature, advice):
+  status, p = apply({"name": "LateralAccelLimit", "value": 40})
+  assert status == 200 and advice.writes == [("LateralAccelLimit", 40)]
+  assert advice.records[0][0][:3] == ("LateralAccelLimit", 35, 40) and advice.records[0][1]["source"] == "tuning_advice"
+
+
+def test_apply_is_refused_with_the_ignition_on(feature, advice):
+  feature.flags["IsOnroad"] = True
+  assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
+  feature.flags["IsOnroad"] = False
+  feature.flags["IsEngaged"] = True
+  assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
+  assert advice.writes == []
+
+
+def test_apply_only_the_current_recommendation_for_the_newest_drive(feature, advice):
+  assert apply({"name": "LateralTorqueKpV", "value": 170})[0] == 409
+  assert apply({"name": "LateralAccelLimit", "value": 45})[0] == 409
+  route(feature, "00000253--121bd0b631")          # a newer drive, not analysed yet
+  assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
+  assert advice.writes == []

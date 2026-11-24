@@ -8,6 +8,7 @@ const POLL_IDLE_MS = 15000;
 let pollTimer = null;
 let lastPayload = null;
 let busy = false;
+const openDetails = new Set();   // which sections the viewer opened, kept across the 3 s / 15 s refresh
 
 const FALLBACK_STRINGS = {
   title: "Tuning from the last drive",
@@ -44,12 +45,18 @@ const FALLBACK_STRINGS = {
   confirm_apply: "Change {change}? It takes effect right away; check it on the next drive.",
   applied: "Saved {change}.",
   onroad_note: "Changes can be applied only while parked with the ignition off.",
-  waiting_note: "Runs a minute after parking, or two minutes into the next drive if the comma powers off with the car.",
+  waiting_note: "Runs a minute after the ignition goes off, or a minute after it comes on if the comma powers off with the car.",
   error_note: "Analysis failed: {error}",
-  interrupted_note: "Stopped because the ignition was turned on. The drive is analysed slowly two minutes into this drive.",
+  interrupted_note: "The analysis stopped. Analyse again runs it again.",
+  parked_note: "In P at a standstill it runs at full pace; once you drive off it carries on slowly so the drive is not affected.",
+  step_done: "finishing",
+  step_waiting: "waiting for free memory and a cooler comma",
+  step_simulating: "replaying the same curves",
+  step_reading: "reading the logs ({segment}/{segments} segments)",
+  step_searching: "finding the last drive",
+  progress_line: "{pct}% done · {step}",
   busy_note: "Put off for this drive: not enough free memory or the comma was too hot. It tries again on the next drive or with Analyse again.",
-  resting_note: "Paused until free memory and temperature allow it.",
-  gentle_note: "Analysing the previous drive slowly so this drive is not affected.",
+  gentle_note: "Driving: it rests between steps so the drive is not affected.",
   metrics_title: "Last drive",
   m_takeovers: "Driver took over {n}/min ({against} against openpilot, {with} wanting more)",
   m_releases: "Torque let go at the limit {n}/min",
@@ -81,6 +88,11 @@ const FALLBACK_STRINGS = {
   name_LateralTorqueKpV: "Steering P",
   name_LatTorqueLimitPFilter: "Torque-limit P filter",
   off: "off",
+  apply_failed: "Not applied: {error}",
+  on: "on",
+  name_LateralTorqueCustom: "Custom torque tuning",
+  rec_no_simulation_mismatch: "The drive's steering requests include something the replay does not reproduce (lane mode, the minimum-distance clamp), so nothing was compared.",
+  stale_note: "This result is from the {when} drive; the newest drive is not analysed yet.",
   r_match_pct: "Match",
   r_match_curve_pct: "Curve match",
   r_takeovers_per_min: "Takeovers/min",
@@ -101,6 +113,7 @@ function formatValue(param, value, translate = t) {
   if (param === "LateralAccelLimit") return `${(v / 10).toFixed(1)} m/s²`;
   if (param === "LateralTorqueKpV" || param === "LateralTorqueKiV") return (v / 100).toFixed(2);
   if (param === "LatTorqueLimitPFilter") return v <= 0 ? translate("off") : translate("seconds", { v: (v / 100).toFixed(2) });
+  if (param === "LateralTorqueCustom") return translate(v > 0 ? "on" : "off");
   return String(v);
 }
 
@@ -122,7 +135,7 @@ function signed(value, unit) {
 function describe(payload) {
   const status = payload?.status || {};
   if (payload?.running) return { state: "running", pct: Math.max(0, Math.min(99, Number(status.progress) || 0)) };
-  if (status.state === "error" && !payload?.result) return { state: "error" };
+  if (status.state === "error") return { state: "error" };   // even with an older result below
   const rec = payload?.result?.recommendation;
   if (!rec) return { state: "wait" };
   if (rec.status === "change") return { state: "change" };
@@ -150,7 +163,7 @@ function recommendationText(rec, translate = t) {
     return { headline: translate("state_none"), detail: translate(`rec_not_enough_data_${rec.reason === "curves" ? "curves" : "lat_minutes"}`) };
   }
   if (rec.status === "no_drive") return { headline: translate("state_none"), detail: translate("rec_no_drive") };
-  const known = ["unsupported_car", "plant", "no_windows", "no_car_params"];
+  const known = ["unsupported_car", "plant", "no_windows", "no_car_params", "mismatch"];
   const reason = String(rec.reason || "");
   if (reason === "lat_minutes") return { headline: translate("state_none"), detail: translate("rec_not_enough_data_lat_minutes") };
   return {
@@ -166,7 +179,9 @@ function applyState(payload) {
   const now = payload?.current?.[rec.param];
   const applied = now !== undefined && now !== null && Number(now) === Number(rec.to);
   const changed = now !== undefined && now !== null && !applied && Number(now) !== Number(rec.from);
-  return { visible: true, enabled: !payload.onroad && !payload.running && !applied, applied, changed, now };
+  // an older drive's advice is not applied once a newer drive exists or the latest analysis failed
+  const stale = !!payload.needs_run || payload?.status?.state === "error";
+  return { visible: true, enabled: !payload.onroad && !payload.running && !applied && !stale, applied, changed, now, stale };
 }
 
 function metricLines(m, translate = t) {
@@ -189,12 +204,22 @@ function metricLines(m, translate = t) {
 function statusNotes(payload, state = describe(payload).state) {
   const status = payload?.status || {};
   const notes = [];
-  if (payload?.running && payload?.gentle) notes.push(status.step === "waiting" ? "resting_note" : "gentle_note");
+  if (payload?.running && status.drive_state === "parked") notes.push("parked_note");
+  else if (payload?.running && status.drive_state === "driving") notes.push("gentle_note");
   else if (state === "error") notes.push("error_note");
   else if (status.state === "interrupted") notes.push(status.step === "busy" ? "busy_note" : "interrupted_note");
   else if (!payload?.result && !payload?.running) notes.push("waiting_note");
+  if (payload?.result?.route && payload?.needs_run && !payload?.running) notes.push("stale_note");
   if (payload?.onroad && applyState(payload).visible) notes.push("onroad_note");
   return notes;
+}
+
+function section(key, title) {
+  const details = el("details", "tuning-advice__details");
+  details.open = openDetails.has(key);
+  details.addEventListener("toggle", () => (details.open ? openDetails.add(key) : openDetails.delete(key)));
+  details.append(el("summary", "", title));
+  return details;
 }
 
 function el(tag, className, text) {
@@ -228,6 +253,22 @@ function render(payload = lastPayload) {
   const heading = el("div", "egpu-model-card__heading");
   heading.append(el("strong", "", t("title")), el("span", "egpu-model-card__state", t(`state_${state}`, { pct: progress })));
   const nodes = [heading];
+
+  if (payload.running) {
+    const status = payload.status || {};
+    const step = ["searching", "reading", "simulating", "waiting", "done"].includes(status.step) ? status.step : "searching";
+    const box = el("div", "tuning-advice__progress");
+    box.append(el("span", "tuning-advice__progress-text",
+      t("progress_line", { pct: progress, step: t(`step_${step}`, { segment: status.segment ?? "-", segments: status.segments ?? "-" }) })));
+    const track = el("div", "egpu-model-card__track");
+    const bar = el("span");
+    bar.style.width = `${progress}%`;
+    track.append(bar);
+    const wrap = el("div", "egpu-model-card__progress");
+    wrap.append(track);
+    box.append(wrap);
+    nodes.push(box);
+  }
 
   if (result?.route) {
     nodes.push(el("p", "egpu-model-card__detail", t("drive_line", { when: driveWhen(result), min: Number(m?.lat_minutes ?? 0).toFixed(1), segments: result.segments ?? 0 })));
@@ -280,8 +321,7 @@ function render(payload = lastPayload) {
 
   const lines = metricLines(m);
   if (lines.length) {
-    const details = el("details", "tuning-advice__details");
-    details.append(el("summary", "", t("metrics_title")));
+    const details = section("metrics", t("metrics_title"));
     const list = el("ul", "tuning-advice__list");
     lines.forEach((line) => list.append(el("li", "", line)));
     details.append(list);
@@ -290,8 +330,7 @@ function render(payload = lastPayload) {
 
   const rows = rec?.candidates || [];
   if (rows.length) {
-    const details = el("details", "tuning-advice__details");
-    details.append(el("summary", "", t("sim_title")));
+    const details = section("sim", t("sim_title"));
     const list = el("ul", "tuning-advice__list tuning-advice__sim");
     list.append(el("li", "tuning-advice__sim-head", t("sim_head")));
     for (const row of rows) {
@@ -320,7 +359,8 @@ function render(payload = lastPayload) {
   footer.append(rerun);
   nodes.push(footer);
 
-  const notes = statusNotes(payload, state).map((key) => (key === "error_note" ? t(key, { error: payload.status?.error || "" }) : t(key)));
+  const noteValues = { error_note: { error: payload.status?.error || "" }, stale_note: { when: driveWhen(result) } };
+  const notes = statusNotes(payload, state).map((key) => t(key, noteValues[key] || {}));
   notes.forEach((note) => nodes.push(el("span", "egpu-model-card__amount", note)));
 
   body.replaceChildren(...nodes);
@@ -345,10 +385,12 @@ async function applyRecommendation() {
   busy = true;
   render();
   try {
-    await postJson("/api/param_set", { name: rec.param, value: rec.to, source: "tuning_advice" });
+    // the server checks again right before writing (parked, still this recommendation, newest drive analysed)
+    const result = await postJson("/api/tuning_advice/apply", { name: rec.param, value: rec.to });
+    if (result?.ok === false) throw new Error(result.error || "refused");
     if (typeof showAppToast === "function") showAppToast(t("applied", { change }));
   } catch (error) {
-    if (typeof showAppToast === "function") showAppToast(`${t("state_error")}: ${error?.message || error}`, { tone: "error", duration: 5000 });
+    if (typeof showAppToast === "function") showAppToast(t("apply_failed", { error: error?.message || error }), { tone: "error", duration: 5000 });
   } finally {
     busy = false;
     await refresh();

@@ -85,3 +85,16 @@ def test_change_review_compares_the_drive_before_a_single_change():
   two = dict(before, settings=dict(SETTINGS, LateralTorqueKpV=150, LateralAccelLimit=30))
   assert A.change_review(after, [two])["comparable"] is False
   assert A.change_review(after, [dict(before, settings=SETTINGS)]) is None
+
+
+def test_change_review_counts_the_custom_torque_switch():
+  before = {"route": "a", "settings": dict(SETTINGS, LateralTorqueCustom=0, LateralTorqueKiV=90), "metrics": {"lat_minutes": 10}}
+  after = {"route": "b", "settings": SETTINGS, "metrics": {"lat_minutes": 10}}
+  r = A.change_review(after, [before])
+  assert r["comparable"] is False and set(r["changed"]) == {"LateralTorqueCustom", "LateralTorqueKiV"}
+  before = {"route": "a", "settings": dict(SETTINGS, LateralTorqueCustom=0), "metrics": {"lat_minutes": 10}}
+  r = A.change_review(after, [before])
+  assert r["param"] == "LateralTorqueCustom" and (r["before"], r["after"]) == (0, 1)
+  off = dict(SETTINGS, LateralTorqueCustom=0)
+  r = A.change_review({"route": "b", "settings": off, "metrics": {}}, [{"route": "a", "settings": dict(off, LateralTorqueKiV=90), "metrics": {}}])
+  assert r is None                                 # stored I does nothing with custom torque off on both drives

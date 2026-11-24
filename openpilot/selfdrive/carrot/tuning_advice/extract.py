@@ -87,6 +87,9 @@ def read_events(path: str):
   return log.Event.read_multiple_bytes(raw, traversal_limit_in_words=2 ** 63, nesting_limit=1000)
 
 
+CHECK_EVERY_EVENTS = 20000   # about half a second of decoding on a comma 4 between the runner's pacing checks
+
+
 def qlog_lateral_seconds(path: str) -> float:
   """Seconds in which openpilot steered above 8 km/h, from the 10 Hz qlog."""
   n = 0
@@ -115,8 +118,8 @@ def lane_fit(x, y1, y2, v):
   return c, float(np.median((np.asarray(y2) - np.asarray(y1))[m])), 2 * a2
 
 
-def read_segment(path: str, route: str, number: int, want_init: bool = False):
-  """(Segment or None, initData params or None, carParams bytes or None, wall start or None, cut_short)"""
+def read_segment(path: str, route: str, number: int, want_init: bool = False, checkpoint=None):
+  """(Segment or None, initData params or None, carParams bytes or None, route wall start or None, cut_short)"""
   rows, models = [], []
   cs = cc = co = lp = None
   lat_delay = float("nan")
@@ -126,7 +129,9 @@ def read_segment(path: str, route: str, number: int, want_init: bool = False):
   params = car_params = wall = None
   cut = False
   try:
-    for e in read_events(path):
+    for count, e in enumerate(read_events(path)):
+      if checkpoint is not None and count % CHECK_EVERY_EVENTS == CHECK_EVERY_EVENTS - 1:
+        checkpoint()
       w = e.which()
       if w == "carState":
         cs = e.carState
@@ -166,22 +171,25 @@ def read_segment(path: str, route: str, number: int, want_init: bool = False):
         wall = ini.wallTimeNanos / 1e9 if ini.wallTimeNanos else None
       elif want_init and w == "carParams" and car_params is None:
         car_params = e.carParams.as_builder().to_bytes()
+  except InterruptedError:
+    raise
   except Exception:
     cut = True
   seg = Segment(route, number, np.array(rows, dtype=np.float64), models) if len(rows) >= 100 else None
   return seg, params, car_params, wall, cut
 
 
-def load_drive(route: str, numbers: list[int], root: str = REALDATA, should_stop=None, progress=None) -> Drive:
-  """Decode the segments of a route in which openpilot steered (per qlog; segments without a qlog are decoded)."""
+def load_drive(route: str, numbers: list[int], root: str = REALDATA, checkpoint=None, progress=None) -> Drive:
+  """Decode the segments of a route in which openpilot steered (per qlog; segments without a qlog are decoded).
+  checkpoint() runs before each segment (the runner's pacing; it may raise InterruptedError)."""
   segments, partial = [], []
   params: dict[str, bytes] = {}
   car_params = None
   wall = None
   fingerprint = ""
   for k, n in enumerate(numbers):
-    if should_stop is not None and should_stop():
-      raise InterruptedError("onroad")
+    if checkpoint is not None:
+      checkpoint()
     if progress is not None:
       progress(k, len(numbers))
     rlog = segment_file(root, route, n, "rlog")
@@ -191,10 +199,10 @@ def load_drive(route: str, numbers: list[int], root: str = REALDATA, should_stop
     q = segment_file(root, route, n, "qlog")
     if not need_init and q is not None and qlog_lateral_seconds(q) < 3.0:
       continue
-    seg, p, cp, w, cut = read_segment(rlog, route, n, want_init=need_init)
+    seg, p, cp, w, cut = read_segment(rlog, route, n, want_init=need_init, checkpoint=checkpoint)
     if p and not params:
       params = p
-      wall = None if w is None else w - n * 60.0
+      wall = w        # loggerd writes the route's own initData (route start) into every segment
     if cp and car_params is None:
       car_params = cp
     if cut:

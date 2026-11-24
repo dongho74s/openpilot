@@ -183,7 +183,9 @@ def change_review(current: dict, history: list[dict]) -> dict | None:
     if prev.get("route") == current.get("route"):
       continue
     ps = prev.get("settings") or {}
-    diff = [k for k in cur if k != "LateralTorqueCustom" and ps.get(k) != cur.get(k)]
+    diff = [k for k in cur if ps.get(k) != cur.get(k)]
+    if (cur.get("LateralTorqueCustom") or 0) <= 0 and (ps.get("LateralTorqueCustom") or 0) <= 0:
+      diff = [k for k in diff if k not in CUSTOM_ONLY]   # stored P and I do nothing with custom torque off
     if len(diff) == 0:
       continue
     if len(diff) > 1:

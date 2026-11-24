@@ -24,6 +24,7 @@ DT = 0.01
 PROCESS_ENV = "CARROT_TUNING_ADVICE_PROCESS"
 # plant dynamics the Mac fit chose (empirical curve, play band 0.03, 0.05 s dead time, 5 rad/s, damping 1.4)
 PLANT_FRICTION, PLANT_DELAY, PLANT_WN, PLANT_ZETA = 0.03, 0.05, 5.0, 1.4
+CHECK_EVERY_FRAMES = 500     # about 0.35 s of replay on a comma 4 between the runner's pacing checks
 V_GRID = np.arange(4.0, 36.01, 2.0)
 LA_GRID = np.arange(-4.5, 4.5001, 0.02)
 LA_BINS = np.arange(-4.5, 4.51, 0.25)
@@ -217,15 +218,34 @@ class Simulator:
     lac = LatControlTorque(self.CP, ci)
     lac.params = StandInParams()
     lac.read_torque_limit_p_filter()
-    return lac, CarControllerParams(self.CP)
+    return lac, self.torque_limits(CarControllerParams(self.CP))
+
+  def torque_limits(self, gm):
+    """The GM car controller's CustomSteerMax / CustomSteerDeltaUp / CustomSteerDeltaDown, clipped as it does."""
+    p = StandInParams()
+    steer_max, delta_up, delta_down = (p.get_int(k) for k in ("CustomSteerMax", "CustomSteerDeltaUp", "CustomSteerDeltaDown"))
+    if steer_max > 0:
+      gm.STEER_MAX = min(steer_max, gm.STEER_MAX_EPS)
+    if delta_up > 0:
+      gm.STEER_DELTA_UP = min(delta_up, gm.max_custom_steer_delta_up())
+    if delta_down > 0:
+      gm.STEER_DELTA_DOWN = min(delta_down, gm.PANDA_MAX_RATE_DOWN)
+    return gm
+
+  def steer_ratio_settings(self) -> tuple[float, float]:
+    """(SteerRatioRate, CustomSR) as controlsd reads them for the vehicle model."""
+    p = StandInParams()
+    StandInParams.values = self.base_params
+    return p.get_float("SteerRatioRate"), p.get_float("CustomSR")
 
   def run(self, a: np.ndarray, models: list, s: int, e: int, overrides: dict[str, int], lal: float, jerk: float,
-          warm: int = 200, friction: float = PLANT_FRICTION) -> np.ndarray:
+          warm: int = 200, friction: float = PLANT_FRICTION, checkpoint=None) -> np.ndarray:
     """Rows of (v, model demand, desired, simulated actual, torque sent, logged actual, lane offset, lp1, lp2)."""
     from opendbc.car import apply_driver_steer_torque_limits
     from opendbc.car.vehicle_model import VehicleModel
     from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, smooth_value
     from openpilot.selfdrive.controls.lib.steer_ratio import resolve_vehicle_model_steer_ratio
+    sr_rate, custom_sr = self.steer_ratio_settings()
     lac, gm = self.controller(overrides)
     parity = bool(getattr(lac, "nnff_frogpilot_parity", False))
     VM = VehicleModel(self.CP)
@@ -238,13 +258,15 @@ class Simulator:
     delay = float("nan")
     rec = []
     for k in range(i0, e):
+      if checkpoint is not None and (k - i0) % CHECK_EVERY_FRAMES == 0:
+        checkpoint()
       row = a[k]
       v = max(row[C["v"]], 0.5)
       roll, off = row[C["roll"]], row[C["angleOffset"]]
       if parity and math.isfinite(row[C["latDelay"]]) and row[C["latDelay"]] != delay:
         delay = row[C["latDelay"]]
         lac.update_live_delay(delay)
-      VM.update_params(max(row[C["stiffness"]], 0.1), max(resolve_vehicle_model_steer_ratio(row[C["sR"]], 87.0, 161.0), 0.1))
+      VM.update_params(max(row[C["stiffness"]], 0.1), resolve_vehicle_model_steer_ratio(row[C["sR"]], sr_rate, custom_sr))
       closed = k >= s
       if k == s:
         plant.reset(row[C["act"]], last / gm.STEER_MAX, (a[k, C["act"]] - a[k - 5, C["act"]]) / (5 * DT))

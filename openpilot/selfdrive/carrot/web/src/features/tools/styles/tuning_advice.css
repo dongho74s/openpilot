@@ -85,3 +85,16 @@
   display: block;
   margin-top: 6px;
 }
+
+.tuning-advice__progress {
+  margin-top: 10px;
+}
+
+.tuning-advice__progress-text {
+  display: block;
+  font-weight: 600;
+}
+
+.tuning-advice__progress .egpu-model-card__progress {
+  margin-top: 6px;
+}

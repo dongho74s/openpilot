@@ -1,14 +1,14 @@
 """Analyse the last drive and write the tuning advice for Carrot web (features/tuning_advice.py starts this process).
 
-  python -m openpilot.selfdrive.carrot.tuning_advice.runner [--gentle] [--route ROUTE] [--root DIR] [--state-dir DIR]
+  python -m openpilot.selfdrive.carrot.tuning_advice.runner [--route ROUTE] [--root DIR] [--state-dir DIR]
 
-Always at the lowest CPU and I/O priority.
-- Parked (default): checks IsOnroad between log segments and replay windows and stops at once when the car starts (the
-  server also kills it then).
-- --gentle, for the next drive when the comma loses power with the ignition (no permanent power, so it is never parked
-  long enough): analyses the drive before the one being recorded while driving. It rests as long as it worked after
-  every step (half the CPU of one little core at most) and waits while free memory or the CPU/GPU temperature is tight,
-  giving up after 10 minutes of waiting.
+Always at the lowest CPU and I/O priority, and it never stops because the ignition comes on: between log segments and
+replay windows it looks at the car and sets its pace.
+- ignition off, or on with the gear in P at a standstill: full pace;
+- driving: it rests as long as it worked after every step (half of one little core at most).
+With the ignition on it also waits while free memory or the CPU/GPU temperature is tight and gives up after 10 minutes
+of waiting. Started with the ignition on (a comma that powers off with the car is never parked long enough), it
+analyses the drive before the one being recorded.
 """
 from __future__ import annotations
 
@@ -27,15 +27,19 @@ HISTORY_NAME = "tuning_advice_history.json"
 HISTORY_LIMIT = 20
 ROUTES_TO_SEARCH = 6
 MIN_ROUTE_LAT_SECONDS = 180.0
-# --gentle: selfdrived raises lowMemory above 90 % memory use (about 360 MB free of 3.6 GB). Traverse drives 00000250/252
+# With the ignition on: selfdrived raises lowMemory above 90 % memory use (about 360 MB free of 3.6 GB). Traverse drives 00000250/252
 # ran at 76 % (p50, about 860 MB free), 81 % at most (about 690 MB free); this run peaks at about 190 MB (comma 4,
 # 2026-11-24). Below 600 MB free it waits, which leaves that peak plus a margin above the alert.
 GENTLE_MIN_AVAILABLE_MB = 600
 GENTLE_MAX_TEMP_C = 75.0
-GENTLE_REST_RATIO = 1.0          # rest as long as the last step worked
-GENTLE_MAX_REST_S = 5.0
+GENTLE_REST_RATIO = 1.0          # rest as long as the work since the last check took
+GENTLE_MAX_REST_S = 30.0
+CHECK_MIN_INTERVAL_S = 0.25      # checks come every ~0.3-0.5 s of work (segment decode, replay frames, qlog scan)
+LOCK_NAME = "tuning_advice.lock"
 GENTLE_WAIT_S = 10.0
 GENTLE_GIVE_UP_S = 600.0
+DESIRED_MISMATCH_ABS = 0.1      # m/s^2 RMS between the replayed and the logged desired lateral accel
+DESIRED_MISMATCH_REL = 0.25     # or a quarter of the logged demand's RMS
 THERMAL_ZONE_TYPES = tuple(f"cpu{i}-{c}-usr" for c in ("silver", "gold") for i in range(4)) + ("gpu0-usr", "gpu1-usr")
 
 
@@ -118,40 +122,67 @@ def _finite(obj):
   return obj
 
 
+OFFROAD, PARKED, DRIVING = "offroad", "parked", "driving"
+CAR_STATE_MAX_AGE_S = 2.0
+
+
+def make_drive_state(params):
+  """offroad / parked (ignition on, gear P, standstill) / driving, from IsOnroad and the latest carState. Without a
+  recent carState the car counts as driving."""
+  sock = None
+  last, last_t = None, 0.0
+
+  def drive_state() -> str:
+    nonlocal sock, last, last_t
+    try:
+      if not params.get_bool("IsOnroad"):
+        return OFFROAD
+    except Exception:
+      return DRIVING
+    try:
+      import openpilot.cereal.messaging as messaging
+      if sock is None:
+        sock = messaging.sub_sock("carState", conflate=True)
+      msg = messaging.recv_one_or_none(sock)
+      if msg is not None:
+        last, last_t = msg.carState, time.monotonic()
+      if last is not None and time.monotonic() - last_t < CAR_STATE_MAX_AGE_S:
+        if last.gearShifter == "park" and last.standstill:
+          return PARKED
+    except Exception:
+      pass
+    return DRIVING
+  return drive_state
+
+
 class Job:
-  def __init__(self, state_dir: str, is_onroad, gentle: bool = False, sleep=time.sleep, clock=time.monotonic,
-               read_resources=resources):
+  def __init__(self, state_dir: str, drive_state, sleep=time.sleep, clock=time.monotonic, read_resources=resources):
     self.state_dir = state_dir
-    self.is_onroad = is_onroad
-    self.gentle = gentle
+    self.drive_state = drive_state
     self.sleep, self.clock, self.read_resources = sleep, clock, read_resources
     self.last_mark = clock()
     self.started = time.time()
-    self.status = {"state": "running", "step": "searching", "progress": 0, "started_at": int(self.started), "pid": os.getpid(),
-                   "gentle": gentle}
+    self.status = {"state": "running", "step": "searching", "progress": 0, "started_at": int(self.started), "pid": os.getpid()}
 
   def update(self, **kw) -> None:
     self.status.update(kw)
     self.status["updated_at"] = int(time.time())
     write_json(os.path.join(self.state_dir, STATUS_NAME), _finite(self.status))
 
-  def stop_requested(self) -> bool:
-    """Checked between steps: parked runs stop when the car starts; gentle runs rest and wait instead."""
-    if self.gentle:
-      self.breathe()
-      return False
-    try:
-      return bool(self.is_onroad())
-    except Exception:
-      return False
-
-  def breathe(self) -> None:
-    worked = self.clock() - self.last_mark
-    if worked > 0:
-      self.sleep(min(worked * GENTLE_REST_RATIO, GENTLE_MAX_REST_S))
+  def checkpoint(self) -> None:
+    """Called every few hundred ms of work: set the pace for where the car is (driving: rest as long as the work since
+    the last check took), wait while memory or temperature is tight (ignition on), and raise InterruptedError("busy")
+    after 10 minutes of waiting."""
+    if self.clock() - self.last_mark < CHECK_MIN_INTERVAL_S and "drive_state" in self.status:
+      return
+    state = self._state()
+    if state == DRIVING:
+      worked = self.clock() - self.last_mark
+      if worked > 0:
+        self.sleep(min(worked * GENTLE_REST_RATIO, GENTLE_MAX_REST_S))
     waiting_since = None
     step = self.status.get("step")
-    while True:
+    while state != OFFROAD:
       mem, temp = self.read_resources()
       tight = (mem is not None and mem < GENTLE_MIN_AVAILABLE_MB) or (temp is not None and temp >= GENTLE_MAX_TEMP_C)
       if not tight:
@@ -162,9 +193,19 @@ class Job:
         raise InterruptedError("busy")
       self.update(step="waiting", mem_mb=None if mem is None else round(mem), temp_c=temp)
       self.sleep(GENTLE_WAIT_S)
+      state = self._state()
     if waiting_since is not None:
       self.update(step=step)
     self.last_mark = self.clock()
+
+  def _state(self) -> str:
+    try:
+      state = self.drive_state()
+    except Exception:
+      state = DRIVING
+    if state != self.status.get("drive_state"):
+      self.update(drive_state=state, pace="gentle" if state == DRIVING else "full")
+    return state
 
 
 def pick_route(root: str, job: Job, route: str | None, exclude_current: bool = False):
@@ -177,10 +218,9 @@ def pick_route(root: str, job: Job, route: str | None, exclude_current: bool = F
   if route:
     return route, routes.get(route, []), newest
   for r in list(routes)[:ROUTES_TO_SEARCH]:
-    if job.stop_requested():
-      raise InterruptedError("onroad")
     seconds = 0.0
     for n in routes[r]:
+      job.checkpoint()
       q = extract.segment_file(root, r, n, "qlog")
       if q is not None:
         seconds += extract.qlog_lateral_seconds(q)
@@ -198,7 +238,9 @@ def simulate(drive, settings: dict, job: Job):
     info["error"] = "no_car_params"
     return None, info
   segs = [(s.a, C) for s in drive.segments]
+  job.checkpoint()
   curve = sim.fit_plant_curve(segs)
+  job.checkpoint()
   if curve is None:
     info["error"] = "plant"
     return None, info
@@ -215,43 +257,54 @@ def simulate(drive, settings: dict, job: Job):
   lal, jerk = advise.lal_value(settings["LateralAccelLimit"]), advise.jerk_value(settings["LatJerkMax"])
   t0 = time.time()
   per_window, rms = [], []
+  skipped = 0
   total = max(len(W) * (len(cands) + 2), 1)
   done = 0
   import numpy as np
   for si, s, e, kind in W:
     seg = drive.segments[si]
-    if job.stop_requested():
-      raise InterruptedError("onroad")
-    ref = simulator.run(seg.a, seg.models, s, e, {}, lal, jerk)
+    job.checkpoint()
+    ref = simulator.run(seg.a, seg.models, s, e, {}, lal, jerk, checkpoint=job.checkpoint)
     done += 2
     if len(ref) == 0:
       continue
+    # the replay feeds the model's curvature through controlsd's filter and clip; lane mode, the minimum-distance clamp
+    # or anything else it does not reproduce shows up as a desired curvature unlike the logged one: leave that window out
+    logged = seg.a[s:e, C["desCurv"]] * seg.a[s:e, C["v"]] ** 2
+    if len(logged) == len(ref) and np.isfinite(logged).all():
+      if np.sqrt(np.mean((ref[:, 2] - logged) ** 2)) > max(DESIRED_MISMATCH_ABS, DESIRED_MISMATCH_REL * np.sqrt(np.mean(logged ** 2))):
+        skipped += 1
+        done += len(cands)
+        continue
     rms.append(float(np.sqrt(np.mean((ref[:, 3] - ref[:, 5]) ** 2))))
-    noise = simulator.run(seg.a, seg.models, s, e, {}, lal, jerk, friction=sim.PLANT_FRICTION * advise.NOISE_FRICTION_SCALE)
+    noise = simulator.run(seg.a, seg.models, s, e, {}, lal, jerk, friction=sim.PLANT_FRICTION * advise.NOISE_FRICTION_SCALE,
+                          checkpoint=job.checkpoint)
     w = {"kind": kind, "ref": sim.window_metrics(ref, ref, kind), "noise": sim.window_metrics(noise, ref, kind), "cand": {}}
     for key, frm, to in cands:
-      if job.stop_requested():
-        raise InterruptedError("onroad")
+      job.checkpoint()
       over = {key: to}
       c_lal = advise.lal_value(to) if key == "LateralAccelLimit" else lal
-      r = simulator.run(seg.a, seg.models, s, e, {} if key == "LateralAccelLimit" else over, c_lal, jerk)
+      r = simulator.run(seg.a, seg.models, s, e, {} if key == "LateralAccelLimit" else over, c_lal, jerk,
+                        checkpoint=job.checkpoint)
       w["cand"][advise.label(key, frm, to)] = sim.window_metrics(r, ref, kind)
       done += 1
       job.update(step="simulating", progress=50 + int(49 * done / total))
     per_window.append(w)
   info["seconds"] = round(time.time() - t0, 1)
   info["plant_rms"] = round(float(np.median(rms)), 3) if rms else None
+  info["skipped_windows"] = skipped
   if not per_window:
-    info["error"] = "no_windows"
+    info["error"] = "mismatch" if skipped else "no_windows"
     return None, info
   return advise.aggregate(per_window), info
 
 
-def analyse(root: str, state_dir: str, route: str | None, is_onroad, gentle: bool = False, exclude_current: bool = False,
+def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_current: bool = False,
             job: Job | None = None) -> dict:
   from openpilot.selfdrive.carrot.tuning_advice import advise, extract, metrics
-  job = job or Job(state_dir, is_onroad, gentle)
+  job = job or Job(state_dir, drive_state)
   job.update()
+  job.checkpoint()
   route, numbers, newest = pick_route(root, job, route, exclude_current)
   base = {"version": VERSION, "newest_route": newest, "analyzed_at": int(time.time())}
   if route is None:
@@ -260,8 +313,9 @@ def analyse(root: str, state_dir: str, route: str | None, is_onroad, gentle: boo
     job.update(state="done", step="done", progress=100)
     return result
   job.update(step="reading", route=route, progress=1)
-  drive = extract.load_drive(route, numbers, root, should_stop=job.stop_requested,
-                             progress=lambda k, n: job.update(step="reading", progress=1 + int(48 * k / max(n, 1))))
+  drive = extract.load_drive(route, numbers, root, checkpoint=job.checkpoint,
+                             progress=lambda k, n: job.update(step="reading", progress=1 + int(48 * k / max(n, 1)),
+                                                              segment=k + 1, segments=n))
   tuning = drive.tuning()
   settings = advise.drive_settings(tuning)
   segs = [(s.a, extract.C) for s in drive.segments]
@@ -273,7 +327,7 @@ def analyse(root: str, state_dir: str, route: str | None, is_onroad, gentle: boo
       sim_result, sim_info = simulate(drive, settings, job)
     except InterruptedError:
       raise
-    except Exception as e:
+    except Exception as e:  # the advice still shows the drive's own figures
       sim_info = {"error": f"exception:{type(e).__name__}"}
       traceback.print_exc()
   rec = advise.recommend(m, sim_result, settings, sim_info.get("error"))
@@ -304,12 +358,48 @@ def max_rss_mb() -> float | None:
     return None
 
 
+def acquire_lock(state_dir: str):
+  """One analysis at a time (also across a carrot_server restart): an exclusive lock held for the process's life, with
+  its pid in the file. None if another runner holds it."""
+  import fcntl
+  fd = os.open(os.path.join(state_dir, LOCK_NAME), os.O_RDWR | os.O_CREAT, 0o644)
+  try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+  except OSError:
+    os.close(fd)
+    return None
+  os.ftruncate(fd, 0)
+  os.write(fd, str(os.getpid()).encode())
+  return fd
+
+
+def lock_holder(state_dir: str) -> int | None:
+  """pid of the runner holding the lock, or None when no analysis runs."""
+  import fcntl
+  path = os.path.join(state_dir, LOCK_NAME)
+  try:
+    fd = os.open(path, os.O_RDONLY)
+  except OSError:
+    return None
+  try:
+    try:
+      fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+      try:
+        return int(os.pread(fd, 32, 0).decode().strip() or 0) or None
+      except ValueError:
+        return None
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    return None
+  finally:
+    os.close(fd)
+
+
 def main(argv=None) -> int:
   ap = argparse.ArgumentParser()
   ap.add_argument("--route")
   ap.add_argument("--root", default=None)
   ap.add_argument("--state-dir", default=STATE_DIR)
-  ap.add_argument("--gentle", action="store_true", help="while driving: analyse the drive before the current one")
   args = ap.parse_args(argv)
   os.environ["CARROT_TUNING_ADVICE_PROCESS"] = "1"
   try:
@@ -324,22 +414,21 @@ def main(argv=None) -> int:
       pass
   from openpilot.common.params import Params
   from openpilot.selfdrive.carrot.tuning_advice import extract
-  real = Params()            # bound before the simulator swaps the class for its read-only stand-in
-
-  def is_onroad() -> bool:
-    return real.get_bool("IsOnroad")
+  drive_state = make_drive_state(Params())   # bound before the simulator swaps the class for its read-only stand-in
 
   os.makedirs(args.state_dir, exist_ok=True)
   job_status = os.path.join(args.state_dir, STATUS_NAME)
+  lock = acquire_lock(args.state_dir)
+  if lock is None:
+    print("another tuning analysis is running", file=sys.stderr)
+    return 4
   try:
-    onroad = is_onroad()
-    if onroad and not args.gentle:
-      raise InterruptedError("onroad")
-    analyse(args.root or extract.REALDATA, args.state_dir, args.route, is_onroad, gentle=args.gentle, exclude_current=onroad)
+    # with the ignition on the newest route is the one being recorded
+    analyse(args.root or extract.REALDATA, args.state_dir, args.route, drive_state, exclude_current=drive_state() != OFFROAD)
     return 0
   except InterruptedError as e:
     prev = read_json(job_status, {})
-    write_json(job_status, _finite(dict(prev, state="interrupted", step=str(e) or "onroad", updated_at=int(time.time()))))
+    write_json(job_status, _finite(dict(prev, state="interrupted", step=str(e) or "busy", updated_at=int(time.time()))))
     return 3
   except Exception as e:
     prev = read_json(job_status, {})
