@@ -1,5 +1,16 @@
 # Repository memory
 
+- 2026-11-25: AGNOS updater imports application -> HARDWARE -> TiciLPA ->
+  serial before the full runtime bootstrap. Missing pyserial therefore blocks
+  the update UI. Prepare the bundled pure-Python pyserial before agnos_init;
+  retain full native bootstrap after OS initialization. Required-package failure
+  enters existing startup recovery. Real isolated-venv/Bash call-site tests
+  reproduce two baseline failures and verify offline repair, installed reuse and
+  failed-install recovery. Related local run54pass; one pre-existing offline
+  inventory test fails because bundled idna3.11 is absent from current uv.lock
+  (3.19). Add installer tests to native startup CI. No live device installation
+  or physical OS update test.
+
 - On 2026-10-16, user reported live low-memory warning after keeping ignition on.
   Captured93.29%/241.89MiB available on the same14.5h boot; guarded HUD stop
   recovers88.68%/408.40MiB and reclaims its current6 buffers, but old510 remain.
