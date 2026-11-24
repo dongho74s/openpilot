@@ -4,4 +4,5 @@
 @import "./styles/drive_layout.css";
 @import "./styles/egpu_model.css";
 @import "./styles/internal_model.css";
+@import "./styles/tuning_advice.css";
 @import "./styles/device_info.css";

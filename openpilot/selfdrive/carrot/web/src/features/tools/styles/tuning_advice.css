@@ -1,0 +1,87 @@
+.tuning-advice-card {
+  border-color: color-mix(in srgb, #9be38f 34%, var(--md-outline-var));
+  background:
+    radial-gradient(circle at 12% 0%, rgba(155, 227, 143, 0.18), transparent 45%),
+    linear-gradient(135deg, color-mix(in srgb, var(--md-surface-container) 92%, #1d3a24), var(--md-surface-container));
+}
+
+.tuning-advice-card__icon {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  background: linear-gradient(145deg, #eaffe4, #9be38f 58%, #f2d36b);
+}
+
+.tuning-advice__match,
+.tuning-advice__rec,
+.tuning-advice__review {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--md-outline-var);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--md-surface-container-high, var(--md-surface-container)) 80%, transparent);
+}
+
+.tuning-advice__match-label {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+.tuning-advice__match-value {
+  font-size: 1.5em;
+  line-height: 1.2;
+}
+
+.tuning-advice__match-detail {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+.tuning-advice__rec--change {
+  border-color: color-mix(in srgb, #9be38f 60%, var(--md-outline-var));
+}
+
+.tuning-advice__rec-headline {
+  font-size: 1.1em;
+}
+
+.tuning-advice__rec p,
+.tuning-advice__review p {
+  margin: 0;
+}
+
+.tuning-advice__details {
+  margin-top: 10px;
+}
+
+.tuning-advice__details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tuning-advice__list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.tuning-advice__sim-head {
+  list-style: none;
+  margin-left: -18px;
+  opacity: 0.7;
+}
+
+.tuning-advice__footer {
+  margin-top: 10px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tuning-advice-card .egpu-model-card__amount {
+  display: block;
+  margin-top: 6px;
+}

@@ -195,6 +195,27 @@ September 2026 (the history kept inside the model).
 - To go back, select `CD210` and press **Apply**.
 - Each model drives differently (position in the lane, curves, stopping and starting). Check an experimental model carefully at first.
 
+### Tuning from the last drive
+
+The **Tools → Tuning from the last drive card** shows a steering-tuning suggestion from the last drive's logs and how well the car followed the model's intent.
+
+- **When it runs:** it picks the latest drive with more than 3 minutes of steering above 8 km/h (short moves such as parking are skipped), always at the lowest CPU and disk priority.
+  - **Permanent power:** a minute after you park with the ignition off, the comma analyses the drive on its own (usually 2–3 minutes). Switching the ignition on meanwhile stops it at once, and that drive is then analysed during the next one as below.
+  - **The comma powers off with the car:** two minutes into the next drive it analyses the previous drive (never the one being recorded). To leave the drive unaffected it rests as long as it worked after every step (usually 5–6 minutes in all), waits while free memory is under 600 MB (about 860 MB is typical while driving; the low-memory alert comes at about 360 MB) or the CPU/GPU is at 75 °C or more, and puts the analysis off to the next drive if it has to wait more than 10 minutes. Open Carrot web during that drive to see the result.
+  - **Analyse again** on the card reruns it at any time (while driving: the previous drive, gently).
+- **Model intent vs actual:** how closely the two lines of debug plot 6 (green = the lateral accel the controller requested, yellow = the measured one) agreed.
+  - Average match = 1 − Σ|actual − requested| / Σ max(|actual|, |requested|): the average share of the requested turn the car achieved.
+  - Curve and straight match = the share of time the difference stayed within the tolerance (0.3 m/s² or 20 % of the request, whichever is larger) in curves (request above 1.0 m/s²) and on straights (below 0.5 m/s²).
+  - Time with the driver on the wheel and below 8 km/h is left out.
+- **Suggestion:** the comma replays the drive's own curves (simulation) with one value changed by one step at a time: the lateral accel limit (±0.5), steering I (±0.20) and the torque-limit P filter (off ↔ 0.3 s).
+  - The car's response is a model fitted to that drive. The same setting replayed with that response changed by 10 % is the noise; only differences larger than that count.
+  - A change is suggested only if it helps in most curves (60 % or more) and hardly any get worse, cuts the error by more than 8 % or the drift to the outside by more than 3 cm, and adds no jitter, straight-line error, torque let-go at the limit or time at the limit. Otherwise it says **Keep the current values**.
+  - Steering P is shown for reference only (the simulation once judged P differently from the real car, so P is decided from real drives).
+  - One suggestion at a time. **Apply** changes that one setting right away (parked only; the button is off while driving) and records it in the settings history with source `tuning_advice`.
+- **Last change:** when this drive and the drive analysed before it differ in exactly one tuning value, the card puts their match, takeovers, torque let-go and tracking error side by side and says better / worse / unclear. Different roads give different figures, so treat it as a hint.
+- **Not enough data:** under 3 minutes of steering, fewer than 3 curves steered without the driver, or only slow city streets (no steady steering to fit the car's response): no suggestion, with the reason shown. The simulation covers GM torque steering only; other cars get the match and the drive figures.
+- The simulation has no driver and no model reaction in the loop. A suggestion is "worth trying on the next drive"; a real drive confirms it.
+
 ### Jetson connection, IP and temperature
 
 After Jetson integration, the **Tools → eGPU status card** in `carrot-wip` also

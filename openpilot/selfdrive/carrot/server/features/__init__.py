@@ -25,6 +25,7 @@ from . import (
   system,
   terminal,
   tools,
+  tuning_advice,
   vision_diag,
   vision_test,
   wayon_key,
@@ -63,6 +64,7 @@ def register_all(app: web.Application) -> None:
   internal_model.register(app)
   screenrecord.register(app)
   tools.register(app)
+  tuning_advice.register(app)
   xiaoge.register(app)
   mapbox_tokens.register(app)
   navigation.register(app)

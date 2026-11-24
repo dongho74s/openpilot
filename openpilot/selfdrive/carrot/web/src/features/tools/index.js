@@ -8,6 +8,7 @@ import "./web_settings/controller.js";
 import "./notifications.js";
 import "./egpu_model.js";
 import "./internal_model.js";
+import "./tuning_advice.js";
 import "./bluetooth.js";
 import "./runtime.js";
 import "./settings_qr.js";

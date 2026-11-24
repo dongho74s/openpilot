@@ -28,6 +28,7 @@ from .services.params import HAS_PARAMS, Params
 from .services.popular_values import start_popular_value_upload
 from .services.settings import get_settings_cached
 from .services.static_assets import create_static_cache_middleware, start_precompress
+from .features.tuning_advice import tuning_advice_loop
 
 VISION_DIAG_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
 
@@ -120,6 +121,7 @@ async def on_startup(app: web.Application) -> None:
   app["malloc_trim_task"] = asyncio.create_task(_malloc_trim_loop(app))
   app["settings_warm_task"] = asyncio.create_task(_warm_settings_cache())
   app["precompress_task"] = start_precompress(str(WEB_DIR))
+  app["tuning_advice_task"] = asyncio.create_task(tuning_advice_loop(app))
 
 
 async def on_cleanup(app: web.Application) -> None:
@@ -142,6 +144,21 @@ async def on_cleanup(app: web.Application) -> None:
       pass
     except Exception:
       pass
+
+  tuning_advice_task = app.get("tuning_advice_task")
+  if tuning_advice_task:
+    tuning_advice_task.cancel()
+    try:
+      await tuning_advice_task
+    except asyncio.CancelledError:
+      pass
+    except Exception:
+      pass
+  try:
+    from .features.tuning_advice import JOB as tuning_advice_job
+    tuning_advice_job.stop()
+  except Exception:
+    pass
 
   malloc_trim_task = app.get("malloc_trim_task")
   if malloc_trim_task:

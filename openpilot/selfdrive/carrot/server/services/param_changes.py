@@ -42,6 +42,8 @@ PARAM_CHANGE_SOURCES = frozenset({
   "reset_defaults",
   "intro",
   "undo",
+  # the "apply" button of the last-drive tuning advice card (features/tuning_advice.py)
+  "tuning_advice",
   # Something outside the web server changed the value -- in practice the
   # driving code, which writes MyDrivingMode and LongitudinalPersonality
   # straight to Params when the steering-wheel gap button is pressed. All we
