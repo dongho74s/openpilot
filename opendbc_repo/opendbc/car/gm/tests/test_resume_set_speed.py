@@ -94,6 +94,16 @@ def test_a_message_that_stops_arriving_is_not_counted_again():
   assert not res_engages(cs)
 
 
+def test_a_pause_just_before_the_second_does_not_confirm_it():
+  cs = traverse_state()
+  run(cs, 96)                                   # 33 Hz ACTIVE for 0.96 s (last sample at 0.93 s)
+  for _ in range(20):                           # then 0.2 s without AcceleratorPedal2
+    cs.update_ecm_resume_ready([], [])
+    assert not cs.ecm_resume_ready
+  cs.update_ecm_resume_ready([], [AccState.OFF])
+  assert not res_engages(cs)
+
+
 def test_other_cars_and_stock_long_keep_res_engagement():
   assert traverse_state(needs_set_speed=False).update_button_enable(press(ButtonType.accelCruise, True))
   assert not traverse_state(needs_set_speed=False, pcm_cruise=True).update_button_enable(press(ButtonType.accelCruise, True))

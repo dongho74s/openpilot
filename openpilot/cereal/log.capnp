@@ -172,6 +172,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     lanelessOffsetSoundDEPRECATED @133;
     clampSteerActive @134;    # carrot: the minimum-distance clamp's laneless steering correction is on (a ding)
     internalModelSwitching @135;  # carrot: modeld switches the internal driving model selected while driving (no entry)
+    steerRetryHold @136;  # carrot: GM EPS refused lateral; openpilot waits before requesting it again (shown, silent)
   }
 }
 

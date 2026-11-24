@@ -147,7 +147,8 @@ class CarState(CarStateBase):
       self.ecm_active_frames = 0   # the 33 Hz message paused: the active spell is not seen continuously
     elif self.ecm_acc_active:
       self.ecm_active_frames += 1
-      if self.ecm_active_frames >= int(1.0 / DT_CTRL):
+      # confirmed only on a fresh ACTIVE sample, never during a pause in the message
+      if acc_state_values and self.ecm_active_frames >= int(1.0 / DT_CTRL):
         self.ecm_resume_ready = True
 
   def update(self, can_parsers) -> structs.CarState:

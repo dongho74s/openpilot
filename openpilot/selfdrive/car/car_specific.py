@@ -148,7 +148,7 @@ class CarSpecificEvents:
         events.add(EventName.resumeBlocked)
       # controlsd keeps lateral off for a while after an EPS temporary fault (EpsTemporaryFaultHold); show it meanwhile
       if self.eps_fault_hold.update(CS.steerFaultTemporary) and not CS.steerFaultTemporary:
-        events.add(EventName.steerTempUnavailableSilent)
+        events.add(EventName.steerRetryHold)
       # GM sets stockFcw only for the Traverse camera's collision alert (opendbc gm/stock_fcw.py).
       # Show the existing forward-collision alert for it; display, sound and HUD lamp only.
       if CS.stockFcw:

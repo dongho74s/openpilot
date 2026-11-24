@@ -1253,6 +1253,13 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.NO_ENTRY: NoEntryAlert("주행 모델 바꾸는 중"),
   },
 
+  # GM: the EPS refused lateral (PSCMStatus LKATorqueDeliveredStatus 2) and openpilot waits before requesting it again
+  # (controls/lib/eps_fault_hold.py). Permanent so it also shows with AlwaysLateral and nothing engaged; silent, and not a
+  # temporary steering fault, so it neither shortens the existing fault alert's delay nor touches its soft disable.
+  EventName.steerRetryHold: {
+    ET.PERMANENT: NormalPermanentAlert("조향 보조 대기", "EPS 재요청 대기 중"),
+  },
+
   # the minimum-distance clamp's laneless correction pushing the car off a line (controlsState.clampSteerActive): a
   # short ding once when it starts (soundd plays a sound when the alert's sound changes), shown while it lasts
   EventName.clampSteerActive: {
