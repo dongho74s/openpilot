@@ -87,6 +87,33 @@ def dump_oob(obj, f):
     tmp.seek(0)
     shutil.copyfileobj(tmp, f)
 
+class _ModelUnpickler(pickle.Unpickler):
+  """Unpickle a compiled model with buffer identities of this process.
+
+  tinygrad dedupes UOps by value (UOpMetaClass.ucache), and a buffer UOp is identified by its UNIQUE number, device and
+  size. Every model file numbers its buffers from 0 in the process that compiled it, so a second file loaded in the
+  same process (a live model switch, Jetlink's prepared warp) received the first file's buffer for each number and
+  size both use, and its own data was dropped: the model ran with part of the other model's weights. Each UNIQUE of a
+  file gets a fresh number from this process' counter instead (the same file-local number always maps to the same new
+  one), so its buffers never collide with buffers already alive here or created later."""
+  def __init__(self, file, *, buffers):
+    super().__init__(file, buffers=buffers)
+    self._uniques: dict[int, int] = {}
+
+  def find_class(self, module, name):
+    found = super().find_class(module, name)
+    if module != "tinygrad.uop.ops" or name != "UOp":
+      return found
+    from tinygrad.uop.ops import Ops, UOp
+    uniques = self._uniques
+
+    def make_uop(op, *args):  # UOp.__reduce__: (op, dtype, src, arg, tag, metadata[, buffer])
+      if op is Ops.UNIQUE and len(args) >= 3 and isinstance(args[2], int):
+        args = (args[0], args[1], uniques.setdefault(args[2], next(UOp.unique_num)), *args[3:])
+      return UOp(op, *args)
+    return make_uop
+
+
 def load_oob(f):
   header = f.read(8)
   if len(header) != 8:
@@ -118,7 +145,7 @@ def load_oob(f):
       prev = pickle.PickleBuffer(buf)
       yield prev
   try:
-    return pickle.load(io.BytesIO(opcodes), buffers=buffers())
+    return _ModelUnpickler(io.BytesIO(opcodes), buffers=buffers()).load()
   except IncompleteModelBuffer:
     raise
   except (pickle.UnpicklingError, EOFError, OverflowError) as e:

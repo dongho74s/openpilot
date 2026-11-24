@@ -40,3 +40,44 @@ def test_compiled_model_validation(tmp_path: Path):
   path.write_bytes(model_bytes()[:-1])
   with pytest.raises(EOFError, match='incomplete model buffer'):
     validate_model_file(path)
+
+
+COMPILE_TINY_JIT = r'''
+import sys
+import numpy as np
+from tinygrad import Tensor, TinyJit
+from openpilot.selfdrive.modeld.helpers import dump_oob
+weight = Tensor(np.full(16, float(sys.argv[1]), dtype=np.float32), device="CPU").realize()
+
+@TinyJit
+def run(x):
+  return (x * weight + 1).realize()
+
+for _ in range(3):
+  run(Tensor(np.arange(16, dtype=np.float32), device="CPU").realize())
+with open(sys.argv[2], "wb") as f:
+  dump_oob(run, f)
+'''
+
+
+def test_models_loaded_in_one_process_keep_their_own_buffers(tmp_path: Path):
+  """Two model files compiled in separate processes number their buffers alike; loading the second one in the same
+  process (a live model switch) must not hand it the first one's buffers."""
+  import os
+  import subprocess
+  import sys
+  from tinygrad import Tensor
+  env = {**os.environ, "DEV": "CPU", "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
+  paths = []
+  for weight in ("2", "3"):
+    path = tmp_path / f"model_{weight}.pkl"
+    subprocess.run([sys.executable, "-c", COMPILE_TINY_JIT, weight, str(path)], check=True, env=env, cwd=tmp_path)
+    paths.append(path)
+  with open(paths[0], "rb") as f:
+    first = load_oob(f)
+  with open(paths[1], "rb") as f:
+    second = load_oob(f)
+  x = np.arange(16, dtype=np.float32)
+  for _ in range(2):
+    np.testing.assert_allclose(second(Tensor(x, device="CPU").realize()).numpy(), x * 3 + 1)
+    np.testing.assert_allclose(first(Tensor(x, device="CPU").realize()).numpy(), x * 2 + 1)
