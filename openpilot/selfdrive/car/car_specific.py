@@ -11,6 +11,7 @@ from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL
 
 from openpilot.common.params import Params
+from openpilot.selfdrive.controls.lib.eps_fault_hold import EpsTemporaryFaultHold
 
 ButtonType = structs.CarState.ButtonEvent.Type
 GearShifter = structs.CarState.GearShifter
@@ -38,6 +39,8 @@ class MockCarState:
 class CarSpecificEvents:
   def __init__(self, CP: structs.CarParams):
     self.CP = CP
+    # the same GM EPS hold controlsd applies, to tell the driver why lateral stays off after the fault cleared
+    self.eps_fault_hold = EpsTemporaryFaultHold(getattr(CP, 'brand', '') == 'gm')
 
     self.steering_unpressed = 0
     self.low_speed_alert = False
@@ -134,6 +137,9 @@ class CarSpecificEvents:
         events.add(EventName.resumeRequired)
       if CS.vEgo < self.CP.minSteerSpeed:
         events.add(EventName.belowSteerSpeed)
+      # controlsd keeps lateral off for a while after an EPS temporary fault (EpsTemporaryFaultHold); show it meanwhile
+      if self.eps_fault_hold.update(CS.steerFaultTemporary) and not CS.steerFaultTemporary:
+        events.add(EventName.steerTempUnavailableSilent)
 
     elif self.CP.brand == 'volkswagen':
       events = self.create_common_events(CS, CS_prev, extra_gears=[GearShifter.eco, GearShifter.sport, GearShifter.manumatic],

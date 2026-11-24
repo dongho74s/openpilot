@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from openpilot.cereal import car
+from openpilot.selfdrive.controls.lib.eps_fault_hold import EpsTemporaryFaultHold
 
 
 def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, min_speed=0.0,
@@ -20,11 +21,11 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
     "math": math, "car": car, "MIN_LATERAL_CONTROL_SPEED": 0.3,
     "resolve_vehicle_model_steer_ratio": lambda *_args: 15.0,
     "lateral_vehicle_parameters": lambda sm, _cp: sm["liveParameters"],
-    "read_live_vehicle_dynamics": lambda *_args: None, "DT_CTRL": 0.01,
+    "read_live_vehicle_dynamics": lambda *_args: None,
   }
   exec(compile(tree, str(path), "exec"), namespace)
   controls = namespace["Controls"].__new__(namespace["Controls"])
-  controls.eps_fault_hold = namespace["EpsTemporaryFaultHold"](brand == "gm")
+  controls.eps_fault_hold = EpsTemporaryFaultHold(brand == "gm")
   controls.CP = SimpleNamespace(brand=brand, steerAtStandstill=supported, minSteerSpeed=min_speed,
                                lateralTuning=SimpleNamespace(which=lambda: "angle"))
   controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda key: always_lateral if key == "AlwaysLateral" else False)
@@ -93,12 +94,7 @@ def test_lateral_control_remains_available_above_minimum_speed(brand):
 
 
 def eps_fault_hold_class():
-  path = Path(__file__).parents[1] / "controlsd.py"
-  tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-  tree.body = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "EpsTemporaryFaultHold"]
-  namespace = {"DT_CTRL": 0.01}
-  exec(compile(tree, str(path), "exec"), namespace)
-  return namespace["EpsTemporaryFaultHold"]
+  return EpsTemporaryFaultHold
 
 
 class RefusingEps:
