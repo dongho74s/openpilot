@@ -313,6 +313,8 @@ def tuning_changes(state_dir: str, start: float, end: float, keys) -> list[dict]
           rec = json.loads(line)
         except ValueError:
           continue
+        if not isinstance(rec, dict):
+          continue
         if rec.get("name") in keys and isinstance(rec.get("ts"), (int, float)) and start < rec["ts"] < end:
           out.append({"name": rec["name"], "prev": rec.get("prev"), "next": rec.get("next"), "at": rec["ts"]})
   except OSError:
@@ -363,8 +365,11 @@ def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_c
     changes = tuning_changes(state_dir, drive.wall_start, end, set(advise.drive_settings({})))
 
     def lat_minutes(parts):
-      return metrics.drive_metrics([(s.a, extract.C) for s in parts], 3.0)["lat_minutes"]
+      return metrics.drive_metrics([(s.a, extract.C) for s in parts], 3.0, checkpoint=job.checkpoint)["lat_minutes"]
     drive.segments, tuning, settings_note = settled_part(drive, tuning, changes, lat_minutes)
+    if settings_note and settings_note["used"] != "before":
+      # the replay builds its controller from drive.params: give it the values the analysed part ran with
+      drive.params = dict(drive.params, **{c["name"]: str(tuning[c["name"]]).encode() for c in changes})
   settings = advise.drive_settings(tuning)
   segs = [(s.a, extract.C) for s in drive.segments]
   m = metrics.drive_metrics(segs, advise.lal_value(settings["LateralAccelLimit"]), checkpoint=job.checkpoint)

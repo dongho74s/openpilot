@@ -204,7 +204,7 @@ def test_settings_changed_mid_drive_come_from_the_history_and_the_later_part_is_
     {"ts": start + 210, "name": "CameraOffset", "prev": 0, "next": 5},                # not a tuning value
     {"ts": start + 9000, "name": "LateralAccelLimit", "prev": 35, "next": 40},        # after the drive
   ]
-  (tmp_path / R.PARAM_CHANGES_NAME).write_text("\n".join(_json.dumps(x) for x in lines) + "\nnot json\n")
+  (tmp_path / R.PARAM_CHANGES_NAME).write_text("\n".join(_json.dumps(x) for x in lines) + "\nnot json\nnull\n[]\n7\n")
   keys = {"LateralTorqueKiV", "LateralAccelLimit"}
   changes = R.tuning_changes(str(tmp_path), start, start + 1320, keys)
   assert [(c["prev"], c["next"]) for c in changes] == [(70, 60), (60, 50)]
@@ -217,3 +217,31 @@ def test_settings_changed_mid_drive_come_from_the_history_and_the_later_part_is_
   assert [s.number for s in segs] == [0, 1, 2] and before["LateralTorqueKiV"] == "70" and note["used"] == "before"
   segs, _, note = R.settled_part(drive, tuning, [], lambda parts: 10.0)
   assert len(segs) == 22 and note is None
+
+
+
+def test_the_replay_runs_with_the_values_of_the_part_analysed(tmp_path, monkeypatch):
+  """analyse(): after a mid-drive change the simulator gets the changed value, not the initData one."""
+  import json as _json
+  import numpy as np
+  from openpilot.selfdrive.carrot.tuning_advice import extract
+  start = 1795490331.0
+  (tmp_path / R.PARAM_CHANGES_NAME).write_text(_json.dumps({"ts": start + 200, "name": "LateralTorqueKiV", "prev": 70, "next": 50}) + "\n")
+  segs = []
+  for n in range(10):
+    a = np.zeros((6000, len(extract.COLS)))
+    a[:, extract.C["v"]] = 20.0
+    a[:, extract.C["latActive"]] = 1
+    segs.append(extract.Segment("r", n, a, []))
+  drive = extract.Drive("r", segs, {"LateralTorqueKiV": b"70", "LateralTorqueCustom": b"1"}, b"cp", "X", start)
+  monkeypatch.setattr(extract, "list_routes", lambda root: {"r": list(range(10))})
+  monkeypatch.setattr(extract, "load_drive", lambda *a, **k: drive)
+  seen = {}
+
+  def fake_simulate(d, settings, job):
+    seen["params"], seen["settings"], seen["segments"] = dict(d.params), dict(settings), [s.number for s in d.segments]
+    return None, {"error": "plant"}
+  monkeypatch.setattr(R, "simulate", fake_simulate)
+  R.analyse(str(tmp_path), str(tmp_path), "r", lambda: R.OFFROAD)
+  assert seen["params"]["LateralTorqueKiV"] == b"50" and seen["settings"]["LateralTorqueKiV"] == 50
+  assert seen["segments"] == list(range(4, 10))
