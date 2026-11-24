@@ -42,11 +42,12 @@ def _params() -> Any | None:
 
 
 def _parked(params: Any | None) -> bool:
-  """True only when the comma says the ignition is off and nothing is engaged; any read failure is not parked."""
+  """True only when IsOnroad reads as an explicit False and IsEngaged is not True. Params.get returns None for a value
+  it cannot read (get_bool would turn that into False), and that is not parked."""
   if params is None:
     return False
   try:
-    return not params.get_bool("IsOnroad") and not params.get_bool("IsEngaged")
+    return params.get("IsOnroad") is False and params.get("IsEngaged") is not True
   except Exception:
     return False
 

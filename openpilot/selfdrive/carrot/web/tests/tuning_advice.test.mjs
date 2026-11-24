@@ -103,3 +103,17 @@ test("one row per setting: keep or change, and why", () => {
   assert.deepEqual([changed[0].to, changed[0].change, changed[0].reason], [40, true, "change"]);
   assert.equal(changed[1].change, false);
 });
+
+test("a change that made some curves worse says so, and a passed but unchosen value is not called small", () => {
+  const text = recommendationText({ ...change, delta: { better: 8, worse: 2, windows: 10 } });
+  assert.match(text.detail, /8 got better and 2 got worse/);
+  const result = {
+    settings: { LateralAccelLimit: 35, LateralTorqueKiV: 70 },
+    recommendation: { status: "change", param: "LateralAccelLimit", from: 35, to: 40, delta: { windows: 10, better: 8, worse: 2 }, candidates: [
+      { param: "LateralAccelLimit", from: 35, to: 40, rejected: [], reference_only: false, delta: { windows: 10, better: 8, worse: 2 } },
+      { param: "LateralTorqueKiV", from: 70, to: 90, rejected: [], reference_only: false, delta: { windows: 10, better: 10, worse: 0 } },
+    ] },
+  };
+  const rows = settingRows(result);
+  assert.deepEqual(rows.map((r) => r.reason), ["change_some", "also_ok"]);
+});

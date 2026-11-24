@@ -47,16 +47,7 @@ class Drive:
     return {k: self.params[k].decode(errors="replace") for k in TUNING_PARAMS if k in self.params}
 
 
-ZSTD_RATIO = 6.0      # decoded / compressed size of a comma rlog, with room to spare
-
-
-def decoded_mb(path: str) -> float:
-  """Memory a log file takes while decoded (the compressed bytes plus the decompressed ones)."""
-  try:
-    size = os.path.getsize(path) / 2 ** 20
-  except OSError:
-    return 0.0
-  return size * (1 + ZSTD_RATIO) if path.endswith(".zst") else size
+STREAM_RESERVE_MB = 32.0   # a segment's decode needs about a chunk and a batch of messages beyond the rows it keeps
 
 
 def route_counter(route: str) -> int:
@@ -88,15 +79,53 @@ def segment_file(root: str, route: str, n: int, kind: str) -> str | None:
   return None
 
 
+READ_CHUNK = 1 << 20   # decompressed bytes per read: memory stays at about a chunk plus one batch of messages
+
+
+def _complete_length(buf, pos: int) -> int:
+  """Length of the Cap'n Proto message (segment table framing) starting at pos, or 0 if not all of it is in buf."""
+  if len(buf) - pos < 8:
+    return 0
+  count = int.from_bytes(buf[pos:pos + 4], "little") + 1
+  header = 4 + 4 * count
+  header += (8 - header % 8) % 8
+  if count > 512 or len(buf) - pos < header:
+    return 0 if count <= 512 else -1
+  words = sum(int.from_bytes(buf[pos + 4 + 4 * i:pos + 8 + 4 * i], "little") for i in range(count))
+  total = header + 8 * words
+  return total if len(buf) - pos >= total else 0
+
+
 def read_events(path: str):
-  """All events of a log file; a log cut short by a power loss yields what was written (StopIteration-safe)."""
+  """Events of a log file, decoded a chunk at a time (never the whole file in memory). A log cut short by a power loss
+  yields what was written."""
   from openpilot.cereal import log
   with open(path, "rb") as f:
-    raw = f.read()
-  if path.endswith(".zst"):
-    import zstandard
-    raw = zstandard.ZstdDecompressor().stream_reader(raw).read()
-  return log.Event.read_multiple_bytes(raw, traversal_limit_in_words=2 ** 63, nesting_limit=1000)
+    if path.endswith(".zst"):
+      import zstandard
+      reader = zstandard.ZstdDecompressor().stream_reader(f, read_size=READ_CHUNK // 4)
+    else:
+      reader = f
+    buf = bytearray()
+    done = False
+    while not done:
+      chunk = reader.read(READ_CHUNK)
+      if chunk:
+        buf += chunk
+      else:
+        done = True
+      end = 0
+      while True:
+        n = _complete_length(buf, end)
+        if n <= 0:
+          if n < 0:
+            done, buf = True, bytearray()   # not a message boundary: stop rather than misread the rest
+          break
+        end += n
+      if end:
+        batch = bytes(buf[:end])
+        del buf[:end]
+        yield from log.Event.read_multiple_bytes(batch, traversal_limit_in_words=2 ** 63, nesting_limit=1000)
 
 
 CHECK_EVERY_EVENTS = 20000   # about half a second of decoding on a comma 4 between the runner's pacing checks
@@ -212,7 +241,7 @@ def load_drive(route: str, numbers: list[int], root: str = REALDATA, checkpoint=
     if not need_init and q is not None and qlog_lateral_seconds(q) < 3.0:
       continue
     if checkpoint is not None:
-      checkpoint(need_mb=decoded_mb(rlog))   # the segment is decoded whole: check memory before it is allocated
+      checkpoint(need_mb=STREAM_RESERVE_MB)   # checked before the segment is read
     seg, p, cp, w, cut = read_segment(rlog, route, n, want_init=need_init, checkpoint=checkpoint)
     if p and not params:
       params = p

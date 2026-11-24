@@ -96,9 +96,11 @@ def test_drive_state_from_ignition_and_gear(monkeypatch):
   import openpilot.cereal as cereal_pkg
   monkeypatch.setattr(cereal_pkg, "messaging", fake, raising=False)
   flags = {"IsOnroad": False}
-  params = types.SimpleNamespace(get_bool=lambda k: flags[k])
+  params = types.SimpleNamespace(get=lambda k: flags[k])
   state = R.make_drive_state(params)
   assert state() == R.OFFROAD
+  flags["IsOnroad"] = None                         # unreadable: not taken as offroad
+  assert state() == R.DRIVING
   flags["IsOnroad"] = True
   assert state() == R.DRIVING                      # no carState yet
   import time
@@ -162,7 +164,7 @@ def test_a_stale_or_invalid_park_message_is_not_parked(monkeypatch):
   monkeypatch.setitem(sys.modules, "openpilot.cereal.messaging", fake)
   import openpilot.cereal as cereal_pkg
   monkeypatch.setattr(cereal_pkg, "messaging", fake, raising=False)
-  state = R.make_drive_state(types.SimpleNamespace(get_bool=lambda k: True))
+  state = R.make_drive_state(types.SimpleNamespace(get=lambda k: True))
   def park(age, valid=True):
     return types.SimpleNamespace(valid=valid, logMonoTime=int((time.monotonic() - age) * 1e9),
                                  carState=types.SimpleNamespace(gearShifter="park", standstill=True))

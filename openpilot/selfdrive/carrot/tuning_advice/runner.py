@@ -135,9 +135,12 @@ def make_drive_state(params):
   def drive_state() -> str:
     nonlocal sock, last, last_t
     try:
-      if not params.get_bool("IsOnroad"):
-        return OFFROAD
+      onroad = params.get("IsOnroad")   # True / False, or None when it cannot be read (get_bool would say False)
     except Exception:
+      onroad = None
+    if onroad is False:
+      return OFFROAD
+    if onroad is not True:
       return DRIVING
     try:
       import openpilot.cereal.messaging as messaging
@@ -173,8 +176,7 @@ class Job:
   def checkpoint(self, need_mb: float = 0.0) -> None:
     """Called every few hundred ms of work: set the pace for where the car is (driving: rest as long as the work since
     the last check took), wait while memory or temperature is tight (ignition on), and raise InterruptedError("busy")
-    after 10 minutes of waiting. need_mb: memory the next step will take (a log segment is decoded whole), checked
-    before it is allocated."""
+    after 10 minutes of waiting. need_mb: memory the next step will take, checked before it is allocated."""
     if need_mb <= 0 and self.clock() - self.last_mark < CHECK_MIN_INTERVAL_S and "drive_state" in self.status:
       return
     state = self._state()

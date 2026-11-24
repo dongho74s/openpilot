@@ -24,7 +24,7 @@ def feature(monkeypatch, tmp_path):
   monkeypatch.setattr(F, "REALDATA", str(logs))
   monkeypatch.setattr(F, "get_param_values", lambda names, defaults: {"LateralAccelLimit": 35})
   flags = {"IsOnroad": False}
-  params = SimpleNamespace(get_bool=lambda key: flags.get(key, False))
+  params = SimpleNamespace(get_bool=lambda key: flags.get(key, False), get=lambda key: flags.get(key, False))
   monkeypatch.setattr(F, "_params", lambda: params)
   job = F.Job()
   starts = []
@@ -231,6 +231,9 @@ def test_apply_reads_the_ignition_again_right_before_writing(feature, advice, mo
 def test_apply_refuses_when_the_state_cannot_be_read(feature, advice, monkeypatch):
   def broken(key):
     raise OSError("params unavailable")
-  monkeypatch.setattr(feature.params, "get_bool", broken)
+  monkeypatch.setattr(feature.params, "get", broken)
+  assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
+  # the native Params returns nothing (get) / False (get_bool) for a file it cannot read: not parked
+  monkeypatch.setattr(feature.params, "get", lambda key: None)
   assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
   assert advice.writes == []

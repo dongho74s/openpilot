@@ -27,6 +27,9 @@ const FALLBACK_STRINGS = {
   rec_keep: "Keep your current settings",
   rec_keep_detail: "Each value below was moved one step and the same {windows} curves replayed; none of them made a clear improvement.",
   reason_p: "P is judged from real drives only, not the replay",
+  reason_also_ok: "Also better, but only one value is changed at a time",
+  reason_change_some: "Better in {better} and worse in {worse} of the same {windows} curves",
+  rec_change_why_some: "Replaying the same {windows} curves, {better} got better and {worse} got worse (within the limit). Leave the other values as they are.",
   reason_worse: "Changing it makes things worse",
   reason_mixed: "Better in some curves, worse in others",
   reason_small: "The gain would be too small",
@@ -138,6 +141,7 @@ const ROW_ORDER = ["LateralAccelLimit", "LateralTorqueKiV", "LatTorqueLimitPFilt
 // what one one-step change did: no_effect / small / mixed / worse (from judge() in advise.py)
 function candidateKind(row) {
   const why = row?.rejected || [];
+  if (!why.length) return "accepted";   // passed, but another setting scored higher (one change at a time)
   if (why.includes("no_effect")) return "no_effect";
   if (["jitter", "releases", "saturation", "straight"].some((key) => why.includes(key))) return "worse";
   if (why.includes("inconsistent")) return (row?.delta?.better || 0) > 0 ? "mixed" : "worse";
@@ -158,10 +162,12 @@ function settingRows(result) {
     else if (mine.some((c) => c.reference_only)) reason = "p";
     else {
       const kinds = mine.map(candidateKind);
-      if (kinds.includes("small")) reason = "small";
+      if (kinds.includes("accepted")) reason = "also_ok";
+      else if (kinds.includes("small")) reason = "small";
       else if (kinds.includes("mixed")) reason = "mixed";
       else if (kinds.includes("worse")) reason = "worse";
     }
+    if (change && (rec.delta?.worse || 0) > 0) reason = "change_some";
     return { param, now, to: change ? rec.to : now, change, reason, delta: change ? (rec.delta || {}) : null };
   });
 }
@@ -195,7 +201,7 @@ function recommendationText(rec, translate = t) {
     const d = rec.delta || {};
     return {
       headline: translate("rec_change", { name: translate(`name_${rec.param}`), change: rawChange(rec.param, rec.from, rec.to, translate) }),
-      detail: translate("rec_change_why", { better: d.better ?? 0, windows: d.windows ?? 0 }),
+      detail: translate((d.worse || 0) > 0 ? "rec_change_why_some" : "rec_change_why", { better: d.better ?? 0, worse: d.worse ?? 0, windows: d.windows ?? 0 }),
     };
   }
   if (rec.status === "keep") {
@@ -407,7 +413,7 @@ function render(payload = lastPayload) {
       detail.append(
         el("strong", "tuning-advice__row-value", row.change ? rawChange(row.param, row.now, row.to) : (
           formatValue(row.param, row.now) === String(row.now) ? String(row.now) : `${row.now} (${formatValue(row.param, row.now)})`)),
-        el("span", "tuning-advice__row-reason", t(`reason_${row.reason}`, { better: row.delta?.better ?? 0, windows: row.delta?.windows ?? 0 })),
+        el("span", "tuning-advice__row-reason", t(`reason_${row.reason}`, { better: row.delta?.better ?? 0, worse: row.delta?.worse ?? 0, windows: row.delta?.windows ?? 0 })),
       );
       item.append(name, badge, el("span", "tuning-advice__row-go", "›"), detail);
       item.addEventListener("click", () => {
