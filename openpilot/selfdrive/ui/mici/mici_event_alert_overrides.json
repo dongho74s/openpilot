@@ -688,7 +688,7 @@
       "source": "EVENTS",
       "title": "RES 인게이지 불가",
       "subtitle": "최초 작동은 SET 버튼으로 인게이지 가능",
-      "titleFontPx": 60
+      "titleFontPx": 52
     },
     "EVENTS.seatbeltNotLatched.NO_ENTRY": {
       "eventName": "seatbeltNotLatched",
@@ -714,6 +714,14 @@
       "subtitle": "주행 모델 불안정 가능성 있음",
       "titleFontPx": 64,
       "subtitleFontPx": 36
+    },
+    "EVENTS.steerRetryHold.PERMANENT": {
+      "eventName": "steerRetryHold",
+      "eventType": "PERMANENT",
+      "source": "EVENTS",
+      "title": "조향 보조 대기",
+      "subtitle": "EPS 재요청 대기 중",
+      "titleFontPx": 54
     },
     "EVENTS.steerSaturated.WARNING": {
       "eventName": "steerSaturated",
