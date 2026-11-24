@@ -98,3 +98,109 @@
 .tuning-advice__progress .egpu-model-card__progress {
   margin-top: 6px;
 }
+
+.tuning-advice__rec-value {
+  font-size: 1em;
+  overflow-wrap: anywhere;
+}
+
+.tuning-advice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tuning-advice__table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.tuning-advice__table-hint {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.tuning-advice__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "name badge go" "detail detail detail";
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--md-outline-var);
+  border-radius: 10px;
+  color: inherit;
+  background: color-mix(in srgb, var(--md-surface-container-high, var(--md-surface-container)) 70%, transparent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tuning-advice__row:hover,
+.tuning-advice__row:focus-visible {
+  border-color: color-mix(in srgb, #9be38f 50%, var(--md-outline-var));
+}
+
+.tuning-advice__row.is-change {
+  border-color: color-mix(in srgb, #9be38f 70%, var(--md-outline-var));
+}
+
+.tuning-advice__row-name {
+  grid-area: name;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  min-width: 0;
+}
+
+.tuning-advice__row-name small {
+  opacity: 0.6;
+  overflow-wrap: anywhere;
+}
+
+.tuning-advice__badge {
+  grid-area: badge;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  font-weight: 600;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
+}
+
+.tuning-advice__badge.is-change {
+  color: #10240c;
+  background: #9be38f;
+}
+
+.tuning-advice__row-go {
+  grid-area: go;
+  font-size: 1.2em;
+  opacity: 0.6;
+}
+
+.tuning-advice__row-detail {
+  grid-area: detail;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  font-size: 0.9em;
+}
+
+.tuning-advice__row-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.tuning-advice__row-reason {
+  opacity: 0.75;
+}
+
+.tuning-advice__open {
+  padding: 4px 10px;
+  font-size: 0.85em;
+}

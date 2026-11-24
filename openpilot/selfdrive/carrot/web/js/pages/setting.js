@@ -2042,6 +2042,30 @@ function focusSettingItem(name, behavior = "smooth") {
   return true;
 }
 
+// Jump from another page (the tools page's tuning advice card) straight to one setting row: open the settings
+// page, wait for its catalog, then take the same path as a search hit (group, detail parent, search-only rows).
+async function openSettingByName(name) {
+  const key = String(name || "");
+  if (!key) return false;
+  if (CURRENT_PAGE !== "setting" && typeof showPage === "function") showPage("setting", true);
+  try {
+    await loadSettings();
+  } catch (_) {
+    return false;
+  }
+  const entries = rebuildSettingSearchEntries();
+  const entry = entries.find((item) => item.name === key && item.source !== "profile")
+    || entries.find((item) => item.name === key);
+  if (!entry) {
+    showAppToast(getUIText("setting_jump_missing", "This setting is not shown for this car: {name}").replace("{name}", key), { tone: "error" });
+    return false;
+  }
+  await selectSettingSearchEntry(entry);
+  return true;
+}
+
+window.openSettingByName = openSettingByName;
+
 function closeSettingSearchPanel(options = {}) {
   const syncHistory = Boolean(options.syncHistory);
   const fromHistory = Boolean(options.fromHistory);

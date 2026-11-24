@@ -121,8 +121,9 @@ def test_without_permanent_power_the_next_drive_analyses_the_one_before(feature)
   assert feature.starts == [1]
 
 
-def test_a_runner_left_from_before_a_server_restart_still_counts(feature):
+def test_a_runner_left_from_before_a_server_restart_still_counts(feature, monkeypatch):
   import os
+  monkeypatch.setattr(runner, "is_runner", lambda pid: True)
   fd = runner.acquire_lock(str(feature.state))     # held by "another" runner
   try:
     job = F.Job()
@@ -196,5 +197,40 @@ def test_apply_only_the_current_recommendation_for_the_newest_drive(feature, adv
   assert apply({"name": "LateralTorqueKpV", "value": 170})[0] == 409
   assert apply({"name": "LateralAccelLimit", "value": 45})[0] == 409
   route(feature, "00000253--121bd0b631")          # a newer drive, not analysed yet
+  assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
+  assert advice.writes == []
+
+
+def test_a_holder_that_is_not_a_verified_runner_is_never_signalled(feature, monkeypatch):
+  import os
+  monkeypatch.setattr(runner, "is_runner", lambda pid: False)   # e.g. the file still has an old, reused pid
+  sent = []
+  monkeypatch.setattr(F.os, "killpg", lambda pid, sig: sent.append(pid))
+  monkeypatch.setattr(F.os, "kill", lambda pid, sig: sent.append(pid))
+  fd = runner.acquire_lock(str(feature.state))
+  try:
+    job = F.Job()
+    assert job.running() and job.other_pid() is None
+    job.stop()
+    assert sent == []
+  finally:
+    os.close(fd)
+
+
+def test_apply_reads_the_ignition_again_right_before_writing(feature, advice, monkeypatch):
+  real = F.get_param_values
+
+  def switch_on_meanwhile(names, defaults):
+    feature.flags["IsOnroad"] = True               # the car is started while the values are being read
+    return real(names, defaults)
+  monkeypatch.setattr(F, "get_param_values", switch_on_meanwhile)
+  assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
+  assert advice.writes == []
+
+
+def test_apply_refuses_when_the_state_cannot_be_read(feature, advice, monkeypatch):
+  def broken(key):
+    raise OSError("params unavailable")
+  monkeypatch.setattr(feature.params, "get_bool", broken)
   assert apply({"name": "LateralAccelLimit", "value": 40})[0] == 409
   assert advice.writes == []

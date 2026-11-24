@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyState, describe, formatChange, formatValue, metricLines, recommendationText, statusNotes } from "../src/features/tools/tuning_advice.js";
+import { applyState, describe, formatChange, formatValue, metricLines, rawChange, recommendationText, settingRows, statusNotes } from "../src/features/tools/tuning_advice.js";
 
 const change = { status: "change", param: "LateralAccelLimit", from: 35, to: 40, delta: { better: 4, windows: 5, err_pct: -9.5, outward_cm: -3.2 } };
 const base = { ok: true, onroad: false, running: false, can_run: true, status: { state: "done" }, current: { LateralAccelLimit: 35 } };
@@ -13,7 +13,9 @@ test("values show in the units of the Carrot web setting", () => {
   assert.equal(formatValue("LatTorqueLimitPFilter", 30, (k, v) => `${v.v}초`), "0.30초");
   assert.equal(formatValue("LatTorqueLimitPFilter", 30), "0.30 s");
   const ko = (k) => ({ name_LateralTorqueKpV: "조향 P" })[k] ?? k;
-  assert.equal(formatChange("LateralTorqueKpV", 160, 170, ko), "조향 P 1.60 → 1.70");
+  assert.equal(formatChange("LateralTorqueKpV", 160, 170, ko), "조향 P 160 → 170 (1.60 → 1.70)");
+  assert.equal(rawChange("LateralAccelLimit", 35, 40), "35 → 40 (3.5 → 4.0 m/s²)");
+  assert.equal(rawChange("LatTorqueLimitPFilter", 0, 30, (k, v) => (k === "off" ? "끔" : `${v.v}초`)), "0 → 30 (끔 → 0.30초)");
 });
 
 test("the heading follows the job and the recommendation", () => {
@@ -28,13 +30,14 @@ test("the heading follows the job and the recommendation", () => {
 
 test("recommendation text names the change and why nothing else", () => {
   const text = recommendationText(change);
-  assert.match(text.headline, /Lateral accel limit 3\.5 m\/s² → 4\.0 m\/s²/);
-  assert.match(text.detail, /4 of 5/);
-  assert.match(text.detail, /-9\.5%/);
+  assert.equal(text.headline, "Change one value: Lateral accel limit 35 → 40 (3.5 → 4.0 m/s²)");
+  assert.match(text.detail, /same 5 curves, 4 got better and none got worse/);
   assert.match(recommendationText({ status: "not_enough_data", reason: "curves" }).detail, /Fewer than 3 curves/);
   assert.match(recommendationText({ status: "no_simulation", reason: "plant" }).detail, /Too little steady steering/);
   assert.match(recommendationText({ status: "no_simulation", reason: "exception:KeyError" }).detail, /exception:KeyError/);
-  assert.match(recommendationText({ status: "keep", candidates: [{ delta: { windows: 4 } }] }).detail, /4 curves/);
+  const keep = recommendationText({ status: "keep", candidates: [{ delta: { windows: 4 } }] });
+  assert.equal(keep.headline, "Keep your current settings");
+  assert.match(keep.detail, /same 4 curves/);
 });
 
 test("apply only for a suggested change, parked, and not already applied", () => {
@@ -73,6 +76,30 @@ test("footnotes follow the job: P at a standstill, driving, put off, waiting", (
 
 test("custom torque switch and mismatch reason read naturally", () => {
   const ko = (k) => ({ name_LateralTorqueCustom: "사용자 토크 튜닝", off: "끔", on: "켬" })[k] ?? k;
-  assert.equal(formatChange("LateralTorqueCustom", 0, 1, ko), "사용자 토크 튜닝 끔 → 켬");
+  assert.equal(formatChange("LateralTorqueCustom", 0, 1, ko), "사용자 토크 튜닝 0 → 1 (끔 → 켬)");
   assert.match(recommendationText({ status: "no_simulation", reason: "mismatch" }).detail, /lane mode/);
+});
+
+test("one row per setting: keep or change, and why", () => {
+  const cand = (param, to, rejected, extra = {}) => ({ param, from: { LateralAccelLimit: 35, LateralTorqueKiV: 70, LatTorqueLimitPFilter: 0, LateralTorqueKpV: 160 }[param],
+    to, rejected, reference_only: param === "LateralTorqueKpV", delta: { windows: 5, better: 0, worse: 0 }, ...extra });
+  const result = {
+    settings: { LateralAccelLimit: 35, LateralTorqueKiV: 70, LatTorqueLimitPFilter: 0, LateralTorqueKpV: 160 },
+    recommendation: { status: "keep", candidates: [
+      cand("LateralTorqueKiV", 90, ["no_effect", "small"]), cand("LateralTorqueKiV", 50, ["inconsistent", "small"], { delta: { windows: 5, better: 1, worse: 2 } }),
+      cand("LateralAccelLimit", 40, ["no_effect", "small"]), cand("LateralAccelLimit", 30, ["no_effect", "small"]),
+      cand("LatTorqueLimitPFilter", 30, ["inconsistent", "small", "saturation"]), cand("LateralTorqueKpV", 170, []),
+    ] },
+  };
+  const rows = settingRows(result);
+  assert.deepEqual(rows.map((r) => [r.param, r.now, r.to, r.change, r.reason]), [
+    ["LateralAccelLimit", 35, 35, false, "no_effect"],
+    ["LateralTorqueKiV", 70, 70, false, "mixed"],
+    ["LatTorqueLimitPFilter", 0, 0, false, "worse"],
+    ["LateralTorqueKpV", 160, 160, false, "p"],
+  ]);
+  const changed = settingRows({ ...result, recommendation: { ...result.recommendation, status: "change", param: "LateralAccelLimit", from: 35, to: 40,
+    delta: { windows: 5, better: 4 } } });
+  assert.deepEqual([changed[0].to, changed[0].change, changed[0].reason], [40, true, "change"]);
+  assert.equal(changed[1].change, false);
 });

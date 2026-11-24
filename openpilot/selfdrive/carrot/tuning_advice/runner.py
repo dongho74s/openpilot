@@ -145,8 +145,9 @@ def make_drive_state(params):
         sock = messaging.sub_sock("carState", conflate=True)
       msg = messaging.recv_one_or_none(sock)
       if msg is not None:
-        last, last_t = msg.carState, time.monotonic()
-      if last is not None and time.monotonic() - last_t < CAR_STATE_MAX_AGE_S:
+        # the message's own time (logMonoTime is the monotonic clock), not when it was read: a stale one stays stale
+        last, last_t = (msg.carState, msg.logMonoTime / 1e9) if msg.valid else (None, 0.0)
+      if last is not None and 0.0 <= time.monotonic() - last_t < CAR_STATE_MAX_AGE_S:
         if last.gearShifter == "park" and last.standstill:
           return PARKED
     except Exception:
@@ -169,11 +170,12 @@ class Job:
     self.status["updated_at"] = int(time.time())
     write_json(os.path.join(self.state_dir, STATUS_NAME), _finite(self.status))
 
-  def checkpoint(self) -> None:
+  def checkpoint(self, need_mb: float = 0.0) -> None:
     """Called every few hundred ms of work: set the pace for where the car is (driving: rest as long as the work since
     the last check took), wait while memory or temperature is tight (ignition on), and raise InterruptedError("busy")
-    after 10 minutes of waiting."""
-    if self.clock() - self.last_mark < CHECK_MIN_INTERVAL_S and "drive_state" in self.status:
+    after 10 minutes of waiting. need_mb: memory the next step will take (a log segment is decoded whole), checked
+    before it is allocated."""
+    if need_mb <= 0 and self.clock() - self.last_mark < CHECK_MIN_INTERVAL_S and "drive_state" in self.status:
       return
     state = self._state()
     if state == DRIVING:
@@ -184,7 +186,7 @@ class Job:
     step = self.status.get("step")
     while state != OFFROAD:
       mem, temp = self.read_resources()
-      tight = (mem is not None and mem < GENTLE_MIN_AVAILABLE_MB) or (temp is not None and temp >= GENTLE_MAX_TEMP_C)
+      tight = (mem is not None and mem < GENTLE_MIN_AVAILABLE_MB + need_mb) or (temp is not None and temp >= GENTLE_MAX_TEMP_C)
       if not tight:
         break
       if waiting_since is None:
@@ -238,9 +240,7 @@ def simulate(drive, settings: dict, job: Job):
     info["error"] = "no_car_params"
     return None, info
   segs = [(s.a, C) for s in drive.segments]
-  job.checkpoint()
-  curve = sim.fit_plant_curve(segs)
-  job.checkpoint()
+  curve = sim.fit_plant_curve(segs, checkpoint=job.checkpoint)
   if curve is None:
     info["error"] = "plant"
     return None, info
@@ -249,7 +249,7 @@ def simulate(drive, settings: dict, job: Job):
   except NotImplementedError:
     info["error"] = "unsupported_car"
     return None, info
-  W = sim.windows(segs)
+  W = sim.windows(segs, checkpoint=job.checkpoint)
   info["windows"] = {k: sum(1 for w in W if w[3] == k) for k in ("curve", "turn", "straight")}
   from openpilot.selfdrive.controls.lib.latcontrol_torque import FrogPilotWindupPID
   p_filter = isinstance(simulator.controller({})[0].pid, FrogPilotWindupPID)   # the only PID that has the P filter
@@ -319,7 +319,7 @@ def analyse(root: str, state_dir: str, route: str | None, drive_state, exclude_c
   tuning = drive.tuning()
   settings = advise.drive_settings(tuning)
   segs = [(s.a, extract.C) for s in drive.segments]
-  m = metrics.drive_metrics(segs, advise.lal_value(settings["LateralAccelLimit"]))
+  m = metrics.drive_metrics(segs, advise.lal_value(settings["LateralAccelLimit"]), checkpoint=job.checkpoint)
   job.update(step="simulating", progress=50)
   sim_result, sim_info = (None, {"error": "lat_minutes"})
   if m["lat_minutes"] >= advise.MIN_LAT_MINUTES:
@@ -358,41 +358,76 @@ def max_rss_mb() -> float | None:
     return None
 
 
-def acquire_lock(state_dir: str):
+LOCK_ATTEMPTS = 10                # a status check takes the lock shared for an instant: retry before giving up
+LOCK_RETRY_S = 0.05
+
+
+def acquire_lock(state_dir: str, attempts: int = LOCK_ATTEMPTS):
   """One analysis at a time (also across a carrot_server restart): an exclusive lock held for the process's life, with
   its pid in the file. None if another runner holds it."""
   import fcntl
   fd = os.open(os.path.join(state_dir, LOCK_NAME), os.O_RDWR | os.O_CREAT, 0o644)
-  try:
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-  except OSError:
-    os.close(fd)
-    return None
+  for attempt in range(attempts):
+    try:
+      fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+      break
+    except OSError:
+      if attempt == attempts - 1:
+        os.close(fd)
+        return None
+      time.sleep(LOCK_RETRY_S)
   os.ftruncate(fd, 0)
   os.write(fd, str(os.getpid()).encode())
   return fd
 
 
-def lock_holder(state_dir: str) -> int | None:
-  """pid of the runner holding the lock, or None when no analysis runs."""
+def lock_held(state_dir: str) -> bool:
+  """True while a runner holds the lock (whatever pid the file says)."""
   import fcntl
-  path = os.path.join(state_dir, LOCK_NAME)
   try:
-    fd = os.open(path, os.O_RDONLY)
+    fd = os.open(os.path.join(state_dir, LOCK_NAME), os.O_RDONLY)
   except OSError:
-    return None
+    return False
   try:
     try:
       fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
     except OSError:
-      try:
-        return int(os.pread(fd, 32, 0).decode().strip() or 0) or None
-      except ValueError:
-        return None
+      return True
     fcntl.flock(fd, fcntl.LOCK_UN)
-    return None
+    return False
   finally:
     os.close(fd)
+
+
+def is_runner(pid: int) -> bool:
+  """The pid is alive and is this analysis (its own session, this module on its command line). Without /proc (not a
+  comma) only liveness can be checked."""
+  try:
+    os.kill(pid, 0)
+  except (OSError, ValueError):
+    return False
+  cmdline = f"/proc/{pid}/cmdline"
+  if not os.path.exists("/proc/self/cmdline"):
+    return True
+  try:
+    with open(cmdline, "rb") as f:
+      args = f.read().replace(b"\0", b" ")
+    return b"tuning_advice.runner" in args and os.getsid(pid) == pid
+  except OSError:
+    return False
+
+
+def lock_holder(state_dir: str) -> int | None:
+  """pid of the runner holding the lock, only when the file's pid is verified to be that runner; None otherwise (no
+  runner, or a holder that has not written its pid yet)."""
+  if not lock_held(state_dir):
+    return None
+  try:
+    with open(os.path.join(state_dir, LOCK_NAME)) as f:
+      pid = int(f.read().strip() or 0)
+  except (OSError, ValueError):
+    return None
+  return pid if pid > 0 and is_runner(pid) else None
 
 
 def main(argv=None) -> int:

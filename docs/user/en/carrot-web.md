@@ -210,6 +210,9 @@ The **Tools → Tuning from the last drive card** shows a steering-tuning sugges
   - Average match = 1 − Σ|actual − requested| / Σ max(|actual|, |requested|): the average share of the requested turn the car achieved.
   - Curve and straight match = the share of time the difference stayed within the tolerance (0.3 m/s² or 20 % of the request, whichever is larger) in curves (request above 1.0 m/s²) and on straights (below 0.5 m/s²).
   - Time with the driver on the wheel and below 8 km/h is left out.
+- **Reading the card:** the one line at the top is what to do: `Keep your current settings`, or `Change one value: Lateral accel limit 35 → 40 (3.5 → 4.0 m/s²)`.
+  - Below it, **Settings checked** lists each setting on one row: its name, its key (e.g. `LateralTorqueKiV`), the value the drive used, **Keep/Change** and a short reason (`Changing it makes no difference`, …). Values are the numbers you type in the settings page; the brackets give their meaning (e.g. `70 (0.70)`).
+  - Tap a row to jump to that setting in the settings page. With a suggested change, **Change it in settings** takes you there, or press **Apply**.
 - **Suggestion:** the comma replays the drive's own curves (simulation) with one value changed by one step at a time: the lateral accel limit (±0.5), steering I (±0.20) and the torque-limit P filter (off ↔ 0.3 s).
   - The car's response is a model fitted to that drive. The same setting replayed with that response changed by 10 % is the noise; only differences larger than that count.
   - A change is suggested only if it helps in most curves (60 % or more) and hardly any get worse, cuts the error by more than 8 % or the drift to the outside by more than 3 cm, and adds no jitter, straight-line error, torque let-go at the limit or time at the limit. Otherwise it says **Keep the current values**.

@@ -199,10 +199,13 @@ def _takeovers(acc: _Acc, a: np.ndarray, C: dict, lal: float) -> None:
     k += 1
 
 
-def drive_metrics(segments: list[tuple[np.ndarray, dict]], lal: float) -> dict:
-  """segments: (rows, column index) per log segment; lal: the lateral accel limit the drive used (m/s^2)."""
+def drive_metrics(segments: list[tuple[np.ndarray, dict]], lal: float, checkpoint=None) -> dict:
+  """segments: (rows, column index) per log segment; lal: the lateral accel limit the drive used (m/s^2).
+  checkpoint() runs between segments (the runner's pacing)."""
   acc = _Acc()
   for a, C in segments:
+    if checkpoint is not None:
+      checkpoint()
     if len(a) < MIN_STRETCH:
       continue
     v = a[:, C["v"]]

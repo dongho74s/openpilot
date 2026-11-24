@@ -23,10 +23,22 @@ const FALLBACK_STRINGS = {
   match_value: "{pct}% match",
   match_detail: "Curves {curve} · straights {straight} (debug plot 6: green = requested, yellow = actual lateral accel)",
   match_none: "Not enough steering to compare.",
-  rec_change: "{change} recommended",
-  rec_change_detail: "Same curves replayed: better in {better} of {windows}, curve error {err}, toward the outside {out}; nothing else worse.",
-  rec_keep: "Keep the current values",
-  rec_keep_detail: "Replaying {windows} curves with each one-step change moved nothing beyond the replay's own noise.",
+  rec_change: "Change one value: {name} {change}",
+  rec_keep: "Keep your current settings",
+  rec_keep_detail: "Each value below was moved one step and the same {windows} curves replayed; none of them made a clear improvement.",
+  reason_p: "P is judged from real drives only, not the replay",
+  reason_worse: "Changing it makes things worse",
+  reason_mixed: "Better in some curves, worse in others",
+  reason_small: "The gain would be too small",
+  reason_no_effect: "Changing it makes no difference",
+  reason_change: "Better in {better} of the same {windows} curves",
+  badge_change: "Change",
+  badge_keep: "Keep",
+  table_hint: "Tap a row to open that setting.",
+  table_title: "Settings checked",
+  rec_none: "Not enough to judge yet: keep your current settings",
+  open_setting: "Change it in settings",
+  rec_change_why: "Replaying the same {windows} curves, {better} got better and none got worse. Leave the other values as they are.",
   rec_one_at_a_time: "Change one value at a time and check it on the next drive.",
   rec_not_enough_data_lat_minutes: "Less than 3 minutes of steering above 8 km/h in the last drive.",
   rec_not_enough_data_curves: "Fewer than 3 curves openpilot steered through without the driver: nothing to compare.",
@@ -36,7 +48,6 @@ const FALLBACK_STRINGS = {
   rec_no_simulation_no_windows: "No curve or straight long enough to replay.",
   rec_no_simulation_no_car_params: "The drive's log has no car parameters.",
   rec_no_simulation_other: "The replay could not run ({reason}).",
-  p_reference: "P is judged from real drives only; its replay is shown for reference.",
   changed_since: "Changed since that drive: now {now}.",
   applied_already: "Already applied.",
   apply: "Apply",
@@ -72,17 +83,7 @@ const FALLBACK_STRINGS = {
   review_unclear: "No clear difference yet",
   review_not_comparable: "More than one value changed since the last analysed drive ({names}); not compared.",
   review_row: "{name}: {before} → {after}",
-  sim_title: "Replay of the same curves",
-  sim_head: "Change · error · outside · better/worse",
-  rej_no_effect: "no difference",
   seconds: "{v} s",
-  rej_inconsistent: "not consistent",
-  rej_small: "too small",
-  rej_jitter: "more jitter",
-  rej_straight: "worse on straights",
-  rej_releases: "more let-go",
-  rej_saturation: "more at the limit",
-  ok: "worth a drive",
   name_LateralAccelLimit: "Lateral accel limit",
   name_LateralTorqueKiV: "Steering I",
   name_LateralTorqueKpV: "Steering P",
@@ -117,8 +118,52 @@ function formatValue(param, value, translate = t) {
   return String(v);
 }
 
+// the setting's own numbers (as typed in Carrot web), with what they mean when that differs
+function rawChange(param, from, to, translate = t) {
+  const raw = `${from} → ${to}`;
+  let a = formatValue(param, from, translate);
+  const b = formatValue(param, to, translate);
+  const unit = b.match(/(\s?[^\d\s.,-]+)$/)?.[1];
+  if (unit && a.endsWith(unit) && /\d/.test(a)) a = a.slice(0, -unit.length);   // "3.5 → 4.0 m/s²", unit once
+  const meant = `${a} → ${b}`;
+  return meant === raw ? raw : `${raw} (${meant})`;
+}
+
 function formatChange(param, from, to, translate = t) {
-  return `${translate(`name_${param}`)} ${formatValue(param, from, translate)} → ${formatValue(param, to, translate)}`;
+  return `${translate(`name_${param}`)} ${rawChange(param, from, to, translate)}`;
+}
+
+const ROW_ORDER = ["LateralAccelLimit", "LateralTorqueKiV", "LatTorqueLimitPFilter", "LateralTorqueKpV"];
+
+// what one one-step change did: no_effect / small / mixed / worse (from judge() in advise.py)
+function candidateKind(row) {
+  const why = row?.rejected || [];
+  if (why.includes("no_effect")) return "no_effect";
+  if (["jitter", "releases", "saturation", "straight"].some((key) => why.includes(key))) return "worse";
+  if (why.includes("inconsistent")) return (row?.delta?.better || 0) > 0 ? "mixed" : "worse";
+  return "small";
+}
+
+// one row per setting the replay looked at: the drive's value, the advised value, keep/change and why
+function settingRows(result) {
+  const rec = result?.recommendation || {};
+  const cands = rec.candidates || [];
+  const settings = result?.settings || {};
+  return ROW_ORDER.filter((param) => cands.some((c) => c.param === param)).map((param) => {
+    const mine = cands.filter((c) => c.param === param);
+    const now = settings[param] ?? mine[0]?.from;
+    const change = rec.status === "change" && rec.param === param;
+    let reason = "no_effect";
+    if (change) reason = "change";
+    else if (mine.some((c) => c.reference_only)) reason = "p";
+    else {
+      const kinds = mine.map(candidateKind);
+      if (kinds.includes("small")) reason = "small";
+      else if (kinds.includes("mixed")) reason = "mixed";
+      else if (kinds.includes("worse")) reason = "worse";
+    }
+    return { param, now, to: change ? rec.to : now, change, reason, delta: change ? (rec.delta || {}) : null };
+  });
 }
 
 function pct(value) {
@@ -149,10 +194,8 @@ function recommendationText(rec, translate = t) {
   if (rec.status === "change") {
     const d = rec.delta || {};
     return {
-      headline: translate("rec_change", { change: formatChange(rec.param, rec.from, rec.to, translate) }),
-      detail: translate("rec_change_detail", {
-        better: d.better ?? 0, windows: d.windows ?? 0, err: signed(d.err_pct, "%"), out: signed(d.outward_cm, " cm"),
-      }),
+      headline: translate("rec_change", { name: translate(`name_${rec.param}`), change: rawChange(rec.param, rec.from, rec.to, translate) }),
+      detail: translate("rec_change_why", { better: d.better ?? 0, windows: d.windows ?? 0 }),
     };
   }
   if (rec.status === "keep") {
@@ -160,14 +203,14 @@ function recommendationText(rec, translate = t) {
     return { headline: translate("rec_keep"), detail: translate("rec_keep_detail", { windows }) };
   }
   if (rec.status === "not_enough_data") {
-    return { headline: translate("state_none"), detail: translate(`rec_not_enough_data_${rec.reason === "curves" ? "curves" : "lat_minutes"}`) };
+    return { headline: translate("rec_none"), detail: translate(`rec_not_enough_data_${rec.reason === "curves" ? "curves" : "lat_minutes"}`) };
   }
-  if (rec.status === "no_drive") return { headline: translate("state_none"), detail: translate("rec_no_drive") };
+  if (rec.status === "no_drive") return { headline: translate("rec_none"), detail: translate("rec_no_drive") };
   const known = ["unsupported_car", "plant", "no_windows", "no_car_params", "mismatch"];
   const reason = String(rec.reason || "");
-  if (reason === "lat_minutes") return { headline: translate("state_none"), detail: translate("rec_not_enough_data_lat_minutes") };
+  if (reason === "lat_minutes") return { headline: translate("rec_none"), detail: translate("rec_not_enough_data_lat_minutes") };
   return {
-    headline: translate("state_none"),
+    headline: translate("rec_none"),
     detail: known.includes(reason) ? translate(`rec_no_simulation_${reason}`) : translate("rec_no_simulation_other", { reason }),
   };
 }
@@ -212,6 +255,16 @@ function statusNotes(payload, state = describe(payload).state) {
   if (payload?.result?.route && payload?.needs_run && !payload?.running) notes.push("stale_note");
   if (payload?.onroad && applyState(payload).visible) notes.push("onroad_note");
   return notes;
+}
+
+// a link-like button that opens the settings page on that setting's row (js/pages/setting.js openSettingByName)
+function settingButton(param) {
+  const button = el("button", "btn egpu-model-card__action tuning-advice__open", `${t("open_setting")} ›`);
+  button.type = "button";
+  button.addEventListener("click", () => {
+    if (typeof globalThis.openSettingByName === "function") globalThis.openSettingByName(param);
+  });
+  return button;
 }
 
 function section(key, title) {
@@ -290,11 +343,22 @@ function render(payload = lastPayload) {
   const text = recommendationText(rec);
   if (text) {
     const box = el("div", `tuning-advice__rec tuning-advice__rec--${rec.status}`);
-    box.append(el("strong", "tuning-advice__rec-headline", text.headline), el("p", "egpu-model-card__detail", text.detail));
-    if (rec.status === "change") box.append(el("p", "egpu-model-card__detail", t("rec_one_at_a_time")));
-    const apply = applyState(payload);
-    if (apply.changed) box.append(el("p", "egpu-model-card__detail", t("changed_since", { now: formatValue(rec.param, apply.now) })));
-    if (apply.applied) box.append(el("p", "egpu-model-card__detail", t("applied_already")));
+    box.append(el("strong", "tuning-advice__rec-headline", text.headline));
+    box.append(el("p", "egpu-model-card__detail", text.detail));
+    if (rec.status === "change") {
+      box.append(el("p", "egpu-model-card__detail", t("rec_one_at_a_time")));
+      const apply = applyState(payload);
+      if (apply.changed) box.append(el("p", "egpu-model-card__detail", t("changed_since", { now: apply.now })));
+      if (apply.applied) box.append(el("p", "egpu-model-card__detail", t("applied_already")));
+      const actions = el("div", "tuning-advice__actions");
+      actions.append(settingButton(rec.param));
+      const button = el("button", "btn egpu-model-card__action tuning-advice__apply", busy ? t("applying") : t("apply"));
+      button.type = "button";
+      button.disabled = busy || !apply.enabled;
+      button.addEventListener("click", applyRecommendation);
+      actions.append(button);
+      box.append(actions);
+    }
     nodes.push(box);
   }
 
@@ -328,30 +392,33 @@ function render(payload = lastPayload) {
     nodes.push(details);
   }
 
-  const rows = rec?.candidates || [];
+  const rows = rec && ["change", "keep"].includes(rec.status) ? settingRows(result) : [];
   if (rows.length) {
-    const details = section("sim", t("sim_title"));
-    const list = el("ul", "tuning-advice__list tuning-advice__sim");
-    list.append(el("li", "tuning-advice__sim-head", t("sim_head")));
+    const box = el("div", "tuning-advice__table");
+    box.append(el("strong", "tuning-advice__table-title", t("table_title")), el("span", "tuning-advice__table-hint", t("table_hint")));
     for (const row of rows) {
-      const d = row.delta || {};
-      const verdict = row.reference_only ? t("p_reference")
-        : (row.rejected?.length ? row.rejected.map((r) => t(`rej_${r}`)).join(", ") : t("ok"));
-      list.append(el("li", "", `${formatChange(row.param, row.from, row.to)} · ${signed(d.err_pct, "%")} · ${signed(d.outward_cm, " cm")} · ${d.better ?? 0}/${d.worse ?? 0} · ${verdict}`));
+      const item = el("button", `tuning-advice__row${row.change ? " is-change" : ""}`);
+      item.type = "button";
+      item.setAttribute("aria-label", `${t(`name_${row.param}`)} · ${t("open_setting")}`);
+      const name = el("span", "tuning-advice__row-name");
+      name.append(el("strong", "", t(`name_${row.param}`)), el("small", "", row.param));
+      const badge = el("span", `tuning-advice__badge${row.change ? " is-change" : ""}`, t(row.change ? "badge_change" : "badge_keep"));
+      const detail = el("span", "tuning-advice__row-detail");
+      detail.append(
+        el("strong", "tuning-advice__row-value", row.change ? rawChange(row.param, row.now, row.to) : (
+          formatValue(row.param, row.now) === String(row.now) ? String(row.now) : `${row.now} (${formatValue(row.param, row.now)})`)),
+        el("span", "tuning-advice__row-reason", t(`reason_${row.reason}`, { better: row.delta?.better ?? 0, windows: row.delta?.windows ?? 0 })),
+      );
+      item.append(name, badge, el("span", "tuning-advice__row-go", "›"), detail);
+      item.addEventListener("click", () => {
+        if (typeof globalThis.openSettingByName === "function") globalThis.openSettingByName(row.param);
+      });
+      box.append(item);
     }
-    details.append(list);
-    nodes.push(details);
+    nodes.push(box);
   }
 
   const footer = el("div", "egpu-model-card__footer tuning-advice__footer");
-  const apply = applyState(payload);
-  if (apply.visible) {
-    const button = el("button", "btn egpu-model-card__action", busy ? t("applying") : t("apply"));
-    button.type = "button";
-    button.disabled = busy || !apply.enabled;
-    button.addEventListener("click", applyRecommendation);
-    footer.append(button);
-  }
   const rerun = el("button", "btn egpu-model-card__action", t("rerun"));
   rerun.type = "button";
   rerun.disabled = busy || !payload.can_run;
@@ -417,4 +484,7 @@ function init() {
 const CarrotTuningAdvice = Object.freeze({ init, refresh, render });
 globalThis.CarrotTuningAdvice = CarrotTuningAdvice;
 
-export { CarrotTuningAdvice, FALLBACK_STRINGS, applyState, describe, formatChange, formatValue, metricLines, recommendationText, statusNotes };
+export {
+  CarrotTuningAdvice, FALLBACK_STRINGS, applyState, describe, formatChange, formatValue, metricLines, rawChange, recommendationText,
+  settingRows, statusNotes,
+};

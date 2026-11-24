@@ -101,7 +101,9 @@ def test_drive_state_from_ignition_and_gear(monkeypatch):
   assert state() == R.OFFROAD
   flags["IsOnroad"] = True
   assert state() == R.DRIVING                      # no carState yet
-  cs = lambda gear, still: types.SimpleNamespace(carState=types.SimpleNamespace(gearShifter=gear, standstill=still))
+  import time
+  cs = lambda gear, still: types.SimpleNamespace(valid=True, logMonoTime=int(time.monotonic() * 1e9),
+                                                 carState=types.SimpleNamespace(gearShifter=gear, standstill=still))
   msgs.append(cs("park", True))
   assert state() == R.PARKED
   assert state() == R.PARKED                       # the latest message still counts
@@ -123,15 +125,59 @@ def test_while_driving_the_route_being_recorded_is_left_out(tmp_path, monkeypatc
   assert (route, segs, newest) == ("00000252--3d51466b37", [0], "00000252--3d51466b37")
 
 
-def test_one_runner_at_a_time(tmp_path):
+def test_one_runner_at_a_time(tmp_path, monkeypatch):
   import os
-  assert R.lock_holder(str(tmp_path)) is None
+  monkeypatch.setattr(R, "is_runner", lambda pid: pid == os.getpid())
+  assert R.lock_holder(str(tmp_path)) is None and not R.lock_held(str(tmp_path))
   fd = R.acquire_lock(str(tmp_path))
   assert fd is not None
-  assert R.lock_holder(str(tmp_path)) == os.getpid()
-  assert R.acquire_lock(str(tmp_path)) is None     # a second runner gives up at once
+  assert R.lock_held(str(tmp_path)) and R.lock_holder(str(tmp_path)) == os.getpid()
+  assert R.acquire_lock(str(tmp_path), attempts=2) is None     # a second runner gives up after its retries
   os.close(fd)
-  assert R.lock_holder(str(tmp_path)) is None
+  assert R.lock_holder(str(tmp_path)) is None and not R.lock_held(str(tmp_path))
+
+
+def test_a_status_check_does_not_stop_a_runner_from_starting(tmp_path):
+  import fcntl
+  import os
+  import threading
+  path = tmp_path / R.LOCK_NAME
+  path.write_text("")
+  fd = os.open(path, os.O_RDONLY)
+  fcntl.flock(fd, fcntl.LOCK_SH)                   # a status check holding the lock shared for a moment
+  threading.Timer(0.12, lambda: (fcntl.flock(fd, fcntl.LOCK_UN), os.close(fd))).start()
+  got = R.acquire_lock(str(tmp_path))
+  assert got is not None
+  os.close(got)
+
+
+def test_a_stale_or_invalid_park_message_is_not_parked(monkeypatch):
+  import sys
+  import time
+  import types
+  msgs = []
+  fake = types.ModuleType("openpilot.cereal.messaging")
+  fake.sub_sock = lambda name, conflate=False: object()
+  fake.recv_one_or_none = lambda sock: msgs.pop(0) if msgs else None
+  monkeypatch.setitem(sys.modules, "openpilot.cereal.messaging", fake)
+  import openpilot.cereal as cereal_pkg
+  monkeypatch.setattr(cereal_pkg, "messaging", fake, raising=False)
+  state = R.make_drive_state(types.SimpleNamespace(get_bool=lambda k: True))
+  def park(age, valid=True):
+    return types.SimpleNamespace(valid=valid, logMonoTime=int((time.monotonic() - age) * 1e9),
+                                 carState=types.SimpleNamespace(gearShifter="park", standstill=True))
+  msgs.append(park(90.0))                          # read now, but written 90 s ago
+  assert state() == R.DRIVING
+  msgs.append(park(0.0, valid=False))
+  assert state() == R.DRIVING
+  msgs.append(park(0.0))
+  assert state() == R.PARKED
+
+
+def test_memory_for_the_next_step_is_checked_before_it_is_taken(tmp_path):
+  job, clock, _ = make_job(tmp_path, [(700, 50.0), (900, 50.0)], state=R.PARKED)
+  job.checkpoint(need_mb=250)                      # 700 < 600 + 250: wait, then 900 >= 850
+  assert clock.slept == [R.GENTLE_WAIT_S]
 
 
 def test_checks_are_spaced_but_the_rest_matches_the_work(tmp_path):

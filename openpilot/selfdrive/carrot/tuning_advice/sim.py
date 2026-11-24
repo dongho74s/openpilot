@@ -92,12 +92,14 @@ def install_stand_in_params(values: dict[str, bytes]) -> None:
         pass
 
 
-def fit_plant_curve(segments: list[tuple[np.ndarray, dict]]):
+def fit_plant_curve(segments: list[tuple[np.ndarray, dict]], checkpoint=None):
   """Torque that held each (speed, lateral accel) while openpilot steered, the driver was off the wheel and the lateral
   accel changed slowly; monotonic per speed, extended past the data with the outer slope (|torque| <= 1.6).
   None if fewer than 3 speeds have enough samples."""
   V, L, T = [], [], []
   for a, CC in segments:
+    if checkpoint is not None:
+      checkpoint()
     act = a[:, CC["act"]]
     smooth = np.convolve(np.nan_to_num(act), np.ones(25) / 25, mode="same")
     jerk = np.gradient(smooth) / DT
@@ -110,6 +112,8 @@ def fit_plant_curve(segments: list[tuple[np.ndarray, dict]]):
   V, L, T = map(np.concatenate, (V, L, T))
   curve = np.full((len(V_GRID), len(LA_GRID)), np.nan)
   for i, v in enumerate(V_GRID):
+    if checkpoint is not None:
+      checkpoint()
     sel = np.abs(V - v) < 2.0
     cx, cy = [], []
     for lo, hi in zip(LA_BINS[:-1], LA_BINS[1:], strict=True):
@@ -168,12 +172,14 @@ class Plant:
     return self.la
 
 
-def windows(segments: list[tuple[np.ndarray, dict]]):
+def windows(segments: list[tuple[np.ndarray, dict]], checkpoint=None):
   """(segment index, start, end, kind): curve = demand > 1.5 m/s^2 for >= 2 s above 45 km/h, turn = the same at
   15-45 km/h, straight = > 60 km/h with demand < 0.3 for 8 s; with steering on and the driver off the wheel."""
   from openpilot.selfdrive.carrot.tuning_advice.metrics import stretches
   out = []
   for si, (a, CC) in enumerate(segments):
+    if checkpoint is not None:
+      checkpoint()
     v = a[:, CC["v"]]
     dem = a[:, CC["mdlCurv"]] * v ** 2
     ok = (a[:, CC["latActive"]] > .5) & (a[:, CC["pressed"]] < .5)

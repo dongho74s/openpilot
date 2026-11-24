@@ -41,6 +41,16 @@ def _params() -> Any | None:
   return Params() if HAS_PARAMS and Params is not None else None
 
 
+def _parked(params: Any | None) -> bool:
+  """True only when the comma says the ignition is off and nothing is engaged; any read failure is not parked."""
+  if params is None:
+    return False
+  try:
+    return not params.get_bool("IsOnroad") and not params.get_bool("IsEngaged")
+  except Exception:
+    return False
+
+
 def _bool(params: Any | None, key: str) -> bool:
   if params is None:
     return False
@@ -74,10 +84,11 @@ class Job:
     return self.proc is not None and self.proc.poll() is None
 
   def other_pid(self) -> int | None:
+    """pid of a runner this server did not start, verified to be that runner (None if unknown)."""
     return None if self.own_running() else runner.lock_holder(CARROT_STATE_DIR)
 
   def running(self) -> bool:
-    return self.own_running() or self.other_pid() is not None
+    return self.own_running() or runner.lock_held(CARROT_STATE_DIR)
 
   def elapsed(self) -> float:
     if self.own_running():
@@ -223,7 +234,7 @@ async def api_apply(request: web.Request) -> web.Response:
   except Exception:
     return web.json_response({"ok": False, "error": "invalid json"}, status=400)
   params = _params()
-  if _bool(params, "IsOnroad") or _bool(params, "IsEngaged"):
+  if not _parked(params):
     return web.json_response({"ok": False, "error": "park and turn the ignition off first"}, status=409)
   result = read_result()
   rec = (result or {}).get("recommendation") or {}
@@ -241,6 +252,8 @@ async def api_apply(request: web.Request) -> web.Response:
   except Exception:
     setting = None
   previous = get_param_values([name], {name: None}).get(name)
+  if not _parked(params):   # again right before the write: the reads above take time
+    return web.json_response({"ok": False, "error": "park and turn the ignition off first"}, status=409)
   try:
     set_param_value(name, int(value), setting)
   except Exception as e:

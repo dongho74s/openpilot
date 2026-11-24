@@ -47,6 +47,18 @@ class Drive:
     return {k: self.params[k].decode(errors="replace") for k in TUNING_PARAMS if k in self.params}
 
 
+ZSTD_RATIO = 6.0      # decoded / compressed size of a comma rlog, with room to spare
+
+
+def decoded_mb(path: str) -> float:
+  """Memory a log file takes while decoded (the compressed bytes plus the decompressed ones)."""
+  try:
+    size = os.path.getsize(path) / 2 ** 20
+  except OSError:
+    return 0.0
+  return size * (1 + ZSTD_RATIO) if path.endswith(".zst") else size
+
+
 def route_counter(route: str) -> int:
   try:
     return int(route.split("--")[0], 16)
@@ -199,6 +211,8 @@ def load_drive(route: str, numbers: list[int], root: str = REALDATA, checkpoint=
     q = segment_file(root, route, n, "qlog")
     if not need_init and q is not None and qlog_lateral_seconds(q) < 3.0:
       continue
+    if checkpoint is not None:
+      checkpoint(need_mb=decoded_mb(rlog))   # the segment is decoded whole: check memory before it is allocated
     seg, p, cp, w, cut = read_segment(rlog, route, n, want_init=need_init, checkpoint=checkpoint)
     if p and not params:
       params = p
