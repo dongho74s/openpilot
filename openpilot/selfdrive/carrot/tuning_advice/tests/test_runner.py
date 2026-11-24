@@ -291,3 +291,20 @@ def test_a_max_torque_change_mid_drive_is_seen(tmp_path):
   (tmp_path / R.PARAM_CHANGES_NAME).write_text(_json.dumps({"ts": start + 50, "name": "CustomSteerMax", "prev": 150, "next": 300}) + "\n")
   changes = R.tuning_changes(str(tmp_path), start, start + 600, set(advise.drive_settings({})))
   assert [c["name"] for c in changes] == ["CustomSteerMax"]
+
+
+
+def test_a_positive_torque_limit_too_short_to_be_read_is_not_assumed(tmp_path):
+  from types import SimpleNamespace
+  start = 1795490331.0
+  drive = SimpleNamespace(wall_start=start, segments=[SimpleNamespace(number=n) for n in range(10)])
+  quick = [{"name": "CustomSteerDeltaUp", "prev": 0, "next": 12, "at": start + 200.1},
+           {"name": "CustomSteerDeltaUp", "prev": 12, "next": 0, "at": start + 200.2}]   # back within one 0.5 s read
+  segs, _, note = R.settled_part(drive, {"CustomSteerDeltaUp": "0"}, quick, lambda parts: len(parts))
+  assert note["unsure"] and note["used"] == "before" and [s.number for s in segs] == [0, 1, 2]
+  slow = [dict(quick[0]), dict(quick[1], at=start + 205.0)]
+  segs, after, note = R.settled_part(drive, {"CustomSteerDeltaUp": "0"}, slow, lambda parts: len(parts))
+  assert not note["unsure"] and note["used"] == "after" and after["CustomSteerDeltaUp"] == "12"
+  from_start = [{"name": "CustomSteerDeltaUp", "prev": 12, "next": 0, "at": start + 0.5}]      # 12 since the start
+  _, after, note = R.settled_part(drive, {"CustomSteerDeltaUp": "12"}, from_start, lambda parts: len(parts))
+  assert note["unsure"] and note["used"] == "none"     # only 0.5 s into the drive: a read may not have happened

@@ -369,6 +369,7 @@ def tuning_changes(state_dir: str, start: float, end: float, keys) -> list[dict]
 
 
 STICKY_WHEN_ZERO = frozenset({"CustomSteerMax", "CustomSteerDeltaUp", "CustomSteerDeltaDown"})
+STICKY_READ_S = 1.0   # GM carcontroller reads them every 50 frames (0.5 s); two reads to be sure one happened
 
 
 def _int_or(value, default: int) -> int:
@@ -384,19 +385,28 @@ def settled_part(drive, tuning: dict, changes: list[dict], minutes) -> tuple[lis
   if not changes or drive.wall_start is None:
     return drive.segments, tuning, None
   after = dict(tuning)
+  set_at = {}          # when each sticky value took its current positive value (the drive's start for initData)
+  unsure = False
   for c in changes:
     nxt = c["next"]
-    # the GM car controller applies CustomSteerMax / CustomSteerDelta* only when positive: set back to 0 mid-drive,
-    # it keeps the last positive value until the next start (0 means the car's own only at the drive's start)
-    if c["name"] in STICKY_WHEN_ZERO and _int_or(nxt, 0) <= 0 and _int_or(after.get(c["name"]), 0) > 0:
-      c["effective"] = _int_or(after.get(c["name"]), 0)
-      continue
+    # the GM car controller applies CustomSteerMax / CustomSteerDelta* only when positive and reads them every 0.5 s:
+    # set back to 0 mid-drive, it keeps the last positive value it read until the next start (0 means the car's own
+    # only at the drive's start). A positive value that lasted less than a read or two may never have been read.
+    if c["name"] in STICKY_WHEN_ZERO:
+      if _int_or(nxt, 0) <= 0:
+        if _int_or(after.get(c["name"]), 0) > 0:
+          if c["at"] - set_at.get(c["name"], drive.wall_start) < STICKY_READ_S:
+            unsure = True
+          c["effective"] = _int_or(after.get(c["name"]), 0)
+          continue
+      else:
+        set_at[c["name"]] = c["at"]
     after[c["name"]] = str(nxt)
   last, first = changes[-1]["at"], changes[0]["at"]
   late = [s for s in drive.segments if drive.wall_start + 60.0 * s.number >= last]
   early = [s for s in drive.segments if drive.wall_start + 60.0 * (s.number + 1) <= first]
-  note = {"changes": changes}
-  if late and minutes(late) >= 3.0:
+  note = {"changes": changes, "unsure": unsure}
+  if late and not unsure and minutes(late) >= 3.0:
     return late, after, dict(note, used="after", segments=[s.number for s in late])
   if early and minutes(early) >= 3.0:
     return early, tuning, dict(note, used="before", segments=[s.number for s in early])

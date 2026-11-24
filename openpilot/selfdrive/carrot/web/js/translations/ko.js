@@ -65,6 +65,7 @@ window.CarrotTranslations.register("ko", {
     tuning_advice_changed_after: "이 주행 중에 설정을 바꿔서({changes}) 바꾼 뒤 구간만 분석했습니다.",
     tuning_advice_changed_before: "이 주행 중에 설정을 바꿨는데({changes}) 바꾼 뒤 조향이 3분이 안 돼서, 바꾸기 전 구간만 분석했습니다.",
     tuning_advice_changed_none: "이 주행 중에 설정을 바꿔서({changes}) 한 가지 설정으로 3분 넘게 조향한 구간이 없습니다.",
+    tuning_advice_changed_unsure: "이 주행 중에 GM 토크 한도를 바꿨다가 1초도 안 돼 되돌려서({changes}) 실제로 쓰였는지 알 수 없어, 바꾸기 전 구간만 분석했습니다.",
     tuning_advice_match_title: "모델 의도 대비 실제 주행",
     tuning_advice_match_value: "평균 일치율 {pct}%",
     tuning_advice_match_detail: "커브 {curve} · 직선 {straight} (디버그 그래프 6번: 초록=요구, 노랑=실제 횡가속)",

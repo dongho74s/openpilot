@@ -65,6 +65,7 @@ window.CarrotTranslations.register("zh", {
     tuning_advice_changed_after: "本次行驶中修改了设置（{changes}），因此只分析了修改后的部分。",
     tuning_advice_changed_before: "本次行驶中修改了设置（{changes}），修改后转向不足 3 分钟，因此只分析了修改前的部分。",
     tuning_advice_changed_none: "本次行驶中修改了设置（{changes}），没有以同一设置转向超过 3 分钟的部分。",
+    tuning_advice_changed_unsure: "本次行驶中 GM 扭矩上限修改后不到 1 秒又改回（{changes}），无法确定是否生效，因此只分析了修改前的部分。",
     tuning_advice_match_title: "模型意图与实际行驶",
     tuning_advice_match_value: "平均吻合度 {pct}%",
     tuning_advice_match_detail: "弯道 {curve} · 直道 {straight}（调试图 6：绿=请求，黄=实际横向加速度）",

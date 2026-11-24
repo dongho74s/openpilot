@@ -65,6 +65,7 @@ window.CarrotTranslations.register("en", {
     tuning_advice_changed_after: "Settings were changed during this drive ({changes}), so only the part after the change was analysed.",
     tuning_advice_changed_before: "Settings were changed during this drive ({changes}) with too little steering afterwards, so only the part before the change was analysed.",
     tuning_advice_changed_none: "Settings were changed during this drive ({changes}); no part with one setting has 3 minutes of steering.",
+    tuning_advice_changed_unsure: "A GM torque limit was changed and set back within a second during this drive ({changes}), so it is unknown whether it was used; only the part before the change was analysed.",
     tuning_advice_match_title: "Model intent vs actual",
     tuning_advice_match_value: "{pct}% match",
     tuning_advice_match_detail: "Curves {curve} · straights {straight} (debug plot 6: green = requested, yellow = actual lateral accel)",

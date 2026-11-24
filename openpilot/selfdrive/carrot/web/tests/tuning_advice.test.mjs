@@ -174,3 +174,11 @@ test("a torque limit set back to 0 mid-drive says it was kept", () => {
   ] } });
   assert.equal(note, "Settings were changed during this drive (Torque rise rate 0 → 0 (12:31, kept at 12 for the rest of the drive)), so only the part after the change was analysed.");
 });
+
+test("a torque limit flipped back within a second says it is unknown whether it was used", () => {
+  const at = new Date(2026, 10, 24, 12, 30).getTime() / 1000;
+  const note = changedNote({ settings_changed: { used: "before", unsure: true, changes: [
+    { name: "CustomSteerDeltaUp", prev: 0, next: 12, at }, { name: "CustomSteerDeltaUp", prev: 12, next: 0, at: at + 0.1, effective: 12 },
+  ] } });
+  assert.match(note, /^A GM torque limit was changed and set back within a second/);
+});

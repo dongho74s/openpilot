@@ -20,6 +20,7 @@ const FALLBACK_STRINGS = {
   state_error: "Analysis failed",
   drive_line: "Drive {when} · steering {min} min · {segments} segments",
   changed_none: "Settings were changed during this drive ({changes}); no part with one setting has 3 minutes of steering.",
+  changed_unsure: "A GM torque limit was changed and set back within a second during this drive ({changes}), so it is unknown whether it was used; only the part before the change was analysed.",
   changed_before: "Settings were changed during this drive ({changes}) with too little steering afterwards, so only the part before the change was analysed.",
   changed_after: "Settings were changed during this drive ({changes}), so only the part after the change was analysed.",
   match_title: "Model intent vs actual",
@@ -364,7 +365,8 @@ function changedNote(result, translate = t) {
     const kept = c.effective !== undefined && c.effective !== null ? `, ${translate("sticky", { v: c.effective })}` : "";
     return `${translate(`name_${c.name}`)} ${c.prev} → ${c.next} (${two(d.getHours())}:${two(d.getMinutes())}${kept})`;
   }).join(", ");
-  const key = ["after", "before", "none"].includes(note.used) ? note.used : "none";
+  let key = ["after", "before", "none"].includes(note.used) ? note.used : "none";
+  if (note.unsure && key === "before") key = "unsure";
   return translate(`changed_${key}`, { changes });
 }
 
