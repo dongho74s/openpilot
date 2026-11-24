@@ -47,7 +47,7 @@ class Drive:
     return {k: self.params[k].decode(errors="replace") for k in TUNING_PARAMS if k in self.params}
 
 
-STREAM_RESERVE_MB = 32.0   # a segment's decode needs about a chunk and a batch of messages beyond the rows it keeps
+STREAM_RESERVE_MB = 64.0   # a segment's decode: a chunk, at most one 16 MB message and its copies, beyond the rows kept
 
 
 def route_counter(route: str) -> int:
@@ -79,26 +79,36 @@ def segment_file(root: str, route: str, n: int, kind: str) -> str | None:
   return None
 
 
-READ_CHUNK = 1 << 20   # decompressed bytes per read: memory stays at about a chunk plus one batch of messages
+READ_CHUNK = 1 << 20          # decompressed bytes per read
+MAX_MESSAGE_BYTES = 16 << 20  # no comma log message comes near this; a larger declared size means a damaged log
+
+
+class LogCut(Exception):
+  """The log ends in an incomplete or malformed message (power cut, damage); the messages before it were returned."""
 
 
 def _complete_length(buf, pos: int) -> int:
-  """Length of the Cap'n Proto message (segment table framing) starting at pos, or 0 if not all of it is in buf."""
+  """Length of the Cap'n Proto message (segment table framing) starting at pos; 0 while it is not all in buf yet;
+  -1 for a header that cannot be a comma log message (too many segments, larger than MAX_MESSAGE_BYTES)."""
   if len(buf) - pos < 8:
     return 0
   count = int.from_bytes(buf[pos:pos + 4], "little") + 1
+  if count > 512:
+    return -1
   header = 4 + 4 * count
   header += (8 - header % 8) % 8
-  if count > 512 or len(buf) - pos < header:
-    return 0 if count <= 512 else -1
-  words = sum(int.from_bytes(buf[pos + 4 + 4 * i:pos + 8 + 4 * i], "little") for i in range(count))
-  total = header + 8 * words
+  if len(buf) - pos < header:
+    return 0
+  total = header + 8 * sum(int.from_bytes(buf[pos + 4 + 4 * i:pos + 8 + 4 * i], "little") for i in range(count))
+  if total > MAX_MESSAGE_BYTES:
+    return -1
   return total if len(buf) - pos >= total else 0
 
 
 def read_events(path: str):
-  """Events of a log file, decoded a chunk at a time (never the whole file in memory). A log cut short by a power loss
-  yields what was written."""
+  """Events of a log file, decoded a chunk at a time: memory stays within about one chunk plus one message
+  (MAX_MESSAGE_BYTES at most). Every complete message is returned; a log that then ends early or turns malformed
+  raises LogCut after them, so the caller can mark the segment partial."""
   from openpilot.cereal import log
   with open(path, "rb") as f:
     if path.endswith(".zst"):
@@ -107,25 +117,29 @@ def read_events(path: str):
     else:
       reader = f
     buf = bytearray()
-    done = False
-    while not done:
+    while True:
       chunk = reader.read(READ_CHUNK)
       if chunk:
         buf += chunk
-      else:
-        done = True
-      end = 0
+      end, malformed = 0, False
       while True:
         n = _complete_length(buf, end)
-        if n <= 0:
-          if n < 0:
-            done, buf = True, bytearray()   # not a message boundary: stop rather than misread the rest
+        if n < 0:
+          malformed = True
+          break
+        if n == 0:
           break
         end += n
       if end:
         batch = bytes(buf[:end])
         del buf[:end]
         yield from log.Event.read_multiple_bytes(batch, traversal_limit_in_words=2 ** 63, nesting_limit=1000)
+      if malformed:
+        raise LogCut("malformed message header")
+      if not chunk:
+        if buf:
+          raise LogCut("incomplete last message")
+        return
 
 
 CHECK_EVERY_EVENTS = 20000   # about half a second of decoding on a comma 4 between the runner's pacing checks
