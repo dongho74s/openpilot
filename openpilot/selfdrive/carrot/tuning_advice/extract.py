@@ -47,7 +47,7 @@ class Drive:
     return {k: self.params[k].decode(errors="replace") for k in TUNING_PARAMS if k in self.params}
 
 
-STREAM_RESERVE_MB = 64.0   # a segment's decode: a chunk, at most one 16 MB message and its copies, beyond the rows kept
+STREAM_RESERVE_MB = 96.0   # a segment's decode: a chunk, up to two 16 MB messages and their copies, beyond the rows kept
 
 
 def route_counter(route: str) -> int:
