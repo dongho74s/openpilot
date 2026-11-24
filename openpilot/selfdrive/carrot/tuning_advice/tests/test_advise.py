@@ -135,3 +135,13 @@ def test_change_review_ignores_keys_an_older_result_did_not_have():
 def test_every_setting_the_advice_reads_comes_from_the_drive():
   from openpilot.selfdrive.carrot.tuning_advice.extract import TUNING_PARAMS
   assert set(A.SETTING_DEFAULTS) <= set(TUNING_PARAMS)
+
+
+def test_a_review_against_an_older_format_is_not_judged():
+  old = {"route": "a", "settings": dict(SETTINGS, LateralTorqueKpV=150),
+         "metrics": {"lat_minutes": 10, "err": 0.15, "takeovers_per_min": 3.0, "release_per_min": 1.0, "match_curve_pct": 80}}
+  new = {"route": "b", "settings": A.drive_settings({k: str(v) for k, v in SETTINGS.items()}),
+         "metrics": {"lat_minutes": 10, "err": 0.11, "takeovers_per_min": 2.0, "release_per_min": 1.0, "match_curve_pct": 88}}
+  r = A.change_review(new, [old])
+  assert r["param"] == "LateralTorqueKpV" and r["better"] >= 2 and r["verdict"] == "unclear"
+  assert "LateralTorqueKf" in r["missing_keys"] and "CustomSteerMax" in r["missing_keys"]

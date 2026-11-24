@@ -268,3 +268,26 @@ def test_learned_steer_ratio_and_delay_beside_the_settings():
   sr = R.learned_values(segs, learned, parity=None)["steer_ratio"]
   assert (sr["used"], sr["param"], sr["now"], sr["match"], sr["check"]) == (18.0, "SteerRatioRate", 100, 100, False)
   assert R.learned_values([SimpleNamespace(a=a[:500])], custom, None) == {}          # too little to say
+
+
+def test_a_gm_torque_limit_set_back_to_0_mid_drive_keeps_its_last_value(tmp_path):
+  from types import SimpleNamespace
+  start = 1795490331.0
+  drive = SimpleNamespace(wall_start=start, segments=[SimpleNamespace(number=n) for n in range(10)])
+  tuning = {"CustomSteerDeltaUp": "0", "CustomSteerMax": "150", "LateralTorqueKiV": "70"}
+  changes = [{"name": "CustomSteerDeltaUp", "prev": 0, "next": 12, "at": start + 30},
+             {"name": "CustomSteerDeltaUp", "prev": 12, "next": 0, "at": start + 100},     # the car controller keeps 12
+             {"name": "CustomSteerMax", "prev": 150, "next": 300, "at": start + 110}]
+  segs, after, note = R.settled_part(drive, tuning, changes, lambda parts: len(parts))
+  assert after["CustomSteerDeltaUp"] == "12" and after["CustomSteerMax"] == "300"
+  assert changes[1]["effective"] == 12 and "effective" not in changes[0]
+  assert [s.number for s in segs] == list(range(2, 10)) and note["used"] == "after"
+
+
+def test_a_max_torque_change_mid_drive_is_seen(tmp_path):
+  import json as _json
+  from openpilot.selfdrive.carrot.tuning_advice import advise
+  start = 1795490331.0
+  (tmp_path / R.PARAM_CHANGES_NAME).write_text(_json.dumps({"ts": start + 50, "name": "CustomSteerMax", "prev": 150, "next": 300}) + "\n")
+  changes = R.tuning_changes(str(tmp_path), start, start + 600, set(advise.drive_settings({})))
+  assert [c["name"] for c in changes] == ["CustomSteerMax"]

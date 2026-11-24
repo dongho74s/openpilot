@@ -166,3 +166,11 @@ test("Kd gets its own reference reason", () => {
     { param: "LateralTorqueKd", from: 0, to: 10, rejected: [], reference_only: true, delta: { windows: 3 } }] } });
   assert.deepEqual([rows[0].param, rows[0].badge, rows[0].reason], ["LateralTorqueKd", "keep", "kd"]);
 });
+
+test("a torque limit set back to 0 mid-drive says it was kept", () => {
+  const at = new Date(2026, 10, 24, 12, 30).getTime() / 1000;
+  const note = changedNote({ settings_changed: { used: "after", changes: [
+    { name: "CustomSteerDeltaUp", prev: 0, next: 12, at }, { name: "CustomSteerDeltaUp", prev: 12, next: 0, at: at + 60, effective: 12 },
+  ] } });
+  assert.equal(note, "Settings were changed during this drive (Torque rise rate 0 → 0 (12:31, kept at 12 for the rest of the drive)), so only the part after the change was analysed.");
+});

@@ -60,6 +60,7 @@ SETTING_DEFAULTS = {   # carrot_settings.json defaults
   "LateralTorqueCustom": 0, "LateralTorqueKpV": 100, "LateralTorqueKiV": 10, "LateralTorqueKf": 100, "LateralTorqueKd": 0,
   "LateralAccelLimit": 30, "LatJerkMax": 50, "LatTorqueLimitPFilter": 0, "CustomSteerDeltaUp": 0, "CustomSteerDeltaDown": 0,
   "CustomSR": 0, "SteerRatioRate": 100, "SteerActuatorDelay": 30,
+  "CustomSteerMax": 0,   # never suggested, but it changes the replay's torque scale, so a change mid-drive must be seen
 }
 
 
@@ -204,7 +205,8 @@ def change_review(current: dict, history: list[dict]) -> dict | None:
     if prev.get("route") == current.get("route"):
       continue
     ps = prev.get("settings") or {}
-    diff = [k for k in cur if k in ps and ps.get(k) != cur.get(k)]   # an older result may not have every key
+    missing = [k for k in cur if k not in ps]   # an older result format may not have every key: it may have differed
+    diff = [k for k in cur if k in ps and ps.get(k) != cur.get(k)]
     if (cur.get("LateralTorqueCustom") or 0) <= 0 and (ps.get("LateralTorqueCustom") or 0) <= 0:
       diff = [k for k in diff if k not in CUSTOM_ONLY]   # stored P and I do nothing with custom torque off
     if len(diff) == 0:
@@ -234,12 +236,13 @@ def change_review(current: dict, history: list[dict]) -> dict | None:
       worse += x - y >= 5
     enough = (a.get("lat_minutes") or 0) >= MIN_LAT_MINUTES and (b.get("lat_minutes") or 0) >= MIN_LAT_MINUTES
     verdict = "unclear"
-    if enough and better >= 2 and worse == 0:
+    if enough and better >= 2 and worse == 0 and not missing:
       verdict = "better"
-    elif enough and worse >= 2 and better == 0:
+    elif enough and worse >= 2 and better == 0 and not missing:
       verdict = "worse"
     return {"route": prev.get("route"), "changed": [key], "comparable": True, "param": key, "before": ps.get(key),
-            "after": cur.get(key), "rows": rows, "better": better, "worse": worse, "verdict": verdict, "enough_data": enough}
+            "after": cur.get(key), "rows": rows, "better": better, "worse": worse, "verdict": verdict, "enough_data": enough,
+            "missing_keys": missing}
   return None
 
 

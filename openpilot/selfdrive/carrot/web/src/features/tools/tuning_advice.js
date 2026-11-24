@@ -98,8 +98,11 @@ const FALLBACK_STRINGS = {
   apply_failed: "Not applied: {error}",
   on: "on",
   name_LateralTorqueCustom: "Custom torque tuning",
+  review_missing: "{n} setting(s) were not recorded by the earlier analysis, so better or worse is not judged.",
+  name_CustomSteerMax: "Max steering torque",
+  sticky: "kept at {v} for the rest of the drive",
   reason_delay: "Learned {learned} s · setting {setting} s",
-  reason_delay_learned: "This car uses the learned delay {learned} s (this setting is not used)",
+  reason_delay_learned: "The NNFF steering uses the learned delay {learned} s; this setting ({setting} s) only shifts the lane-mode path",
   reason_sr_check: "{pct}% from the comma's learned {learned}: unless intended, consider {match}",
   reason_sr_ok: "Within {pct}% of the comma's learned {learned}: keep it",
   reason_kd: "Kd is for reference only (the replay has no sensor noise to judge it)",
@@ -352,12 +355,14 @@ function changedNote(result, translate = t) {
   const byName = new Map();
   for (const c of note.changes) {
     const seen = byName.get(c.name);
-    byName.set(c.name, { name: c.name, prev: seen ? seen.prev : c.prev, next: c.next, at: c.at });
+    byName.set(c.name, { name: c.name, prev: seen ? seen.prev : c.prev, next: c.next, at: c.at, effective: c.effective });
   }
   const two = (n) => String(n).padStart(2, "0");
   const changes = [...byName.values()].map((c) => {
     const d = new Date(Number(c.at) * 1000);
-    return `${translate(`name_${c.name}`)} ${c.prev} → ${c.next} (${two(d.getHours())}:${two(d.getMinutes())})`;
+    // a GM torque limit set back to 0 mid-drive stays at its last value until the next start
+    const kept = c.effective !== undefined && c.effective !== null ? `, ${translate("sticky", { v: c.effective })}` : "";
+    return `${translate(`name_${c.name}`)} ${c.prev} → ${c.next} (${two(d.getHours())}:${two(d.getMinutes())}${kept})`;
   }).join(", ");
   const key = ["after", "before", "none"].includes(note.used) ? note.used : "none";
   return translate(`changed_${key}`, { changes });
@@ -452,6 +457,7 @@ function render(payload = lastPayload) {
     if (review.comparable) {
       box.append(el("strong", "", t("review_title", { change: formatChange(review.param, review.before, review.after) })));
       box.append(el("p", "egpu-model-card__detail", t(`review_${review.verdict || "unclear"}`)));
+      if (review.missing_keys?.length) box.append(el("p", "egpu-model-card__detail", t("review_missing", { n: review.missing_keys.length })));
       const list = el("ul", "tuning-advice__list");
       for (const key of ["match_pct", "match_curve_pct", "takeovers_per_min", "release_per_min", "err"]) {
         const row = review.rows?.[key];
