@@ -20,12 +20,14 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
     "math": math, "car": car, "MIN_LATERAL_CONTROL_SPEED": 0.3,
     "resolve_vehicle_model_steer_ratio": lambda *_args: 15.0,
     "lateral_vehicle_parameters": lambda sm, _cp: sm["liveParameters"],
+    "read_live_vehicle_dynamics": lambda *_args: None, "DT_CTRL": 0.01,
   }
   exec(compile(tree, str(path), "exec"), namespace)
   controls = namespace["Controls"].__new__(namespace["Controls"])
+  controls.eps_fault_hold = namespace["EpsTemporaryFaultHold"](brand == "gm")
   controls.CP = SimpleNamespace(brand=brand, steerAtStandstill=supported, minSteerSpeed=min_speed,
                                lateralTuning=SimpleNamespace(which=lambda: "angle"))
-  controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda _key: always_lateral)
+  controls.params = SimpleNamespace(get_float=lambda _key: 0.0, get_bool=lambda key: always_lateral if key == "AlwaysLateral" else False)
   controls.is_vw_meb = False
   controls.lateral_startup = SimpleNamespace(ready=True, update=lambda *_args: True)
   controls.VM = SimpleNamespace(update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
@@ -88,3 +90,66 @@ def test_standstill_preserves_engagement_fault_and_gear_gates(override):
 @pytest.mark.parametrize("brand", ["tesla", "ford", "volkswagen", "psa", "hyundai"])
 def test_lateral_control_remains_available_above_minimum_speed(brand):
   assert run_lateral_gate(brand=brand, speed=5.1, min_speed=5.0, stopped=False)
+
+
+def eps_fault_hold_class():
+  path = Path(__file__).parents[1] / "controlsd.py"
+  tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+  tree.body = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "EpsTemporaryFaultHold"]
+  namespace = {"DT_CTRL": 0.01}
+  exec(compile(tree, str(path), "exec"), namespace)
+  return namespace["EpsTemporaryFaultHold"]
+
+
+class RefusingEps:
+  """The Traverse EPS at the start of a drive (rlog 00000251, 00000252): it answers a request with status 2 (no torque)
+  until it gets one after at least 3 s without requests; from then on it delivers."""
+  def __init__(self):
+    self.accepting = False
+    self.quiet_frames = 0
+
+  def respond(self, requested: bool) -> bool:
+    """steerFaultTemporary for this frame's request"""
+    if not requested:
+      self.quiet_frames += 1
+      return False
+    if not self.accepting and self.quiet_frames >= 300:
+      self.accepting = True
+    self.quiet_frames = 0
+    return not self.accepting
+
+
+def drive(hold, frames=1500):
+  eps, fault, toggles, last, accepted_at = RefusingEps(), False, 0, False, None
+  for frame in range(frames):
+    lat_active = not hold.update(fault)
+    toggles += lat_active != last
+    last = lat_active
+    fault = eps.respond(lat_active)
+    if eps.accepting and accepted_at is None:
+      accepted_at = frame
+  return toggles, accepted_at
+
+
+def test_gm_waits_after_an_eps_refusal_instead_of_toggling():
+  cls = eps_fault_hold_class()
+  toggles, accepted_at = drive(cls(True))
+  assert toggles <= 3 and accepted_at is not None and accepted_at < 400
+  old_toggles, old_accepted = drive(cls(False))   # previous behaviour: re-request at once, every 0.1 s
+  assert old_toggles > 100 and old_accepted is None
+
+
+def test_hold_length_and_other_brands():
+  cls = eps_fault_hold_class()
+  hold = cls(True)
+  assert hold.update(True)
+  assert all(hold.update(False) for _ in range(299))
+  assert not hold.update(False)
+  other = cls(False)
+  assert other.update(True) and not other.update(False)
+
+
+def test_gm_temporary_fault_blocks_lateral():
+  assert not run_lateral_gate(brand="gm", speed=10.0, stopped=False, temporary_fault=True)
+  assert run_lateral_gate(brand="gm", speed=10.0, stopped=False)
+

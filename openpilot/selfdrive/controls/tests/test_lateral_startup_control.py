@@ -68,7 +68,7 @@ def control_fixture():
                LoC=NS(reset=lambda: None, update=lambda *args: (0.0, 0.0, 0.0), long_control_state='off'),
                carrot_controls=NS(lat_suspend_control=lambda cs, active: active), is_vw_meb=False,
                desired_curvature=0.0, lateral_startup=LateralStartupGate(), lateral_started=False,
-               steer_limited_by_safety=False)
+               steer_limited_by_safety=False, eps_fault_hold=NS(update=lambda fault: fault))   # hyundai: no GM hold
   control.lat_frog_parity = bool(getattr(control.LaC, 'nnff_frogpilot_parity', False))   # as Controls.__init__
   control.lat_accel_limit = 3.0   # LateralAccelLimit default, as Controls.__init__
   return control, lambda: ns['state_control'](control)
