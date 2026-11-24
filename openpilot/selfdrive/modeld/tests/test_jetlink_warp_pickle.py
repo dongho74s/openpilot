@@ -32,7 +32,7 @@ def test_truncated_or_oversized_warp_pickle_is_rejected(payload):
 def test_short_metadata_header_is_rejected_before_deserialization(monkeypatch, length):
   def unexpected_load(*args, **kwargs):
     pytest.fail('malformed framing reached the pickle loader')
-  monkeypatch.setattr(helpers.pickle, 'load', unexpected_load)
+  monkeypatch.setattr(helpers._ModelUnpickler, 'load', unexpected_load)  # the loader's only entry point
   with pytest.raises(ValueError, match='metadata header'):
     load_oob(io.BytesIO(struct.pack('<q', 1)[:length]))
 
@@ -42,7 +42,7 @@ def test_invalid_metadata_length_cannot_hide_a_valid_pickle(monkeypatch, length)
   opcodes = pickle.dumps({'probe': 1}, protocol=5)
   def unexpected_load(*args, **kwargs):
     pytest.fail('malformed framing reached the pickle loader')
-  monkeypatch.setattr(helpers.pickle, 'load', unexpected_load)
+  monkeypatch.setattr(helpers._ModelUnpickler, 'load', unexpected_load)  # the loader's only entry point
   with pytest.raises(ValueError, match='model metadata'):
     load_oob(io.BytesIO(struct.pack('<q', length) + opcodes))
 
