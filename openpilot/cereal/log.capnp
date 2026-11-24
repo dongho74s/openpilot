@@ -171,6 +171,8 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     clampSteerActive @134;
 
     soundsUnavailableDEPRECATED @47;
+    steerRetryHold @135;  # carrot: GM EPS refused lateral; openpilot waits before requesting it again (shown, silent)
+
   }
 }
 

@@ -139,7 +139,7 @@ class CarSpecificEvents:
         events.add(EventName.belowSteerSpeed)
       # controlsd keeps lateral off for a while after an EPS temporary fault (EpsTemporaryFaultHold); show it meanwhile
       if self.eps_fault_hold.update(CS.steerFaultTemporary) and not CS.steerFaultTemporary:
-        events.add(EventName.steerTempUnavailableSilent)
+        events.add(EventName.steerRetryHold)
 
     elif self.CP.brand == 'volkswagen':
       events = self.create_common_events(CS, CS_prev, extra_gears=[GearShifter.eco, GearShifter.sport, GearShifter.manumatic],

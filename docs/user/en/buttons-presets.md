@@ -53,6 +53,7 @@ Separate `SET`/`RES` buttons act once on release, whether tapped or held. The bu
 
 Manual engagement with openpilot longitudinal control is still requested when the physical `SET` or `RES` button is released. The standalone `+`/`-` buttons do not gain an engagement action.
 
+On GM cars, openpilot waits 3 s before requesting steering again after the steering rack reports its assist as temporarily limited (refused). The Traverse refused the first steering request of nearly every drive, and re-requesting at once toggled steering every 0.1 s and kept it refusing. Steering may now start a few seconds later right after pulling away at low speed, without the toggling. While it waits, "조향 보조 대기 · EPS 재요청 대기 중" (steering assist waiting, EPS retry pending) is shown silently.
 | Value | Short RES/+ | Short SET/- |
 |---:|---|---|
 | `0` normal | Next `CruiseSpeedUnitBasic` grid point | Previous `CruiseSpeedUnitBasic` grid point |
