@@ -396,8 +396,9 @@ def settled_part(drive, tuning: dict, changes: list[dict], minutes) -> tuple[lis
       if _int_or(nxt, 0) <= 0:
         if _int_or(after.get(c["name"]), 0) > 0:
           if c["at"] - set_at.get(c["name"], drive.wall_start) < STICKY_READ_S:
-            unsure = True
-          c["effective"] = _int_or(after.get(c["name"]), 0)
+            unsure = True          # not known whether the controller ever read it: no "kept at" either
+          else:
+            c["effective"] = _int_or(after.get(c["name"]), 0)
           continue
       else:
         set_at[c["name"]] = c["at"]

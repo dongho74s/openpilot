@@ -178,7 +178,8 @@ test("a torque limit set back to 0 mid-drive says it was kept", () => {
 test("a torque limit flipped back within a second says it is unknown whether it was used", () => {
   const at = new Date(2026, 10, 24, 12, 30).getTime() / 1000;
   const note = changedNote({ settings_changed: { used: "before", unsure: true, changes: [
-    { name: "CustomSteerDeltaUp", prev: 0, next: 12, at }, { name: "CustomSteerDeltaUp", prev: 12, next: 0, at: at + 0.1, effective: 12 },
+    { name: "CustomSteerDeltaUp", prev: 0, next: 12, at }, { name: "CustomSteerDeltaUp", prev: 12, next: 0, at: at + 0.1 },
   ] } });
   assert.match(note, /^A GM torque limit was changed and set back within a second/);
+  assert.doesNotMatch(note, /kept at/);
 });
