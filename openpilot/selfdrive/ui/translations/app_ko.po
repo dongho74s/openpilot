@@ -804,7 +804,7 @@ msgstr "정지 상태를 종료하려면 RES버튼을 누르세요"
 
 #: openpilot/selfdrive/selfdrived/events.py
 msgid "Press Set to Engage"
-msgstr "SET 버튼을 눌러 주세요"
+msgstr "최초 작동은 SET 버튼으로 인게이지 가능"
 
 #: openpilot/system/ui/widgets/network.py
 msgid "Prevent large data uploads when on a metered Wi-Fi connection"

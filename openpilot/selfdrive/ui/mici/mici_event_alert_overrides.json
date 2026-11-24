@@ -686,9 +686,9 @@
       "eventName": "resumeBlocked",
       "eventType": "NO_ENTRY",
       "source": "EVENTS",
-      "title": "SET 버튼을 눌러 주세요",
-      "subtitle": "처음엔 RES로는 안 켜져요",
-      "titleFontPx": 50
+      "title": "RES 인게이지 불가",
+      "subtitle": "최초 작동은 SET 버튼으로 인게이지 가능",
+      "titleFontPx": 60
     },
     "EVENTS.seatbeltNotLatched.NO_ENTRY": {
       "eventName": "seatbeltNotLatched",
