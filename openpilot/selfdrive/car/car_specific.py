@@ -136,6 +136,11 @@ class CarSpecificEvents:
         events.add(EventName.resumeRequired)
       if CS.vEgo < self.CP.minSteerSpeed:
         events.add(EventName.belowSteerSpeed)
+      # The Traverse ECM faults its cruise when RES engages openpilot long before the ECM holds a set speed, so RES does
+      # not engage then (opendbc gm CarState.resume_allowed); say that SET does.
+      if (self.CP.carFingerprint == "CHEVROLET_TRAVERSE" and not self.CP.pcmCruise and not CS.cruiseState.enabled and
+          not CS.buttonEnable and any(b.type == ButtonType.accelCruise and b.pressed for b in CS.buttonEvents)):
+        events.add(EventName.resumeBlocked)
       # GM sets stockFcw only for the Traverse camera's collision alert (opendbc gm/stock_fcw.py).
       # Show the existing forward-collision alert for it; display, sound and HUD lamp only.
       if CS.stockFcw:

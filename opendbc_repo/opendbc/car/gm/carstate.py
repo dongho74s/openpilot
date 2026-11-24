@@ -3,7 +3,7 @@ from opendbc.can import CANDefine, CANParser
 from openpilot.cereal import car
 from openpilot.common.params import Params #kans
 import numpy as np
-from opendbc.car import Bus, create_button_events, structs
+from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm import gmcan
 from opendbc.car.gm.cluster_speed import gm_cluster_cruise_speed_from_raw_ms, gm_malibu_cluster_speed_from_raw_ms, \
@@ -104,15 +104,40 @@ class CarState(CarStateBase):
 
     # cruiseMain default(test from nd0706-vision)
     self.cruiseMain_on = True if Params().get_int("AutoEngage") == 2 else False
+    # Traverse with openpilot long: RES engages only once the ECM holds a set speed (ecm_resume_ready)
+    self.resume_needs_set_speed = CP.carFingerprint == CAR.CHEVROLET_TRAVERSE and not CP.pcmCruise
+    self.ecm_resume_ready = False
+    self.ecm_active_frames = 0
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
       for b in buttonEvents:
         # The ECM allows enabling on falling edge of set, but only rising edge of resume
-        if (b.type == ButtonType.accelCruise and b.pressed) or \
+        if (b.type == ButtonType.accelCruise and b.pressed and self.resume_allowed()) or \
           (b.type == ButtonType.decelCruise and not b.pressed):
           return True
     return False
+
+  def resume_allowed(self) -> bool:
+    """The Traverse ECM faults its cruise (AcceleratorPedal2 CruiseState 3, 0.5 s after engaging) when RES engages
+    openpilot long while the ECM holds no set speed: the first engagement of a drive or right after MAIN was toggled
+    (rlog 0000024c 11:25:20 and 11:25:29, 00000252 12:21:33). Our commands were not the cause: 11:25:20 and 11:25:23
+    sent the same gas and brake frames and only 11:25:20 faulted. Every SET engagement, and every RES engagement after
+    one in the same MAIN session, kept the cruise."""
+    return not self.resume_needs_set_speed or self.ecm_resume_ready
+
+  def update_ecm_resume_ready(self, cruise_main_on: bool, acc_state: int) -> None:
+    """The ECM holds a set speed once its cruise stayed active for a second (AcceleratorPedal2 CruiseState 1); it loses it
+    with MAIN off and on a fault."""
+    if not cruise_main_on or acc_state == AccState.FAULTED:
+      self.ecm_resume_ready = False
+      self.ecm_active_frames = 0
+    elif acc_state == AccState.ACTIVE:
+      self.ecm_active_frames += 1
+      if self.ecm_active_frames >= int(1.0 / DT_CTRL):
+        self.ecm_resume_ready = True
+    else:
+      self.ecm_active_frames = 0
 
   def update(self, can_parsers) -> structs.CarState:
     pt_cp = can_parsers[Bus.pt]
@@ -287,6 +312,8 @@ class CarState(CarStateBase):
     ret.espDisabled = pt_cp.vl["ESPStatus"]["TractionControlOn"] != 1
     ret.accFaulted = (pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.FAULTED or
                       pt_cp.vl["EBCMFrictionBrakeStatus"]["FrictionBrakeUnavailable"] == 1)
+    if self.resume_needs_set_speed:
+      self.update_ecm_resume_ready(ret.cruiseState.available, pt_cp.vl["AcceleratorPedal2"]["CruiseState"])
 
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL

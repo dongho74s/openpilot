@@ -682,6 +682,14 @@
       "subtitle": "우측 조향 시 시작",
       "titleFontPx": 62
     },
+    "EVENTS.resumeBlocked.NO_ENTRY": {
+      "eventName": "resumeBlocked",
+      "eventType": "NO_ENTRY",
+      "source": "EVENTS",
+      "title": "SET 버튼을 눌러 주세요",
+      "subtitle": "처음엔 RES로는 안 켜져요",
+      "titleFontPx": 50
+    },
     "EVENTS.seatbeltNotLatched.NO_ENTRY": {
       "eventName": "seatbeltNotLatched",
       "eventType": "NO_ENTRY",

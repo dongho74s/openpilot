@@ -212,8 +212,9 @@ class TestAlertPresentation(unittest.TestCase):
     self.assertEqual(presentation.get_override("driverDistracted2", "permanent")["titleFontPx"], 60)
 
   def test_asset_counts_and_unsupported_entries_are_not_events(self):
-    self.assertEqual(len(presentation.load_overrides()), 111)
+    self.assertEqual(len(presentation.load_overrides()), 112)
     supported = supported_configs(self.module)
+    self.assertIn("EVENTS.resumeBlocked.NO_ENTRY", supported)   # Traverse RES without a set speed in the ECM
     unsupported = set(presentation.load_overrides()) - set(supported)
     self.assertTrue(all(not key.startswith("STARPILOT_EVENTS.") for key in supported))
     self.assertIn("EVENTS.laneChangeUnavailable.WARNING", unsupported)

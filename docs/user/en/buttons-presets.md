@@ -53,6 +53,10 @@ Separate `SET`/`RES` buttons act once on release, whether tapped or held. The bu
 
 Manual engagement with openpilot longitudinal control is still requested when the physical `SET` or `RES` button is released. The standalone `+`/`-` buttons do not gain an engagement action.
 
+On the Chevrolet Traverse with openpilot longitudinal control, `RES` does not engage for the first engagement after the ignition is turned on or right after MAIN was toggled; "Press Set to Engage" is shown, so engage with `SET`. With no set speed stored in the car's engine controller, a `RES` engagement made the cruise fault 0.5 s later ("Cruise Fault | Restart the Car"). Once an engagement has stayed on for a second, `RES` engages again within the same MAIN session.
+
+On GM cars, openpilot waits 3 s before requesting steering again after the steering rack reports its assist as temporarily limited (refused). The Traverse refused the first steering request of nearly every drive, and re-requesting at once toggled steering every 0.1 s and kept it refusing. Steering may now start a few seconds later right after pulling away at low speed, without the toggling.
+
 On `WIP-FR`, **Navigation Speed on SET Engagement** (`NavigationSetSpeed`) is off by default. When enabled, SET engagement from cruise-off uses the greater of current cluster speed and a valid external-navigation road limit plus 10 km/h. A road limit of exactly 30 km/h uses a 5 km/h offset instead. Existing minimum and maximum set-speed bounds remain in effect.
 
 Find the toggle under **Driving → Buttons & Presets → Button Modes**, directly after Cruise Button Mode. Changes are read about every 0.1 seconds without a reboot and apply at the next SET engagement. Toggling alone never changes the current set speed.
