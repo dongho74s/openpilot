@@ -1260,6 +1260,27 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.PERMANENT: NormalPermanentAlert("조향 보조 대기", "EPS 재요청 대기 중"),
   },
 
+  # GM Malibu ASCM harness on openpilot longitudinal: the ASCM marked its own speed and yaw rate invalid (opendbc
+  # gm/ascm_fault.py). Its stock ACC, forward-collision alert and automatic braking stay off until restart while openpilot
+  # keeps driving on the radar tracks. Permanent (also while not engaged), no entry or disengagement, and only for the
+  # first 10 s (car_specific.py): any alert hides the DM face, the C4 top icons and the Navdy deceleration badge.
+  # ascmFaultStart is the first second, with the one prompt, at LOWER so it never hides a LOW alert such as steerSaturated;
+  # ascmFault is the silent rest at LOWEST so it never hides another permanent alert such as overheat.
+  EventName.ascmFault: {
+    ET.PERMANENT: Alert(
+      "순정 전방경고·자동제동 꺼짐",
+      "ASCM 고장 · 시동을 다시 걸면 복구",
+      AlertStatus.normal, AlertSize.mid,
+      Priority.LOWEST, VisualAlert.none, AudibleAlert.none, 0.2),
+  },
+  EventName.ascmFaultStart: {
+    ET.PERMANENT: Alert(
+      "순정 전방경고·자동제동 꺼짐",
+      "ASCM 고장 · 시동을 다시 걸면 복구",
+      AlertStatus.normal, AlertSize.mid,
+      Priority.LOWER, VisualAlert.none, AudibleAlert.prompt, 0.2),
+  },
+
   # the minimum-distance clamp's laneless correction pushing the car off a line (controlsState.clampSteerActive): a
   # short ding once when it starts (soundd plays a sound when the alert's sound changes), shown while it lasts
   EventName.clampSteerActive: {

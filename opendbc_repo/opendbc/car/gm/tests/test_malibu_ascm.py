@@ -385,3 +385,94 @@ def test_cancel_goes_to_the_ascm_on_bus_2(runtime):
   sent = controller_frames(runtime, lat_active=False, cancel=True)
   cancels = [(addr, bus, (dat[5] >> 4) & 0x7) for _, addr, dat, bus in sent if addr == 0x1E1]
   assert cancels and all(bus == CanBus.CAMERA and button == CruiseButtons.CANCEL for _, bus, button in cancels)
+
+
+# The ASCM's 0x308 to the radar from the friend's rlog 0000004a--a32e7e62fb--16: before (56.797 s) and after (57.087 s)
+# it gave up its path data at 56.838 s. Byte 0 0x08 is a valid feed in D; 0x0E adds the speed and yaw-rate invalid bits.
+ASCM_PATH_VALID = bytes.fromhex("080730000050aa")
+ASCM_PATH_INVALID = bytes.fromhex("0e05c00000a148")
+ASCM_PATH_PARKED = bytes.fromhex("00000000000062")  # P/N: byte 0 0x00, still valid
+
+
+def ascm_path_run(runtime, path_frames, *, alpha=True):
+  """Feed 100 Hz car slices; path_frames[i] is the 0x308 frame of tick i, or None (0x308 itself runs at 50 Hz)."""
+  ci = malibu_interface(runtime, malibu_cp(runtime, alpha))
+  packer = runtime.CANPacker(DBC[MALIBU_ASCM][Bus.pt])
+  t0 = time.monotonic_ns()
+  states = []
+  for tick, path in enumerate(path_frames):
+    slice_ = frames(packer, tick)
+    if path is not None:
+      slice_.append((0x308, path, CanBus.OBSTACLE))
+    states.append(ci.update([(t0 + tick * 10_000_000, slice_)]))
+  return ci, states
+
+
+def at_50hz(frame, seconds):
+  return [frame if tick % 2 == 0 else None for tick in range(int(seconds * 100))]
+
+
+def test_the_ascm_path_watch_runs_only_on_openpilot_long(runtime):
+  stock = malibu_interface(runtime, malibu_cp(runtime, False))
+  assert stock.CS.ascm_path_watch is None and Bus.radar not in stock.can_parsers
+  long = malibu_interface(runtime, malibu_cp(runtime, True))
+  assert long.CS.ascm_path_watch is not None
+  parser = long.can_parsers[Bus.radar]
+  assert parser.bus == CanBus.OBSTACLE
+  assert parser.message_states[0x308].ignore_alive  # never part of canValid
+
+
+def test_the_real_frames_decode_as_valid_and_invalid(runtime):
+  ci, _ = ascm_path_run(runtime, [ASCM_PATH_INVALID])
+  assert ci.can_parsers[Bus.radar].vl["ASCMAccSpeedStatus"]["LongVelInvalid"] == 1
+  assert ci.can_parsers[Bus.radar].vl["ASCMAccSpeedStatus"]["YawRateInvalid"] == 1
+  for frame in (ASCM_PATH_VALID, ASCM_PATH_PARKED):
+    ci, _ = ascm_path_run(runtime, [frame])
+    assert ci.can_parsers[Bus.radar].vl["ASCMAccSpeedStatus"]["LongVelInvalid"] == 0
+    assert ci.can_parsers[Bus.radar].vl["ASCMAccSpeedStatus"]["YawRateInvalid"] == 0
+
+
+def test_two_seconds_of_invalid_path_data_raise_it_and_it_stays(runtime):
+  _, states = ascm_path_run(runtime, at_50hz(ASCM_PATH_VALID, 3) + at_50hz(ASCM_PATH_INVALID, 5))
+  assert not any(s.ascmPathDataInvalid for s in states[:300])
+  flagged = [i for i, s in enumerate(states) if s.ascmPathDataInvalid]
+  # the 100th invalid frame at 50 Hz is 1.98 s after the first one
+  assert flagged[0] == 300 + 198
+  assert flagged == list(range(flagged[0], len(states)))
+  assert all(s.canValid and not s.canTimeout for s in states)
+
+
+def test_a_short_burst_does_not_count_and_a_valid_frame_clears_it(runtime):
+  burst = at_50hz(ASCM_PATH_INVALID, 1.9) + at_50hz(ASCM_PATH_VALID, 0.1) + at_50hz(ASCM_PATH_INVALID, 1.9)
+  _, states = ascm_path_run(runtime, burst)
+  assert not any(s.ascmPathDataInvalid for s in states)
+  _, states = ascm_path_run(runtime, at_50hz(ASCM_PATH_INVALID, 3) + at_50hz(ASCM_PATH_VALID, 1))
+  assert states[299].ascmPathDataInvalid and not states[300].ascmPathDataInvalid
+  assert not any(s.ascmPathDataInvalid for s in states[300:])
+
+
+def test_a_quiet_object_bus_means_no_alert_and_no_can_error(runtime):
+  _, states = ascm_path_run(runtime, [None] * 400)
+  assert all(s.canValid and not s.canTimeout and not s.ascmPathDataInvalid for s in states[100:])
+  # the feed stopping after the fault keeps the alert; stopping while valid raises nothing
+  _, states = ascm_path_run(runtime, at_50hz(ASCM_PATH_INVALID, 2.5) + [None] * 300)
+  assert states[-1].ascmPathDataInvalid and all(s.canValid for s in states)
+  _, states = ascm_path_run(runtime, at_50hz(ASCM_PATH_VALID, 1) + [None] * 300)
+  assert not any(s.ascmPathDataInvalid for s in states)
+
+
+def test_the_stock_acc_mode_never_raises_it(runtime):
+  _, states = ascm_path_run(runtime, at_50hz(ASCM_PATH_INVALID, 4), alpha=False)
+  assert not any(s.ascmPathDataInvalid for s in states)
+  assert all(s.canValid for s in states)
+
+
+@pytest.mark.parametrize("long_vel,yaw_rate", [(1, 0), (0, 1), (1, 1)])
+def test_either_invalid_bit_counts(long_vel, yaw_rate):
+  from opendbc.car.gm.ascm_fault import ASCM_PATH_INVALID_FRAMES, AscmPathDataWatch
+  watch = AscmPathDataWatch()
+  n = ASCM_PATH_INVALID_FRAMES
+  assert not watch.update([long_vel] * (n - 1), [yaw_rate] * (n - 1))
+  assert watch.update([long_vel], [yaw_rate])
+  assert watch.update([], [])  # no frame keeps the answer
+  assert not watch.update([0], [0])

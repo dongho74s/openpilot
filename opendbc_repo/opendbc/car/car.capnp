@@ -327,6 +327,10 @@ struct CarState {
     batterySocPercent @11 :Float32;
   }
 
+  # GM Malibu ASCM harness on openpilot longitudinal: the ASCM has marked its own speed and yaw rate for the radar invalid
+  # (object bus 0x308) for 2 s. Its stock ACC, forward-collision alert and automatic braking are then off until restart.
+  ascmPathDataInvalid @109 :Bool;
+
   struct VehicleGps {
     available @0 :Bool;
     valid @1 :Bool; # receive/continuity checks, not a decoded satellite fix flag

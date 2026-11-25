@@ -6,6 +6,7 @@ import numpy as np
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm import gmcan
+from opendbc.car.gm.ascm_fault import AscmPathDataWatch
 from opendbc.car.gm.cluster_speed import gm_cluster_cruise_speed_from_raw_ms, gm_malibu_cluster_speed_from_raw_ms, \
   MALIBU_CLUSTER_RATIO
 from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
@@ -49,6 +50,11 @@ BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD = 595  # safety_gm.h, Bolt ACC with pedal in 
 BOLT_ACC_PEDAL_GAS_RELEASE_MARGIN = 35
 
 
+def ascm_path_watch_supported(CP) -> bool:
+  # Only with openpilot longitudinal: on the stock ACC the ASCM's own ACC drops out with the fault and the driver sees it.
+  return CP.carFingerprint in ASCM_INT_CAR and CP.openpilotLongitudinalControl
+
+
 def interceptor_raw_average(gas, gas2):
   """The panda's (track1 + track2) / 2 on the raw counts, recovered from the scaled DBC values."""
   (scale1, offset1), (scale2, offset2) = INTERCEPTOR_GAS_SCALE
@@ -76,6 +82,8 @@ class CarState(CarStateBase):
     self.stock_fcw = StockFcw() if stock_fcw_replay_supported(CP) else None
     self.stock_fcw_event = stock_fcw_supported(CP)
     self.cam_fcw_alert = 0
+    # Malibu ASCM harness on openpilot long: the ASCM giving up its path data turns its stock ACC, FCW and AEB off
+    self.ascm_path_watch = AscmPathDataWatch() if ascm_path_watch_supported(CP) else None
     # Bolt ACC with pedal: mode 1 runs camera long with the pedal only tapping to leave the ECM's ACC standstill; mode 2
     # (StarPilot) runs as a CC-only pedal-long car and replays the camera's 0x370 FCWAlert level on openpilot's 0x370.
     self.is_bolt_acc_pedal = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED
@@ -422,6 +430,10 @@ class CarState(CarStateBase):
       # engaged with no ACC without latching the cruise-button state machine.
       ret.buttonEvents = [*ret.buttonEvents, *create_stock_long_cancel_button_events()]
 
+    if self.ascm_path_watch is not None:
+      path = can_parsers[Bus.radar].vl_all["ASCMAccSpeedStatus"]
+      ret.ascmPathDataInvalid = self.ascm_path_watch.update(path["LongVelInvalid"], path["YawRateInvalid"])
+
     return ret
 
   @staticmethod
@@ -447,8 +459,14 @@ class CarState(CarStateBase):
       ("ASCMLKASteeringCmd", float('nan')),
     ]
 
-    return {
+    parsers = {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, 2),
       Bus.loopback: CANParser(DBC[CP.carFingerprint][Bus.pt], loopback_messages, 128),
     }
+    if ascm_path_watch_supported(CP):
+      # The ASCM's feed to the radar on the object bus. NaN: never part of canValid or canTimeout (ignore-alive, and the
+      # GM DBCs have no counter or checksum checks), so a quiet object bus only means no alert.
+      parsers[Bus.radar] = CANParser(DBC[CP.carFingerprint][Bus.radar], [("ASCMAccSpeedStatus", float('nan'))],
+                                     CanBus.OBSTACLE)
+    return parsers

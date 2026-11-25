@@ -19,6 +19,8 @@ EventName = log.OnroadEvent.EventName
 NetworkLocation = structs.CarParams.NetworkLocation
 TESLA_STANDSTILL_STEER_FAULT_DEBOUNCE_FRAMES = int(2.0 / DT_CTRL)
 TESLA_STANDSTILL_STEER_FAULT_SPEED = 0.5
+ASCM_FAULT_START_FRAMES = int(1.0 / DT_CTRL)
+ASCM_FAULT_SHOWN_FRAMES = int(10.0 / DT_CTRL)
 
 
 # TODO: the goal is to abstract this file into the CarState struct and make events generic
@@ -58,6 +60,7 @@ class CarSpecificEvents:
     self.carrotCruise_prev = False
     self.tesla_lkas_button_prev = False
     self.tesla_standstill_steer_fault_frames = 0
+    self.ascm_fault_frames = 0
 
   def update_params(self):
     if self.frame % 100 == 0:
@@ -149,6 +152,18 @@ class CarSpecificEvents:
       # controlsd keeps lateral off for a while after an EPS temporary fault (EpsTemporaryFaultHold); show it meanwhile
       if self.eps_fault_hold.update(CS.steerFaultTemporary) and not CS.steerFaultTemporary:
         events.add(EventName.steerRetryHold)
+      # Malibu ASCM harness on openpilot long: the ASCM gave up its path data (opendbc gm/ascm_fault.py), so its stock
+      # ACC, FCW and AEB are off until restart while openpilot keeps driving. Shown for 10 s from the start (an alert that
+      # stayed up would hide the DM face and the top icons for the rest of the drive); the prompt is in the first second
+      # only, so another alert coming and going does not ring it again. Set again after it cleared shows it again.
+      if CS.ascmPathDataInvalid:
+        self.ascm_fault_frames = min(self.ascm_fault_frames + 1, ASCM_FAULT_SHOWN_FRAMES + 1)
+      else:
+        self.ascm_fault_frames = 0
+      if 0 < self.ascm_fault_frames <= ASCM_FAULT_SHOWN_FRAMES:
+        events.add(EventName.ascmFault)
+        if self.ascm_fault_frames <= ASCM_FAULT_START_FRAMES:
+          events.add(EventName.ascmFaultStart)
       # GM sets stockFcw only for the Traverse camera's collision alert (opendbc gm/stock_fcw.py).
       # Show the existing forward-collision alert for it; display, sound and HUD lamp only.
       if CS.stockFcw:

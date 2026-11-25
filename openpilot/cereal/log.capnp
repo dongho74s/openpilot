@@ -173,6 +173,8 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     clampSteerActive @134;    # carrot: the minimum-distance clamp's laneless steering correction is on (a ding)
     internalModelSwitching @135;  # carrot: modeld switches the internal driving model selected while driving (no entry)
     steerRetryHold @136;  # carrot: GM EPS refused lateral; openpilot waits before requesting it again (shown, silent)
+    ascmFault @137;  # carrot: GM Malibu ASCM harness, openpilot long: the ASCM's path data went invalid (stock FCW/AEB off), 10 s
+    ascmFaultStart @138;  # carrot: the first second of ascmFault, with one prompt sound
   }
 }
 
