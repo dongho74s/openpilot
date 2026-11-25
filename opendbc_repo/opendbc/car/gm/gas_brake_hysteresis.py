@@ -14,13 +14,25 @@ commands unless the command passes BRAKE_NOW or GAS_NOW, which switch at once. T
 gas lookup's and the brake lookup's input: with LongPitch on they differ (below 10 m/s the brake keeps less of the
 pitch), and a strong raw brake request must not be lost to a pitch-compensated gas input near 0 (Codex review
 2026-11-20 R1). Only pid commands use it; the CarController resets it on every other frame.
+
+Blend (user request 2026-11-25, every car that uses this hysteresis): the coast is wanted, but leaving it put
+MAX_ACC_REGEN and the friction brake for the whole request on at once. Traverse rlogs after this hysteresis reached the car (11-21, routes 245-257
+against 231/23c from 11-18..20) braked later and harder at the start: the 0.3 s decel jerk of brake starts with a
+-0.3..-0.6 request went from -0.72 to -1.05 m/s^3 (10th percentile -1.07 to -2.44), with -0.6..-1.2 from -1.11 to
+-1.52 (-1.73 to -3.85). With blend on, a switch from the gas side to the brake side fades the brake side in: 0x2CB goes
+from ZERO_GAS to MAX_ACC_REGEN and the friction brake from 0 to its lookup value over BLEND_FRAMES commands for a request
+down to BRAKE_NOW, fewer for a deeper one, and at once from BLEND_URGENT down. The coast itself is unchanged.
 """
+
+import numpy as np
 
 BRAKE_ENTER = -0.2  # m/s^2: leave the gas side below this (after HOLD_FRAMES)
 GAS_ENTER = 0.1  # m/s^2: leave the brake side above this (after HOLD_FRAMES)
 BRAKE_NOW = -0.4  # m/s^2: always brake at once below this
 GAS_NOW = 0.3  # m/s^2: always accelerate at once above this
 HOLD_FRAMES = 12  # 0x2CB commands (25 Hz): 0.48 s
+BLEND_FRAMES = 10  # 0x2CB commands (25 Hz): 0.4 s fade-in of the brake side for a request down to BRAKE_NOW
+BLEND_URGENT = -1.0  # m/s^2: no fade-in from here down (urgent braking keeps the immediate brake)
 
 
 def has_gas_brake_step(params) -> bool:
@@ -29,12 +41,14 @@ def has_gas_brake_step(params) -> bool:
 
 
 class GasBrakeHysteresis:
-  def __init__(self):
+  def __init__(self, blend: bool = False):
+    self.blend_enabled = blend
     self.reset()
 
   def reset(self):
     self.gas_side = None
     self.frames = 0
+    self.blend = 1.0  # brake-side share sent: 1 = the brake side as looked up
 
   def update(self, accel: float, brake_accel: float, apply_gas: int, apply_brake: int, zero_gas: float,
              max_acc_regen: float):
@@ -52,11 +66,19 @@ class GasBrakeHysteresis:
       else:
         switch = brake_request < BRAKE_NOW or (brake_request < BRAKE_ENTER and self.frames >= HOLD_FRAMES)
       if switch:
+        if self.blend_enabled and self.gas_side and not want_gas:
+          self.blend = 0.0
         self.gas_side = want_gas
         self.frames = 0
 
-    if self.gas_side and not want_gas:
-      return int(round(zero_gas)), 0
-    if not self.gas_side and want_gas:
-      return int(round(max_acc_regen)), apply_brake
-    return apply_gas, apply_brake
+    if self.gas_side:
+      self.blend = 1.0
+      return (int(round(zero_gas)), 0) if not want_gas else (apply_gas, apply_brake)
+
+    gas, brake = (max_acc_regen, apply_brake) if want_gas else (apply_gas, apply_brake)
+    if self.blend < 1.0:
+      frames = float(np.interp(brake_request, [BLEND_URGENT, BRAKE_NOW], [0., BLEND_FRAMES]))
+      self.blend = 1.0 if frames < 1. else min(1.0, self.blend + 1.0 / frames)
+      gas = zero_gas + self.blend * (gas - zero_gas)
+      brake = self.blend * brake
+    return int(round(gas)), int(round(brake))

@@ -82,6 +82,68 @@ def test_reset_forgets_the_side():
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# Blend (user request 2026-11-25, every car with the hysteresis): the coast stays, the brake side fades in after it
+
+
+def test_blend_fades_the_brake_side_in_after_the_coast():
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  for i in range(30):
+    assert feed(h, -0.15) == (0, 0), i  # the coast is unchanged
+  fade = [feed(h, -0.3) for _ in range(gbh.BLEND_FRAMES)]  # below BRAKE_ENTER, long after the last switch
+  assert fade == [(round(-54 * k), round(3 * k)) for k in range(1, gbh.BLEND_FRAMES + 1)]
+  assert feed(h, -0.3, n=5) == (-540, 30)  # then the plain brake side
+  # the old controller jumped from (0, 0) to (-540, 30) in one command
+  assert max(b2 - b1 for (_, b1), (_, b2) in zip([(0, 0)] + fade, fade)) <= 3
+
+
+def test_blend_is_shorter_for_a_deeper_request_and_off_when_urgent():
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  fade = [feed(h, -0.7) for _ in range(6)]  # below BRAKE_NOW: at once, over 5 commands
+  assert [b for _, b in fade] == [14, 28, 42, 56, 70, 70]
+  assert fade[4] == (-540, 70)
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  assert feed(h, -1.0) == (-540, 100)  # BLEND_URGENT: the full brake side in the first command
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  assert feed(h, -1.5) == (-540, 150)
+
+
+def test_a_request_turning_urgent_ends_the_fade_at_once():
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  feed(h, -0.5)  # the fade has begun
+  assert feed(h, -0.5)[1] < 50
+  assert feed(h, -1.1) == (-540, 110)
+
+
+def test_every_switch_from_the_gas_side_fades_and_reset_ends_it():
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  feed(h, -0.5, n=20)
+  feed(h, 0.5, n=3)  # above GAS_NOW: back to gas at once
+  assert feed(h, -0.5)[1] < 50  # fades again
+  h.reset()
+  assert feed(h, -0.5) == (-540, 50)  # a fresh controller takes the brake side as it is (stops, re-engage)
+
+
+def test_brake_side_regen_through_a_small_accel_also_fades_after_a_switch():
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  feed(h, -0.5)  # switched, fading
+  gas, brake = feed(h, 0.05)  # back above 0 but held on the brake side: regen faded too, no brake
+  assert -540 < gas < 0 and brake == 0
+
+
+def test_without_blend_nothing_changes():
+  a, b = GasBrakeHysteresis(), GasBrakeHysteresis(blend=False)
+  seq = [0.2] * 20 + [-0.3] * 30 + [0.5] * 3 + [-0.7] * 10 + [0.05] * 5 + [-1.2] * 3 + [0.35] * 4 + [-0.45] * 12
+  assert [feed(a, x) for x in seq] == [feed(b, x) for x in seq]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # Which cars
 
 
@@ -105,6 +167,11 @@ def test_camera_long_chevrolets_have_it(runtime, monkeypatch, name, make_cp):
   cp = make_cp(runtime)
   assert cp.openpilotLongitudinalControl, name
   assert controller(runtime, monkeypatch, cp).gas_brake_hysteresis is not None
+
+
+@pytest.mark.parametrize("name,make_cp", STEP_CARS, ids=[n for n, _ in STEP_CARS])
+def test_every_camera_long_chevrolet_blends(runtime, monkeypatch, name, make_cp):
+  assert controller(runtime, monkeypatch, make_cp(runtime)).gas_brake_hysteresis.blend_enabled
 
 
 def test_cars_without_the_step_or_camera_long_do_not(runtime, monkeypatch):
@@ -171,10 +238,14 @@ def test_small_decel_coasts_and_strong_decel_brakes(runtime, monkeypatch, name, 
   assert all(g > 0 and b == 0 for g, b in d.run(0.2, 1.0)[2:])
   coast = d.run(-0.15, 2.0)
   assert coast and set(coast) == {(0, 0)}  # the old lookups sent MAX_ACC_REGEN with friction brake 15 here
-  braking = d.run(-0.3, 0.5)[1:]
-  assert braking and set(braking) == {(-540, 30)}
+  # blend: the brake side fades in over BLEND_FRAMES commands (the old controller jumped to (-540, 30) at once)
+  braking = d.run(-0.3, 1.0)
+  fade = braking[:gbh.BLEND_FRAMES]
+  assert all(b1 <= b2 and g1 >= g2 for (g1, b1), (g2, b2) in zip(fade, fade[1:])) and fade[0][1] < 30
+  assert set(braking[gbh.BLEND_FRAMES:]) == {(-540, 30)}
   d.run(0.5, 0.5)
-  assert set(d.run(-0.6, 0.2)[1:]) == {(-540, 60)}  # strong: at once, right after switching to gas
+  strong = d.run(-0.6, 0.6)
+  assert strong[0][1] < 60 and set(strong[-5:]) == {(-540, 60)}  # strong: switches at once, fades over ~7
 
 
 def test_brake_side_keeps_regen_through_a_small_accel(runtime, monkeypatch):
@@ -222,6 +293,8 @@ def test_strong_raw_brake_on_a_slow_uphill_is_kept(runtime, monkeypatch, name, m
   d = Drive(runtime, monkeypatch, make_cp(runtime), LongPitch=True)
   d.run(0.2, 2.0, v=4.0, pitch=0.05)
   braking = d.run(-0.5, 1.0, v=4.0, pitch=0.05)[1:]
+  # blend: switched at once, faded in over about 8 commands, then the same as the old lookups
+  braking = braking[gbh.BLEND_FRAMES:]
   assert braking and set(braking) == {(-540, 50)}
 
 

@@ -111,7 +111,8 @@ class CarController(CarControllerBase):
     self.bolt_acc_pedal = BoltAccPedalLongController(CP, self.packer_pt, self.packer_ch) \
       if supports_bolt_acc_pedal_friction_experiment(CP) else None
     # Camera ACC / SDGM openpilot long (gas and friction brake meet at 0): keep a side near 0 (gas_brake_hysteresis.py)
-    self.gas_brake_hysteresis = GasBrakeHysteresis() \
+    # and fade the brake side in after the coast (blend, user request 2026-11-25, every Chevrolet that has it)
+    self.gas_brake_hysteresis = GasBrakeHysteresis(blend=True) \
       if CP.openpilotLongitudinalControl and self.bolt_acc_pedal is None and has_gas_brake_step(self.params) else None
     self.btn_rc_pt = -1
     # 오토스톱 자동 끄기(AutoStopOff, 기본 0). 판다는 오파 롱컨(pcmCruise=False)에서만 0x1E1 UNPRESS 송신을 허용
