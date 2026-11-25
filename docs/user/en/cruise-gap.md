@@ -139,7 +139,7 @@ Only on Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so 
 Like a driver letting off a little just before the car stops: while stopping, once the car is slower than `StopBrakeEaseSpeed`, the stopping brake is gradually reduced by up to `StopBrakeEase` % until just before the stop, never below brake 30 (about -0.15 m/s²). At standstill the stop hold is back in the next command.
 
 - **Not eased:** a stopping brake stronger than -0.8 m/s², rolling back, standstill.
-- **Ends:** if the car stops decelerating for more than 0.32 s (a downhill, for example), easing ends for that stop and the brake is joined back up to the stopping brake. The next stop eases again.
+- **Ends:** if the car is not decelerating for more than 0.32 s (counted so that noise cannot reset it; a downhill or the creep, for example) or easing has lasted 5 s in that stop, easing ends for that stop and the brake is joined back up to the stopping brake. Once the car has stood still, the stop is not eased again until it ends. The next stop eases again. An unreadable stored value turns easing off.
 - **Higher:** a smaller last jolt, a slightly longer stop (tens of cm at 30%).
 - **Higher start speed:** eases earlier and more gradually; lower eases only right before the stop.
 

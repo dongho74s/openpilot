@@ -154,3 +154,43 @@ def test_no_easing_when_off_strong_or_on_an_ev(runtime, monkeypatch):
   ev = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True), **EASE)
   into_a_stop(ev)
   assert set(brakes(ev.run(-0.5, 0.3, state="stopping", v=0.4, a=-0.3))[1:]) == {50}
+
+
+
+def test_a_creeping_or_noisy_car_ends_easing(runtime, monkeypatch):
+  """Codex review R1: aEgo 0 (creeping) or accelerating with small negative noise must still end easing."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  assert brakes(d.run(-0.5, 0.6, state="stopping", v=0.4, a=0.0))[-1] == 50
+  noisy = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(noisy)
+  out = []
+  for _ in range(6):
+    out += brakes(noisy.run(-0.5, 0.12, state="stopping", v=0.4, a=0.1))
+    out += brakes(noisy.run(-0.5, 0.04, state="stopping", v=0.4, a=-0.1))
+  assert out[-1] == 50
+
+
+def test_a_stop_that_takes_too_long_ends_easing(runtime, monkeypatch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  assert brakes(d.run(-0.5, 4.0, state="stopping", v=0.4, a=-0.3))[-1] == 40
+  assert brakes(d.run(-0.5, 1.6, state="stopping", v=0.4, a=-0.3))[-1] == 50  # past 5 s of easing
+
+
+def test_no_easing_again_after_standstill_in_the_same_stop(runtime, monkeypatch):
+  """Codex review R2: the wheel speed going around the standstill threshold must not toggle the hold and easing."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  d.run(-0.5, 0.2, state="stopping", v=0.2, a=-0.3)
+  seq = []
+  for v in (0.0, 0.09, 0.0, 0.09, 0.0):
+    seq += brakes(d.run(-0.5, 0.2, state="stopping", v=v, a=-0.1))
+  assert seq[-1] == 50 and min(seq[seq.index(50):]) == 50
+
+
+def test_an_unreadable_setting_turns_easing_off_and_commands_go_on(runtime, monkeypatch):
+  """Codex review R3."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopBrakeEase="x", StopBrakeEaseSpeed=4)
+  into_a_stop(d)
+  assert set(brakes(d.run(-0.5, 0.3, state="stopping", v=0.4, a=-0.3))) == {50}

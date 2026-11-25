@@ -64,7 +64,9 @@ STOP_SMOOTH_MAX_BRAKE = 80  # counts (-0.8 m/s^2): and only up to this; a strong
 # Easing off just before the stop (StopBrakeEase %, StopBrakeEaseSpeed km/h; user request 2026-11-26)
 STOP_EASE_MAX_PCT = 60
 STOP_EASE_MIN_BRAKE = 30  # counts: never eased below this (1-5 km/h logs: about -0.15 m/s^2 against the engine's creep)
-STOP_EASE_CANCEL_COMMANDS = 8  # 25 Hz commands (0.32 s) of a non-decelerating car end easing for that stop
+STOP_EASE_CANCEL_COMMANDS = 8  # 25 Hz commands (0.32 s, net) of a non-decelerating car end easing for that stop
+STOP_EASE_MIN_DECEL = -0.05  # m/s^2: weaker than this counts as not decelerating
+STOP_EASE_MAX_COMMANDS = 125  # 25 Hz commands (5 s): easing ends for a stop that takes longer
 
 
 class CarController(CarControllerBase):
@@ -84,6 +86,7 @@ class CarController(CarControllerBase):
     self.stop_ease_speed = 4. / 3.6  # StopBrakeEaseSpeed, m/s
     self.stop_ease_cancelled = False
     self.stop_ease_not_slowing = 0
+    self.stop_ease_commands = 0
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -164,17 +167,30 @@ class CarController(CarControllerBase):
   def ease_stop_brake(self, CC, CS, stopping):
     """Ease the brake off just before the stop, like a driver (StopBrakeEase, user request 2026-11-26): from
     StopBrakeEaseSpeed down to the stop the brake goes down to (100 - StopBrakeEase) % of the stopping brake, never
-    below STOP_EASE_MIN_BRAKE; at standstill the hold is back at once (nothing is eased or ramped there). A car that
-    stops slowing (aEgo above 0 for STOP_EASE_CANCEL_COMMANDS, e.g. downhill) ends easing until it has stopped."""
-    if not (self.smooth_stop and CC.longActive and stopping) or CS.out.standstill:
+    below STOP_EASE_MIN_BRAKE; at standstill the hold is back at once (nothing is eased or ramped there) and easing is
+    over for that stop. A car that is not decelerating (aEgo above STOP_EASE_MIN_DECEL, counted leakily up to
+    STOP_EASE_CANCEL_COMMANDS; a downhill, the creep) or a stop eased for longer than STOP_EASE_MAX_COMMANDS ends easing
+    until LongControl leaves stopping."""
+    if not (self.smooth_stop and CC.longActive and stopping):
       self.stop_ease_cancelled = False
       self.stop_ease_not_slowing = 0
+      self.stop_ease_commands = 0
       return
-    if self.stop_ease_pct <= 0 or not (0. < CS.out.vEgo < self.stop_ease_speed) or \
+    if CS.out.standstill:
+      # stopped once: no easing again in this stop, also when the wheel speed comes back above the standstill threshold
+      # (Codex review R2: 52 -> 38 -> 52 around it)
+      self.stop_ease_cancelled = True
+      return
+    if self.stop_ease_cancelled or self.stop_ease_pct <= 0 or not (0. < CS.out.vEgo < self.stop_ease_speed) or \
        not (STOP_EASE_MIN_BRAKE < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE):
       return
-    self.stop_ease_not_slowing = self.stop_ease_not_slowing + 1 if CS.out.aEgo > 0. else 0
-    if self.stop_ease_not_slowing >= STOP_EASE_CANCEL_COMMANDS:
+    # a leaky count, so noise cannot keep it at 0 (Codex review R1: a creeping car at aEgo 0 stayed eased)
+    if CS.out.aEgo > STOP_EASE_MIN_DECEL:
+      self.stop_ease_not_slowing += 1
+    else:
+      self.stop_ease_not_slowing = max(0, self.stop_ease_not_slowing - 1)
+    self.stop_ease_commands += 1
+    if self.stop_ease_not_slowing >= STOP_EASE_CANCEL_COMMANDS or self.stop_ease_commands > STOP_EASE_MAX_COMMANDS:
       self.stop_ease_cancelled = True
     if self.stop_ease_cancelled:
       return
@@ -199,8 +215,11 @@ class CarController(CarControllerBase):
         self.params.STEER_DELTA_DOWN = min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN)
       self.cluster_take_steering_mode = params.get_int("GmClusterTakeSteering")
       if self.smooth_stop:
-        self.stop_ease_pct = int(np.clip(params.get_int("StopBrakeEase"), 0, STOP_EASE_MAX_PCT))
-        self.stop_ease_speed = float(np.clip(params.get_int("StopBrakeEaseSpeed"), 1, 10)) / 3.6
+        try:
+          self.stop_ease_pct = int(np.clip(params.get_int("StopBrakeEase"), 0, STOP_EASE_MAX_PCT))
+          self.stop_ease_speed = float(np.clip(params.get_int("StopBrakeEaseSpeed"), 1, 10)) / 3.6
+        except Exception:
+          self.stop_ease_pct = 0  # an unreadable stored value: no easing, and the commands go on (Codex review R3)
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")
 
