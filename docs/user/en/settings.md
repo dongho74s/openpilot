@@ -406,6 +406,11 @@ Deceleration preview operates independently of the response level. During active
 
 `StoppingAccel` is adjustable: default `-50`, range `-100 to -1`, step `1` (the weakest value moved from -0.50 to -0.01 m/s² on 2026-11-20). Weaker values enter stopping later. The stored value is multiplied by 0.01, with the same bounds enforced by control. Original stop-entry and braking behavior and vehicle-specific soft hold are restored; changes apply within about one second. See [Stopping and restarting](cruise-gap.md#stop-resume).
 
+Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so on, camera ACC / SDGM openpilot longitudinal) now join up the brake at the end of a stop (2026-11-26).
+- Before, entering stopping near 1 km/h stepped the brake up (Traverse log: 41 -> 52), and in the very instant the car stopped the fixed hold below 0.1 m/s (the car's stopAccel, 40 on the Traverse) stepped it down, and the car rocked back. This was reported as "the brake goes on and off as it stops".
+- Now the stopping brake rises from what was sent by a quarter of the gap per command (0.04 s), at least 3, and the fixed hold below 0.1 m/s is never lower than the stopping brake sent until then. A weaker stopping accel rises slowly to the hold.
+- The EVs (the Bolts) are unchanged, because their ECM needs the stock camera's stop hold. Between 1 and 5 km/h the engine's creep takes 0.25-0.3 m/s² off the same brake; that is not compensated. Not yet checked in the car.
+
 `VEgoStopping` has a range of `10–100` and a default of `50`; `10` means `0.10 m/s`. Previously stored values below `10` are automatically raised to `10`, and control enforces the same minimum during driving.
 
 For Hyundai/Kia CANFD openpilot longitudinal control, aReqRaw and aReqValue become zero in the first StopReq frame, so this setting does not change transmitted acceleration while StopReq remains active. Automatic release/retry is removed.

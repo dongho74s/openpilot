@@ -57,6 +57,9 @@ def get_acc_dashboard_speed_kph(CP, cluster_target_kph):
   return cluster_target_kph
 
 
+STOP_BRAKE_RISE = 3  # friction brake counts per 25 Hz command at least, while stopping (rises only)
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -64,6 +67,12 @@ class CarController(CarControllerBase):
     self.apply_torque_last = 0
     self.apply_gas = 0
     self.apply_brake = 0
+    self.last_sent_brake = 0  # friction brake in the last 0x315 sent (the stopping brake rises from it)
+    # Engine camera-ACC / SDGM cars under openpilot long (user report 2026-11-26, Traverse): the end of a stop stepped
+    # the brake up (41 -> 52, entering stopping) and down (52 -> 40, in the instant the car stopped). EVs (the Bolts:
+    # their stop hold follows the stock camera's, which their ECM needs) and CC-only cars keep their stops.
+    self.smooth_stop = CP.openpilotLongitudinalControl and CP.carFingerprint not in EV_CAR and \
+      CP.carFingerprint not in CC_ONLY_CAR
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -278,6 +287,12 @@ class CarController(CarControllerBase):
           # plan's end speed crossing 0.1 m/s while shouldStop): it leaves the hold only when starting, with the tap.
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = int(min(-100 * self.CP.stopAccel, self.params.MAX_BRAKE))
+          if self.smooth_stop:
+            # Never below what the stopping request was getting (user report 2026-11-26: the brake went from carrot's
+            # StoppingAccel 52 to CP.stopAccel's 40 in the very instant the car stopped, and the car rocked back).
+            stop_brake = int(round(np.interp(brake_accel if self.long_pitch else actuators.accel,
+                                             self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            self.apply_brake = int(min(max(self.apply_brake, stop_brake), self.params.MAX_BRAKE))
           press_regen_paddle = False
         else:
           # Normal operation
@@ -303,6 +318,12 @@ class CarController(CarControllerBase):
 
         if self.gas_brake_hysteresis is not None and not gas_brake_hysteresis_active:
           self.gas_brake_hysteresis.reset()
+        if self.smooth_stop and CC.longActive and stopping and self.apply_brake > self.last_sent_brake:
+          # The stopping brake rises from what was sent, not in one step (user report 2026-11-26: entering stopping
+          # near 1 km/h stepped the brake 41 -> 52 just before the stop): a quarter of the gap per command, at least
+          # STOP_BRAKE_RISE, so it still reaches the stopping brake within a few commands.
+          rise = max(STOP_BRAKE_RISE, (self.apply_brake - self.last_sent_brake) / 4.)
+          self.apply_brake = int(min(self.apply_brake, self.last_sent_brake + rise))
 
         sng_tap = self.CP.enableGasInterceptorDEPRECATED and self.apply_gas > self.params.INACTIVE_REGEN and CS.out.cruiseState.standstill
         if self.bolt_acc_pedal_sng:
@@ -393,6 +414,7 @@ class CarController(CarControllerBase):
           if self.gas_brake_hysteresis is not None:
             # what is really sent: the brake fade continues from it (AutoResume / the manual hold may have replaced it)
             self.gas_brake_hysteresis.note_sent(self.apply_brake)
+          self.last_sent_brake = self.apply_brake
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
