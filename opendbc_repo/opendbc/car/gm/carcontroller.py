@@ -322,12 +322,13 @@ class CarController(CarControllerBase):
         if self.gas_brake_hysteresis is not None and not gas_brake_hysteresis_active:
           self.gas_brake_hysteresis.reset()
         if self.smooth_stop and CC.longActive and stopping and not CS.out.standstill and \
-           CS.out.vEgo < STOP_SMOOTH_MAX_SPEED and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE:
+           0. < CS.out.vEgo < STOP_SMOOTH_MAX_SPEED and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE:
           # The stopping brake rises from what was sent, not in one step (user report 2026-11-26: entering stopping
           # near 1 km/h stepped the brake 41 -> 52 just before the stop): a quarter of the gap per command, at least
           # STOP_BRAKE_RISE, so it still reaches the stopping brake within a few commands. Only the gentle end of a
-          # stop, while still rolling (Codex review: a stop entered at speed with -2.0 was delayed 0.5 s; a standstill
-          # hold after an AutoResume creep release or entering soft hold was below its floor for 0.2-0.3 s).
+          # stop, while still rolling forward (Codex review: a stop entered at speed with -2.0 was delayed 0.5 s; a
+          # standstill hold after an AutoResume creep release or entering soft hold was below its floor for 0.2-0.3 s;
+          # rolling back at -2.1 m/s in drive must brake at once).
           rise = max(STOP_BRAKE_RISE, (self.apply_brake - self.last_sent_brake) / 4.)
           self.apply_brake = int(min(self.apply_brake, self.last_sent_brake + rise))
 

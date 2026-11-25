@@ -98,3 +98,11 @@ def test_a_standstill_hold_after_a_release_comes_back_at_once(runtime, monkeypat
   soft = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
   soft.run(0.2, 0.5, v=0.0)  # standing on no brake
   assert brakes(soft.run(-0.5, 0.2, v=0.0, soft_hold=1))[0] >= 40
+
+
+def test_rolling_back_brakes_at_once(runtime, monkeypatch):
+  """Codex review 2026-11-26: rolling back in drive (negative vEgo) passed the speed check and ramped 12 -> 50."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
+  d.run(0.2, 0.5, v=0.5)
+  assert brakes(d.run(-0.5, 0.2, state="stopping", v=-2.1))[0] == 50
+  assert brakes(d.run(-0.5, 0.2, state="stopping", v=-0.3))[0] == 50
