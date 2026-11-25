@@ -2490,11 +2490,14 @@ class ClusterUiRenderer:
         for fx, fy in TRAILBLAZER_REVERSE_LIGHTS["reverse"]:
             glow(car_x + fx * car_w, car_y + fy * car_h, radius, (255, 255, 255))
         # Turn signals / hazards blink ~1 Hz while the lamp state is on.
+        # hazard_signal (both lamps) comes from carState.hazardLights: GM reports
+        # hazards as TurnSignals == 3, which sets neither left nor right blinker.
+        hazard = bool(getattr(state, "hazard_signal", False))
         if time.monotonic() % 1.0 < 0.5:
             for (fx, fy), active in zip(TRAILBLAZER_REVERSE_LIGHTS["hazard"],
-                                       (state.left_signal, state.right_signal)):
+                                       (state.left_signal or hazard, state.right_signal or hazard)):
                 if active:
-                    glow(car_x + fx * car_w, car_y + fy * car_h, radius * 1.15, (255, 170, 0))
+                    glow(car_x + fx * car_w, car_y + fy * car_h, radius * 1.6, (255, 170, 0))
 
     def _ev6_draw_reverse_screen(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
@@ -9455,7 +9458,9 @@ class ClusterUiRenderer:
 
     def _turn_signal_lights(self, state: ClusterUiState) -> tuple[bool, bool]:
         now = time.perf_counter()
-        if state.left_signal and state.right_signal:
+        # Hazard: carState.hazardLights (GM TurnSignals == 3). Fall back to both
+        # blinkers on, which is how other ports report hazards.
+        if bool(getattr(state, "hazard_signal", False)) or (state.left_signal and state.right_signal):
             if self._hazard_signal_started_at is None:
                 self._hazard_signal_started_at = now
                 self._left_turn_signal_started_at = None
@@ -9482,7 +9487,7 @@ class ClusterUiRenderer:
             signal_lit = left_signal_lit if side == "left" else right_signal_lit
             signal_started_at = (
                 self._hazard_signal_started_at
-                if state.left_signal and state.right_signal
+                if bool(getattr(state, "hazard_signal", False)) or (state.left_signal and state.right_signal)
                 else self._left_turn_signal_started_at
                 if side == "left"
                 else self._right_turn_signal_started_at

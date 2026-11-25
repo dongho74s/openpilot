@@ -503,6 +503,7 @@ class RouteReplayFrame:
     active_lane_line: bool | None
     left_signal: bool
     right_signal: bool
+    hazard_signal: bool
     left_blindspot: bool
     right_blindspot: bool
     lane_width_m: float
@@ -1746,6 +1747,7 @@ class RouteLogParser:
         lane_values = self._lane_values()
         left_signal = bool(safe_get(car_state, "leftBlinker", False))
         right_signal = bool(safe_get(car_state, "rightBlinker", False))
+        hazard_signal = bool(safe_get(car_state, "hazardLights", False))
         left_bsm = bool(safe_get(car_state, "leftBlindspot", False))
         right_bsm = bool(safe_get(car_state, "rightBlindspot", False))
         # Red lane marking: the car's own BSM signal OR the vision side
@@ -1814,6 +1816,7 @@ class RouteLogParser:
             active_lane_line=self.active_lane_line,
             left_signal=left_signal,
             right_signal=right_signal,
+            hazard_signal=hazard_signal,
             left_blindspot=left_blindspot,
             right_blindspot=right_blindspot,
             lane_width_m=lane_values["width"],
@@ -3811,6 +3814,7 @@ def frame_to_state(frame: RouteReplayFrame) -> ClusterUiState:
         active_lane_line=frame.active_lane_line,
         left_signal=frame.left_signal,
         right_signal=frame.right_signal,
+        hazard_signal=frame.hazard_signal,
         left_blindspot=frame.left_blindspot,
         right_blindspot=frame.right_blindspot,
         lane_change=frame.lane_change,
@@ -4023,6 +4027,7 @@ def blend_frames(left: RouteReplayFrame, right: RouteReplayFrame, amount: float)
         active_lane_line=discrete.active_lane_line,
         left_signal=discrete.left_signal,
         right_signal=discrete.right_signal,
+        hazard_signal=discrete.hazard_signal,
         left_blindspot=discrete.left_blindspot,
         right_blindspot=discrete.right_blindspot,
         lane_width_m=lerp(left.lane_width_m, right.lane_width_m),

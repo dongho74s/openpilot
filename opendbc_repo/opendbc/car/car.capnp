@@ -217,6 +217,7 @@ struct CarState {
   buttonEnable @57 :Bool;  # user is requesting enable, usually one frame. set if pcmCruise=False
   leftBlinker @20 :Bool;
   rightBlinker @21 :Bool;
+  hazardLights @120 :Bool;  # both turn signals on (hazard switch); GM BCMTurnSignals == 3
   genericToggle @23 :Bool;
 
   # lock info

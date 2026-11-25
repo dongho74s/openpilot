@@ -197,6 +197,10 @@ class CarState(CarStateBase):
     ret.seatbeltUnlatched = pt_cp.vl["BCMDoorBeltStatus"]["LeftSeatBelt"] == 0
     ret.leftBlinker = pt_cp.vl["BCMTurnSignals"]["TurnSignals"] == 1
     ret.rightBlinker = pt_cp.vl["BCMTurnSignals"]["TurnSignals"] == 2
+    # TurnSignals is a 2-bit bitmask: 0 off, 1 left, 2 right, 3 both (hazard).
+    # leftBlinker/rightBlinker stay single-side only, so hazards need their own
+    # flag (the cluster shows both lamps blinking for it; driving logic never reads it).
+    ret.hazardLights = pt_cp.vl["BCMTurnSignals"]["TurnSignals"] == 3
 
     ret.parkingBrake = pt_cp.vl["BCMGeneralPlatformStatus"]["ParkBrakeSwActive"] == 1
 
