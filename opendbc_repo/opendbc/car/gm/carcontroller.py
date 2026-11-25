@@ -390,6 +390,9 @@ class CarController(CarControllerBase):
           if manual_brake:
             self.apply_brake = manual_brake
             near_stop, at_full_stop = True, False
+          if self.gas_brake_hysteresis is not None:
+            # what is really sent: the brake fade continues from it (AutoResume / the manual hold may have replaced it)
+            self.gas_brake_hysteresis.note_sent(self.apply_brake)
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
 

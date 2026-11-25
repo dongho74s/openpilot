@@ -124,7 +124,7 @@ def test_every_switch_from_the_gas_side_fades_and_reset_ends_it():
   h = GasBrakeHysteresis(blend=True)
   feed(h, 0.2, n=20)
   feed(h, -0.5, n=20)
-  feed(h, 0.5, n=2 * gbh.BLEND_FRAMES + gbh.QUICK_RETURN_FRAMES)  # a real gas phase (above GAS_NOW: at once)
+  feed(h, 0.5, n=2 * gbh.LET_OFF_FRAMES + 1)  # a real gas phase (above GAS_NOW: at once)
   assert feed(h, -0.5)[1] < 50  # fades again
   h.reset()
   assert feed(h, -0.5) == (-540, 50)  # a fresh controller takes the brake side as it is (stops, re-engage)
@@ -139,7 +139,7 @@ def test_a_quick_return_to_the_brake_side_resumes_instead_of_fading_from_0():
   h = GasBrakeHysteresis(blend=True)
   feed(h, 0.2, n=20)
   feed(h, -0.6, n=20)
-  feed(h, 0.5, n=2 * gbh.BLEND_FRAMES + gbh.QUICK_RETURN_FRAMES)  # a real gas phase
+  feed(h, 0.5, n=2 * gbh.LET_OFF_FRAMES + 1)  # a real gas phase
   assert feed(h, -0.6)[1] < 15  # fades in from 0 again
   # a fast back-and-forth cannot keep the brake weak: every return resumes where it was let off
   h = GasBrakeHysteresis(blend=True)
@@ -157,14 +157,36 @@ def test_a_quick_return_to_the_brake_side_resumes_instead_of_fading_from_0():
     brakes.append(feed(h, -0.45)[1])
     feed(h, 0.35)
   assert brakes[-1] == 45 and brakes == sorted(brakes)
-  # 3 gas + 1 brake commands (second review): it still fills
+  # 3 or 5 gas + 1 brake commands (second review, Codex review): it still fills, as fast as without gas in between
+  for gas in (3, 5, gbh.LET_OFF_FRAMES):
+    h = GasBrakeHysteresis(blend=True)
+    feed(h, 0.2, n=20)
+    brakes = []
+    for _ in range(12):
+      brakes.append(feed(h, -0.45)[1])
+      feed(h, 0.35, n=gas)
+    assert brakes[-1] == 45 and brakes == sorted(brakes), gas
+
+
+def test_an_easing_request_during_the_fade_is_sent_as_looked_up():
+  """Codex review 2026-11-25: -0.9 then -0.5 must send 50 (the lookup), not a re-faded 36."""
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=30)
+  first = feed(h, -0.9)
+  assert 0 < first[1] < 90
+  assert feed(h, -0.5) == (-540, 50)
+  assert feed(h, -0.3) == (-540, 30)  # easing further: follows at once
+
+
+def test_the_brake_the_controller_really_sent_is_the_start():
+  """Codex review 2026-11-25: AutoResume released a creep with brake 0 while 60 was remembered; the next switch must fade
+  from 0, not jump 0 -> 66."""
   h = GasBrakeHysteresis(blend=True)
   feed(h, 0.2, n=20)
-  brakes = []
-  for _ in range(20):
-    brakes.append(feed(h, -0.45)[1])
-    feed(h, 0.35, n=3)
-  assert brakes[-1] >= 40
+  feed(h, 0.05, n=15, brake_accel=-0.6)  # gas side with a LongPitch brake of 60
+  h.note_sent(0)  # what the CarController finally sent
+  gas, brake = feed(h, -0.1, brake_accel=-0.8)
+  assert gas == -540 and brake == 24  # 0 + 0.3 * 80
 
 
 def test_the_fade_rises_from_the_brake_already_sent():
@@ -303,9 +325,11 @@ def test_small_decel_coasts_and_strong_decel_brakes(runtime, monkeypatch, name, 
   fade = braking[:gbh.BLEND_FRAMES]
   assert all(b1 <= b2 and g1 >= g2 for (g1, b1), (g2, b2) in zip(fade, fade[1:])) and fade[0][1] < 30
   assert set(braking[gbh.BLEND_FRAMES:]) == {(-540, 30)}
-  d.run(0.5, 0.5)
+  d.run(0.5, 0.5)  # 0.5 s of gas (within LET_OFF_FRAMES): a strong request resumes the brake at once
+  assert set(d.run(-0.6, 0.2)[1:]) == {(-540, 60)}
+  d.run(0.5, 1.0)  # a real gas phase: a strong request switches at once and fades in over about 7 commands
   strong = d.run(-0.6, 0.6)
-  assert strong[0][1] < 60 and set(strong[-5:]) == {(-540, 60)}  # strong: switches at once, fades over ~7
+  assert strong[0][1] < 60 and set(strong[-5:]) == {(-540, 60)}
 
 
 def test_brake_side_keeps_regen_through_a_small_accel(runtime, monkeypatch):

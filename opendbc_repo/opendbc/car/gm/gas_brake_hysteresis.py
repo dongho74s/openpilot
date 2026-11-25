@@ -24,10 +24,13 @@ BLEND_FRAMES commands for a request down to BRAKE_NOW, fewer for a deeper one, a
 coast itself is unchanged. Review 2026-11-25 (independent reviewer, Codex login expired):
 - the friction brake rises from what was actually sent last, never from 0: with LongPitch on a slow uphill the gas
   side already sends a brake (gas input >= 0, brake input < 0), and restarting at 0 dropped 60 to 11 just as the
-  request deepened. Only rises are faded; a lower lookup value is sent as it is.
-- a brake let off for up to QUICK_RETURN_FRAMES gas commands resumes where it was; longer gas phases empty the fade
-  at half the fill rate (2 * BLEND_FRAMES commands), so a back-and-forth always fills it. A +0.35/-0.45
-  command-by-command back-and-forth kept the brake near 11 % before, and 3 gas + 1 brake commands near 20 %.
+  request deepened. Only a rise above the brake sent last is faded; anything at or below it is sent as looked up
+  (Codex review: -0.9 then -0.5 sent 36 instead of 50). The CarController reports the brake it finally sent
+  (note_sent), since the Traverse AutoResume and the manual brake hold can replace it after this (Codex review: an
+  AutoResume creep release sent 0 while 60 was remembered, then 0 -> 66 at the next switch).
+- a gas phase of up to LET_OFF_FRAMES commands resumes the fade where the brake was let off; a longer one starts a new
+  fade. Every brake command adds at least 1/BLEND_FRAMES and short gas phases take nothing away, so no gas/brake
+  back-and-forth can keep the brake weak (a partial let-off per gas command was still beaten by 5 gas + 1 brake).
 - 0x2CB between ZERO_GAS and MAX_ACC_REGEN is faded only on the EVs (blend_regen), whose EVTable path already sends
   such values; the stock camera sends only the two ends, and how an engine car's ECM takes the values in between is
   unknown, so there 0x2CB switches at once and only the friction brake fades.
@@ -42,7 +45,7 @@ GAS_NOW = 0.3  # m/s^2: always accelerate at once above this
 HOLD_FRAMES = 12  # 0x2CB commands (25 Hz): 0.48 s
 BLEND_FRAMES = 10  # 0x2CB commands (25 Hz): 0.4 s fade-in of the brake side for a request down to BRAKE_NOW
 BLEND_URGENT = -1.0  # m/s^2: no fade-in from here down (urgent braking keeps the immediate brake)
-QUICK_RETURN_FRAMES = 2  # gas commands a brake let-off may last and still resume where it was
+LET_OFF_FRAMES = 2 * BLEND_FRAMES  # gas commands (0.8 s) a brake let-off may last and still resume where it was
 
 
 def has_gas_brake_step(params) -> bool:
@@ -82,10 +85,8 @@ class GasBrakeHysteresis:
         switch = brake_request < BRAKE_NOW or (brake_request < BRAKE_ENTER and self.frames >= HOLD_FRAMES)
       if switch:
         if self.blend_enabled and self.gas_side and not want_gas:
-          # back on the brake side: fade in after a real gas phase; a quick return resumes where it was let off
-          # (emptied at half the fill rate, so any gas/brake back-and-forth still fills it: 3 gas + 1 brake did not)
-          let_off = max(0, self.gas_frames - QUICK_RETURN_FRAMES) / (2 * BLEND_FRAMES)
-          self.blend = max(0.0, self.blend_left - let_off)
+          # back on the brake side: a new fade after a real gas phase, else resume where the brake was let off
+          self.blend = 0.0 if self.gas_frames > LET_OFF_FRAMES else self.blend_left
           self.start_brake = self.last_brake
         self.gas_side = want_gas
         self.frames = 0
@@ -101,8 +102,8 @@ class GasBrakeHysteresis:
       self.blend = 1.0 if frames < 1. else min(1.0, self.blend + 1.0 / frames)
       if self.blend_regen:
         gas = zero_gas + self.blend * (gas - zero_gas)
-      if brake > self.start_brake:  # only a rise is faded, from what was sent
-        brake = self.start_brake + self.blend * (brake - self.start_brake)
+      if brake > self.last_brake:  # only a rise above the brake sent last is faded
+        brake = min(brake, max(self.last_brake, self.start_brake + self.blend * (brake - self.start_brake)))
     self.blend_left = self.blend
     return self._sent((gas, brake))
 
@@ -110,3 +111,7 @@ class GasBrakeHysteresis:
     gas, brake = int(round(command[0])), int(round(command[1]))
     self.last_brake = brake
     return gas, brake
+
+  def note_sent(self, brake: int):
+    """The friction brake the CarController finally sent (AutoResume or the manual hold may have replaced ours)."""
+    self.last_brake = int(brake)
