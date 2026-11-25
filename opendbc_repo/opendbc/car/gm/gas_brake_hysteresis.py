@@ -19,9 +19,17 @@ Blend (user request 2026-11-25, every car that uses this hysteresis): the coast 
 MAX_ACC_REGEN and the friction brake for the whole request on at once. Traverse rlogs after this hysteresis reached the car (11-21, routes 245-257
 against 231/23c from 11-18..20) braked later and harder at the start: the 0.3 s decel jerk of brake starts with a
 -0.3..-0.6 request went from -0.72 to -1.05 m/s^3 (10th percentile -1.07 to -2.44), with -0.6..-1.2 from -1.11 to
--1.52 (-1.73 to -3.85). With blend on, a switch from the gas side to the brake side fades the brake side in: 0x2CB goes
-from ZERO_GAS to MAX_ACC_REGEN and the friction brake from 0 to its lookup value over BLEND_FRAMES commands for a request
-down to BRAKE_NOW, fewer for a deeper one, and at once from BLEND_URGENT down. The coast itself is unchanged.
+-1.52 (-1.73 to -3.85). With blend on, a switch from the gas side to the brake side fades the brake side in over
+BLEND_FRAMES commands for a request down to BRAKE_NOW, fewer for a deeper one, and at once from BLEND_URGENT down. The
+coast itself is unchanged. Review 2026-11-25 (independent reviewer, Codex login expired):
+- the friction brake rises from what was actually sent last, never from 0: with LongPitch on a slow uphill the gas
+  side already sends a brake (gas input >= 0, brake input < 0), and restarting at 0 dropped 60 to 11 just as the
+  request deepened. Only rises are faded; a lower lookup value is sent as it is.
+- a brake let off for up to QUICK_RETURN_FRAMES gas commands resumes where it was; longer gas phases empty the fade
+  over BLEND_FRAMES. A +0.35/-0.45 command-by-command back-and-forth kept the brake near 11 % before.
+- 0x2CB between ZERO_GAS and MAX_ACC_REGEN is faded only on the EVs (blend_regen), whose EVTable path already sends
+  such values; the stock camera sends only the two ends, and how an engine car's ECM takes the values in between is
+  unknown, so there 0x2CB switches at once and only the friction brake fades.
 """
 
 import numpy as np
@@ -33,6 +41,7 @@ GAS_NOW = 0.3  # m/s^2: always accelerate at once above this
 HOLD_FRAMES = 12  # 0x2CB commands (25 Hz): 0.48 s
 BLEND_FRAMES = 10  # 0x2CB commands (25 Hz): 0.4 s fade-in of the brake side for a request down to BRAKE_NOW
 BLEND_URGENT = -1.0  # m/s^2: no fade-in from here down (urgent braking keeps the immediate brake)
+QUICK_RETURN_FRAMES = 2  # gas commands a brake let-off may last and still resume where it was
 
 
 def has_gas_brake_step(params) -> bool:
@@ -41,14 +50,19 @@ def has_gas_brake_step(params) -> bool:
 
 
 class GasBrakeHysteresis:
-  def __init__(self, blend: bool = False):
+  def __init__(self, blend: bool = False, blend_regen: bool = False):
     self.blend_enabled = blend
+    self.blend_regen = blend_regen
     self.reset()
 
   def reset(self):
     self.gas_side = None
     self.frames = 0
     self.blend = 1.0  # brake-side share sent: 1 = the brake side as looked up
+    self.blend_left = 0.0  # the share sent in the last brake-side command (what a quick return resumes from)
+    self.gas_frames = 0  # gas-side commands since the last switch
+    self.last_brake = 0  # friction brake in the last command this returned
+    self.start_brake = 0  # friction brake sent just before the brake side began fading in
 
   def update(self, accel: float, brake_accel: float, apply_gas: int, apply_brake: int, zero_gas: float,
              max_acc_regen: float):
@@ -67,18 +81,30 @@ class GasBrakeHysteresis:
         switch = brake_request < BRAKE_NOW or (brake_request < BRAKE_ENTER and self.frames >= HOLD_FRAMES)
       if switch:
         if self.blend_enabled and self.gas_side and not want_gas:
-          self.blend = 0.0
+          # back on the brake side: fade in after a real gas phase; a quick return resumes where it was let off
+          let_off = max(0, self.gas_frames - QUICK_RETURN_FRAMES) / BLEND_FRAMES
+          self.blend = max(0.0, self.blend_left - let_off)
+          self.start_brake = self.last_brake
         self.gas_side = want_gas
         self.frames = 0
+        self.gas_frames = 0
 
     if self.gas_side:
-      self.blend = 1.0
-      return (int(round(zero_gas)), 0) if not want_gas else (apply_gas, apply_brake)
+      self.gas_frames += 1
+      return self._sent((zero_gas, 0) if not want_gas else (apply_gas, apply_brake))
 
     gas, brake = (max_acc_regen, apply_brake) if want_gas else (apply_gas, apply_brake)
     if self.blend < 1.0:
       frames = float(np.interp(brake_request, [BLEND_URGENT, BRAKE_NOW], [0., BLEND_FRAMES]))
       self.blend = 1.0 if frames < 1. else min(1.0, self.blend + 1.0 / frames)
-      gas = zero_gas + self.blend * (gas - zero_gas)
-      brake = self.blend * brake
-    return int(round(gas)), int(round(brake))
+      if self.blend_regen:
+        gas = zero_gas + self.blend * (gas - zero_gas)
+      if brake > self.start_brake:  # only a rise is faded, from what was sent
+        brake = self.start_brake + self.blend * (brake - self.start_brake)
+    self.blend_left = self.blend
+    return self._sent((gas, brake))
+
+  def _sent(self, command):
+    gas, brake = int(round(command[0])), int(round(command[1]))
+    self.last_brake = brake
+    return gas, brake

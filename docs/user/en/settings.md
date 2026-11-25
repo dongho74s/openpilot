@@ -291,7 +291,9 @@ On the Chevrolet camera ACC and SDGM cars under openpilot longitudinal control (
 
 Leaving the coast for braking now fades in instead of stepping (2026-11-25, the same cars).
 - Before, the switch put maximum regen (0x2CB −540) and the friction brake for the whole request on at once, from 0. Traverse logs after 11-21 braked harder at the start (0.3 s decel jerk with a −0.6 to −1.2 request: median −1.11 → −1.52 m/s³).
-- Now regen and the brake rise together from 0 to the request over about 0.4 s, faster for a deeper request (0.2 s at −0.7), and decel stronger than −1.0 m/s² still brakes at once. The coast itself (lift off down to −0.2, 0.5 s hold) is unchanged.
+- Now the friction brake rises from what was sent last to the request over about 0.4 s, faster for a deeper request (0.2 s at −0.7), and decel stronger than −1.0 m/s² still brakes at once. Only rises are slowed; a lower value follows at once. The coast itself (lift off down to −0.2, 0.5 s hold) is unchanged.
+- Regen (0x2CB) values in between are faded only on the EVs (Bolt EUV, Bolt ACC w Pedal), which already send them with `EVTable`. The stock camera sends only the two ends and an engine car's ECM may treat the values in between differently, so engine cars switch regen at once as before and fade only the friction brake.
+- A gas phase of 0.08 s or less resumes the brake where it was, so a fast gas/brake back-and-forth cannot keep the brake weak.
 - Replaying 8 recent Traverse drives (123 switches): the brake rise in one command at the switch went from a median 21 to 4 (0.04 m/s²), for 0.04 m/s less braking per switch (at most 3 cm). Not yet checked in the car.
 
 The car choice `Chevrolet Malibu ASCM Harness 2017-19` (CHEVROLET_MALIBU_ASCM) is for a Malibu whose harness sits in the ASCM (adaptive cruise module) connector, putting the comma between the ASCM and the car. Cars with a SASCM added pick it too. It ports StarPilot's same car (CHEVROLET_MALIBU_ASCM, StarPilotHQ/StarPilot stable 8589b73f).
