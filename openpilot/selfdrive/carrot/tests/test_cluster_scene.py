@@ -420,6 +420,7 @@ def _cluster_state(**changes) -> ClusterUiState:
     lfa_active=None,
     left_signal=False,
     right_signal=False,
+    hazard_signal=False,
     left_blindspot=False,
     right_blindspot=False,
     lane_change=None,

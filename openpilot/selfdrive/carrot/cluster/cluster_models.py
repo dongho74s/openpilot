@@ -376,6 +376,7 @@ class ClusterUiState:
     lfa_active: bool | None
     left_signal: bool
     right_signal: bool
+    hazard_signal: bool
     left_blindspot: bool
     right_blindspot: bool
     lane_change: str | None

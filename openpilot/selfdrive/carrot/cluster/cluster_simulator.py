@@ -64,6 +64,7 @@ class ClusterSimulator:
         lanes = self._lanes_for_current_state()
         left_signal = self.elapsed < self.left_signal_until
         right_signal = self.elapsed < self.right_signal_until
+        hazard_signal = left_signal and right_signal
         highlight_active = self.lane_change_direction is not None and self.lane_change_phase in ("preparing", "changing")
         highlight_lane = self.lane_change_direction if highlight_active else None
         highlight_lane_offset = (
@@ -85,6 +86,7 @@ class ClusterSimulator:
             lfa_active=True,
             left_signal=left_signal,
             right_signal=right_signal,
+            hazard_signal=hazard_signal,
             left_blindspot=False,
             right_blindspot=False,
             lane_change=self.lane_change_direction,
