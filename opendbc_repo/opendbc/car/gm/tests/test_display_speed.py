@@ -32,6 +32,9 @@ class MemoryParams:
                    "AutoNaviSpeedSafetyFactor": 100, "AutoGasTokSpeed": 30, "AutoGasCancelSpeed": 30,
                    "LongActuatorDelay": 50, "SpeedFromPCM": 2}
 
+  def get(self, key):
+    return self.values.get(key)
+
   def get_int(self, key):
     return int(self.values.get(key, 0))
 

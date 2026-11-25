@@ -190,7 +190,15 @@ def test_no_easing_again_after_standstill_in_the_same_stop(runtime, monkeypatch)
 
 
 def test_an_unreadable_setting_turns_easing_off_and_commands_go_on(runtime, monkeypatch):
-  """Codex review R3."""
+  """Codex review R3: read through Params.get (None when unreadable), never get_int's C++ parse."""
+  from opendbc.car.gm.carcontroller import read_int_param
+
+  class Raising:
+    def get(self, key):
+      raise RuntimeError("bad")
+  assert read_int_param(Raising(), "StopBrakeEase") is None
+  assert read_int_param({"StopBrakeEase": None}, "StopBrakeEase") is None
+  assert read_int_param({"StopBrakeEase": 35}, "StopBrakeEase") == 35
   d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopBrakeEase="x", StopBrakeEaseSpeed=4)
   into_a_stop(d)
   assert set(brakes(d.run(-0.5, 0.3, state="stopping", v=0.4, a=-0.3))) == {50}

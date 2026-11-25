@@ -58,6 +58,15 @@ def get_acc_dashboard_speed_kph(CP, cluster_target_kph):
   return cluster_target_kph
 
 
+def read_int_param(params, key):
+  """An int Param through Params.get (cast in Python, None when unreadable), never raising."""
+  try:
+    value = params.get(key)
+    return None if value is None or isinstance(value, bool) else int(float(value))
+  except Exception:
+    return None
+
+
 STOP_BRAKE_RISE = 3  # friction brake counts per 25 Hz command at least, while stopping (rises only)
 STOP_SMOOTH_MAX_SPEED = 2.0  # m/s: the stopping brake rise is joined up only below this
 STOP_SMOOTH_MAX_BRAKE = 80  # counts (-0.8 m/s^2): and only up to this; a stronger stopping brake goes on at once
@@ -215,11 +224,12 @@ class CarController(CarControllerBase):
         self.params.STEER_DELTA_DOWN = min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN)
       self.cluster_take_steering_mode = params.get_int("GmClusterTakeSteering")
       if self.smooth_stop:
-        try:
-          self.stop_ease_pct = int(np.clip(params.get_int("StopBrakeEase"), 0, STOP_EASE_MAX_PCT))
-          self.stop_ease_speed = float(np.clip(params.get_int("StopBrakeEaseSpeed"), 1, 10)) / 3.6
-        except Exception:
-          self.stop_ease_pct = 0  # an unreadable stored value: no easing, and the commands go on (Codex review R3)
+        # Params.get casts in Python and gives None for a value it cannot read; get_int's C++ parse would terminate
+        # the process on such a value (Codex review R3). An unreadable StopBrakeEase turns easing off.
+        pct = read_int_param(params, "StopBrakeEase")
+        speed = read_int_param(params, "StopBrakeEaseSpeed")
+        self.stop_ease_pct = int(np.clip(pct, 0, STOP_EASE_MAX_PCT)) if pct is not None else 0
+        self.stop_ease_speed = float(np.clip(speed if speed is not None else 4, 1, 10)) / 3.6
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")
 
