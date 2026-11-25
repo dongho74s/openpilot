@@ -361,6 +361,8 @@
               "params": [
                 "StopDistanceCarrot",
                 "StoppingAccel",
+                "StopBrakeEase",
+                "StopBrakeEaseSpeed",
                 "VEgoStopping",
                 "AChangeCostStarting"
               ]
@@ -3821,6 +3823,40 @@
       "min": -100,
       "max": -1,
       "default": -50,
+      "unit": 1
+    },
+    {
+      "group": "주행튜닝",
+      "name": "StopBrakeEase",
+      "title": "정차 직전 브레이크 풀기 %(30)",
+      "descr": "쉐보레 엔진차(트래버스·트레일블레이저·이쿼녹스·실버라도 등, 카메라 ACC·SDGM 오픈파일럿 종제어)에서 거의 설 때 사람처럼 브레이크를 살짝 풀어 마지막 덜컥을 줄입니다. 0이면 꺼짐, 최대 60.\n'풀기 시작 속도'부터 서기 직전까지 정지 브레이크를 이 비율만큼 서서히 줄이고, 브레이크 30(약 -0.15 m/s²) 아래로는 풀지 않습니다. 완전히 서면 바로 정지 유지 브레이크로 돌아갑니다.\n내리막 등으로 차가 0.3초 넘게 더 이상 줄지 않으면 그 정차에서는 풀기를 멈춥니다. 정지 거리가 조금 길어집니다(30%에서 수십 cm). 주행 중에도 1초 안에 반영됩니다. 전기차(볼트)와 다른 차종은 바뀌지 않습니다. 실차로는 확인하지 않았습니다.",
+      "egroup": "LONG",
+      "etitle": "Ease the brake off before the stop %(30)",
+      "edescr": "On Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so on, camera ACC / SDGM openpilot longitudinal), eases the brake off just before the car stops, like a driver, so the last jolt is smaller. 0 = off, at most 60.\nFrom the ease start speed down to the stop the stopping brake is reduced by up to this share, never below brake 30 (about -0.15 m/s²). At standstill the stop hold is back at once.\nIf the car stops slowing for more than 0.3 s (a downhill, for example), easing ends for that stop. The stop gets slightly longer (tens of cm at 30%). Applies within a second, also while driving. EVs (the Bolts) and other cars are unchanged. Not yet checked in a real car.",
+      "cgroup": "纵向控制",
+      "ctitle": "停车前松开制动 %(30)",
+      "cdescr": "在雪佛兰燃油车（Traverse、Trailblazer、Equinox、Silverado 等，摄像头 ACC / SDGM openpilot 纵向控制）上，快停下时像驾驶员一样稍微松开制动，减小最后的顿挫。0 为关闭，最大 60。\n从“开始松开速度”到停下，停车制动最多按此比例逐渐减小，但不低于制动 30（约 -0.15 m/s²）。完全停下后立即恢复停车保持制动。\n若车辆 0.3 秒以上不再减速（如下坡），本次停车不再松开。停车距离略增（30% 时数十厘米）。行驶中 1 秒内生效。电动车（Bolt）和其他车型不变。尚未在实车确认。",
+      "hidden_brands": ["body", "chrysler", "ford", "honda", "hyundai", "mazda", "nissan", "psa", "rivian", "subaru", "tesla", "toyota", "volkswagen"],
+      "min": 0,
+      "max": 60,
+      "default": 30,
+      "unit": 5
+    },
+    {
+      "group": "주행튜닝",
+      "name": "StopBrakeEaseSpeed",
+      "title": "브레이크 풀기 시작 속도 km/h(4)",
+      "descr": "'정차 직전 브레이크 풀기'를 시작하는 속도입니다. 1~10 km/h. 높을수록 일찍부터 천천히 풀고, 낮을수록 서기 바로 직전에만 풉니다. -0.8 m/s²보다 센 정지 브레이크는 풀지 않습니다.",
+      "egroup": "LONG",
+      "etitle": "Brake ease start speed km/h(4)",
+      "edescr": "The speed at which easing the brake off before the stop starts. 1-10 km/h. Higher starts earlier and eases more gradually; lower eases only right before the stop. A stopping brake stronger than -0.8 m/s² is not eased.",
+      "cgroup": "纵向控制",
+      "ctitle": "开始松开制动速度 km/h(4)",
+      "cdescr": "开始“停车前松开制动”的速度，1~10 km/h。越高越早开始、越平缓；越低只在快停下时松开。强于 -0.8 m/s² 的停车制动不松开。",
+      "hidden_brands": ["body", "chrysler", "ford", "honda", "hyundai", "mazda", "nissan", "psa", "rivian", "subaru", "tesla", "toyota", "volkswagen"],
+      "min": 1,
+      "max": 10,
+      "default": 4,
       "unit": 1
     },
     {

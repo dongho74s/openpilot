@@ -106,3 +106,51 @@ def test_rolling_back_brakes_at_once(runtime, monkeypatch):
   d.run(0.2, 0.5, v=0.5)
   assert brakes(d.run(-0.5, 0.2, state="stopping", v=-2.1))[0] == 50
   assert brakes(d.run(-0.5, 0.2, state="stopping", v=-0.3))[0] == 50
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Easing the brake off before the stop (StopBrakeEase / StopBrakeEaseSpeed, user request 2026-11-26)
+
+EASE = dict(StopBrakeEase=30, StopBrakeEaseSpeed=4)
+
+
+def into_a_stop(d, accel=-0.5):
+  d.run(accel, 1.0, v=1.5)
+  d.run(accel, 0.4, state="stopping", v=1.5)  # above the 4 km/h start speed: not eased
+
+
+def test_the_brake_eases_off_as_the_car_slows_and_the_hold_comes_back_at_standstill(runtime, monkeypatch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  seq = []
+  for v in (1.0, 0.8, 0.6, 0.4, 0.2, 0.05):
+    seq += brakes(d.run(-0.5, 0.2, state="stopping", v=v, a=-0.3))
+  assert seq == sorted(seq, reverse=True) and min(seq) >= 30
+  assert seq[0] < 50 and seq[-1] <= 38  # 50 * (1 - 0.3 * closeness), near the stop about 36
+  held = brakes(d.run(-0.5, 0.3, state="stopping", v=0.0))
+  assert set(held) == {50}  # standstill: the full hold in the next command
+
+
+def test_easing_ends_for_the_stop_when_the_car_stops_slowing(runtime, monkeypatch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  assert brakes(d.run(-0.5, 0.2, state="stopping", v=0.4, a=-0.3))[-1] == 40
+  rolling = brakes(d.run(-0.5, 0.6, state="stopping", v=0.4, a=0.1))  # a downhill: not slowing for 0.32 s
+  assert rolling[-1] == 50 and rolling == sorted(rolling)  # back to the stopping brake, joined up
+  assert set(brakes(d.run(-0.5, 0.2, state="stopping", v=0.3, a=-0.3))) == {50}  # until the car has stopped
+  d.run(-0.5, 0.2, state="stopping", v=0.0)
+  d.run(0.3, 0.5, v=1.5)
+  into_a_stop(d)
+  assert brakes(d.run(-0.5, 0.2, state="stopping", v=0.4, a=-0.3))[-1] == 40  # the next stop eases again
+
+
+def test_no_easing_when_off_strong_or_on_an_ev(runtime, monkeypatch):
+  off = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopBrakeEase=0)
+  into_a_stop(off)
+  assert set(brakes(off.run(-0.5, 0.3, state="stopping", v=0.4, a=-0.3))) == {50}
+  strong = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(strong, accel=-1.0)
+  assert set(brakes(strong.run(-1.0, 0.3, state="stopping", v=0.4, a=-0.3))) == {100}  # above STOP_SMOOTH_MAX_BRAKE
+  ev = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True), **EASE)
+  into_a_stop(ev)
+  assert set(brakes(ev.run(-0.5, 0.3, state="stopping", v=0.4, a=-0.3))[1:]) == {50}

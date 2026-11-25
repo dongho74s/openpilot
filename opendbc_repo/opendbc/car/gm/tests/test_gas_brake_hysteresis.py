@@ -277,7 +277,7 @@ class Drive:
     self.frame = 0
 
   def run(self, accel, seconds=0.0, state="pid", v=12.0, long_active=True, pitch=0.0, frames=None,
-          cruise_standstill=False, stock_active=True, soft_hold=0, raw_state=False):
+          cruise_standstill=False, stock_active=True, soft_hold=0, raw_state=False, a=0.0):
     """Returns (gas, brake) of every 0x2CB/0x315 pair sent, decoded from the CAN frames; self.taps gets the pedal."""
     pairs, self.taps = [], []
     for _ in range(int(round(seconds * 100)) if frames is None else frames):
@@ -287,7 +287,7 @@ class Drive:
       cc.hudControl.setSpeed = 20.0
       cc.orientationNED = [0.0, pitch, 0.0]
       cs = controller_state()
-      cs.out = structs.CarState(vEgo=v, aEgo=0.0, standstill=v < 0.05, softHoldActive=soft_hold)
+      cs.out = structs.CarState(vEgo=v, aEgo=a, standstill=v < 0.05, softHoldActive=soft_hold)
       cs.out.cruiseState.available = True
       cs.out.cruiseState.enabled = True
       cs.out.gearShifter = "drive"

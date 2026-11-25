@@ -61,6 +61,10 @@ def get_acc_dashboard_speed_kph(CP, cluster_target_kph):
 STOP_BRAKE_RISE = 3  # friction brake counts per 25 Hz command at least, while stopping (rises only)
 STOP_SMOOTH_MAX_SPEED = 2.0  # m/s: the stopping brake rise is joined up only below this
 STOP_SMOOTH_MAX_BRAKE = 80  # counts (-0.8 m/s^2): and only up to this; a stronger stopping brake goes on at once
+# Easing off just before the stop (StopBrakeEase %, StopBrakeEaseSpeed km/h; user request 2026-11-26)
+STOP_EASE_MAX_PCT = 60
+STOP_EASE_MIN_BRAKE = 30  # counts: never eased below this (1-5 km/h logs: about -0.15 m/s^2 against the engine's creep)
+STOP_EASE_CANCEL_COMMANDS = 8  # 25 Hz commands (0.32 s) of a non-decelerating car end easing for that stop
 
 
 class CarController(CarControllerBase):
@@ -76,6 +80,10 @@ class CarController(CarControllerBase):
     # their stop hold follows the stock camera's, which their ECM needs) and CC-only cars keep their stops.
     self.smooth_stop = CP.openpilotLongitudinalControl and CP.carFingerprint in (CAMERA_ACC_CAR | SDGM_CAR) and \
       CP.carFingerprint not in EV_CAR and CP.carFingerprint not in CC_ONLY_CAR
+    self.stop_ease_pct = 0  # StopBrakeEase, read every 0.5 s
+    self.stop_ease_speed = 4. / 3.6  # StopBrakeEaseSpeed, m/s
+    self.stop_ease_cancelled = False
+    self.stop_ease_not_slowing = 0
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -153,6 +161,27 @@ class CarController(CarControllerBase):
 
     return pedal_gas, press_regen_paddle
 
+  def ease_stop_brake(self, CC, CS, stopping):
+    """Ease the brake off just before the stop, like a driver (StopBrakeEase, user request 2026-11-26): from
+    StopBrakeEaseSpeed down to the stop the brake goes down to (100 - StopBrakeEase) % of the stopping brake, never
+    below STOP_EASE_MIN_BRAKE; at standstill the hold is back at once (nothing is eased or ramped there). A car that
+    stops slowing (aEgo above 0 for STOP_EASE_CANCEL_COMMANDS, e.g. downhill) ends easing until it has stopped."""
+    if not (self.smooth_stop and CC.longActive and stopping) or CS.out.standstill:
+      self.stop_ease_cancelled = False
+      self.stop_ease_not_slowing = 0
+      return
+    if self.stop_ease_pct <= 0 or not (0. < CS.out.vEgo < self.stop_ease_speed) or \
+       not (STOP_EASE_MIN_BRAKE < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE):
+      return
+    self.stop_ease_not_slowing = self.stop_ease_not_slowing + 1 if CS.out.aEgo > 0. else 0
+    if self.stop_ease_not_slowing >= STOP_EASE_CANCEL_COMMANDS:
+      self.stop_ease_cancelled = True
+    if self.stop_ease_cancelled:
+      return
+    closeness = (self.stop_ease_speed - CS.out.vEgo) / self.stop_ease_speed  # 0 at the start speed, 1 at the stop
+    eased = self.apply_brake * (1. - self.stop_ease_pct / 100. * closeness)
+    self.apply_brake = int(round(max(STOP_EASE_MIN_BRAKE, eased)))
+
   def update(self, CC, CS, now_nanos):
     test_fcw = self.fcw_warning_test.update(CS.out, CC) if self.fcw_warning_test is not None else False
 
@@ -169,6 +198,9 @@ class CarController(CarControllerBase):
       if steerDeltaDown > 0:
         self.params.STEER_DELTA_DOWN = min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN)
       self.cluster_take_steering_mode = params.get_int("GmClusterTakeSteering")
+      if self.smooth_stop:
+        self.stop_ease_pct = int(np.clip(params.get_int("StopBrakeEase"), 0, STOP_EASE_MAX_PCT))
+        self.stop_ease_speed = float(np.clip(params.get_int("StopBrakeEaseSpeed"), 1, 10)) / 3.6
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")
 
@@ -321,6 +353,7 @@ class CarController(CarControllerBase):
 
         if self.gas_brake_hysteresis is not None and not gas_brake_hysteresis_active:
           self.gas_brake_hysteresis.reset()
+        self.ease_stop_brake(CC, CS, stopping)
         if self.smooth_stop and CC.longActive and stopping and not CS.out.standstill and \
            0. < CS.out.vEgo < STOP_SMOOTH_MAX_SPEED and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE:
           # The stopping brake rises from what was sent, not in one step (user report 2026-11-26: entering stopping
