@@ -18,7 +18,8 @@ from opendbc.car.gm.stock_fcw import stock_fcw_replay_supported
 from opendbc.car.gm.manual_auto_hold import manual_hold_supported
 from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.gas_brake_hysteresis import GasBrakeHysteresis, has_gas_brake_step
-from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR
+from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR, \
+  CAMERA_ACC_CAR, SDGM_CAR
 from opendbc.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from opendbc.car.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
@@ -58,6 +59,8 @@ def get_acc_dashboard_speed_kph(CP, cluster_target_kph):
 
 
 STOP_BRAKE_RISE = 3  # friction brake counts per 25 Hz command at least, while stopping (rises only)
+STOP_SMOOTH_MAX_SPEED = 2.0  # m/s: the stopping brake rise is joined up only below this
+STOP_SMOOTH_MAX_BRAKE = 80  # counts (-0.8 m/s^2): and only up to this; a stronger stopping brake goes on at once
 
 
 class CarController(CarControllerBase):
@@ -71,8 +74,8 @@ class CarController(CarControllerBase):
     # Engine camera-ACC / SDGM cars under openpilot long (user report 2026-11-26, Traverse): the end of a stop stepped
     # the brake up (41 -> 52, entering stopping) and down (52 -> 40, in the instant the car stopped). EVs (the Bolts:
     # their stop hold follows the stock camera's, which their ECM needs) and CC-only cars keep their stops.
-    self.smooth_stop = CP.openpilotLongitudinalControl and CP.carFingerprint not in EV_CAR and \
-      CP.carFingerprint not in CC_ONLY_CAR
+    self.smooth_stop = CP.openpilotLongitudinalControl and CP.carFingerprint in (CAMERA_ACC_CAR | SDGM_CAR) and \
+      CP.carFingerprint not in EV_CAR and CP.carFingerprint not in CC_ONLY_CAR
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -318,10 +321,13 @@ class CarController(CarControllerBase):
 
         if self.gas_brake_hysteresis is not None and not gas_brake_hysteresis_active:
           self.gas_brake_hysteresis.reset()
-        if self.smooth_stop and CC.longActive and stopping and self.apply_brake > self.last_sent_brake:
+        if self.smooth_stop and CC.longActive and stopping and not CS.out.standstill and \
+           CS.out.vEgo < STOP_SMOOTH_MAX_SPEED and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE:
           # The stopping brake rises from what was sent, not in one step (user report 2026-11-26: entering stopping
           # near 1 km/h stepped the brake 41 -> 52 just before the stop): a quarter of the gap per command, at least
-          # STOP_BRAKE_RISE, so it still reaches the stopping brake within a few commands.
+          # STOP_BRAKE_RISE, so it still reaches the stopping brake within a few commands. Only the gentle end of a
+          # stop, while still rolling (Codex review: a stop entered at speed with -2.0 was delayed 0.5 s; a standstill
+          # hold after an AutoResume creep release or entering soft hold was below its floor for 0.2-0.3 s).
           rise = max(STOP_BRAKE_RISE, (self.apply_brake - self.last_sent_brake) / 4.)
           self.apply_brake = int(min(self.apply_brake, self.last_sent_brake + rise))
 

@@ -22,6 +22,16 @@ def test_engine_cars_smooth_the_stop_and_evs_do_not(runtime, monkeypatch, car):
   assert not controller(runtime, monkeypatch, bolt_cp(runtime, CAR.CHEVROLET_BOLT_ACC_PEDAL, True, False)).smooth_stop
 
 
+def test_ascm_and_gateway_long_cars_keep_their_stops(runtime, monkeypatch):
+  """Codex review 2026-11-26: only camera ACC / SDGM engine cars (the Malibu / Acadia gateway long and the Malibu ASCM
+  with a SASCM are not in scope)."""
+  from opendbc.car.gm.tests.test_malibu_ascm import malibu_cp
+  for cp in (build_cp(runtime, CAR.CHEVROLET_MALIBU, True), build_cp(runtime, CAR.GMC_ACADIA, True),
+             malibu_cp(runtime, True)):
+    if cp.openpilotLongitudinalControl:
+      assert not controller(runtime, monkeypatch, cp).smooth_stop, cp.carFingerprint
+
+
 def test_the_brake_does_not_drop_in_the_instant_the_car_stops(runtime, monkeypatch):
   d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
   d.run(-0.41, 1.0, v=0.4)  # pid, braking 41
@@ -63,3 +73,28 @@ def test_the_bolts_keep_their_stop_hold(runtime, monkeypatch):
   d.run(-0.41, 1.0, v=0.4)
   hold = int(-100 * cp.stopAccel)
   assert set(d.run(-0.52, 0.3, state="stopping", v=0.05)[1:]) == {(-500, hold)}  # CP.stopAccel's hold, unchanged
+
+
+def test_a_stop_entered_at_speed_brakes_at_once(runtime, monkeypatch):
+  """Codex review 2026-11-26: stopping entered at 8 m/s right after a -2.0 pid request must not ramp (was 0.5 s late)."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
+  d.run(0.0, 1.0, v=8.0)
+  assert brakes(d.run(-2.0, 0.2, state="stopping", v=8.0))[0] == 200
+
+
+def test_a_strong_stopping_brake_at_low_speed_goes_on_at_once(runtime, monkeypatch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
+  d.run(0.0, 1.0, v=1.0)
+  assert brakes(d.run(-1.5, 0.2, state="stopping", v=1.0))[0] == 150  # above STOP_SMOOTH_MAX_BRAKE
+
+
+def test_a_standstill_hold_after_a_release_comes_back_at_once(runtime, monkeypatch):
+  """Codex review 2026-11-26: after an AutoResume creep release (0 sent) or entering soft hold, the standstill hold must
+  be back in the next command, not ramp up from 0."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
+  d.run(-0.5, 0.5, state="stopping", v=0.0)
+  d.c.last_sent_brake = 0  # as after a creep release
+  assert brakes(d.run(-0.5, 0.2, state="stopping", v=0.0))[0] == 50
+  soft = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True))
+  soft.run(0.2, 0.5, v=0.0)  # standing on no brake
+  assert brakes(soft.run(-0.5, 0.2, v=0.0, soft_hold=1))[0] >= 40
