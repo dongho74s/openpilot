@@ -26,7 +26,8 @@ coast itself is unchanged. Review 2026-11-25 (independent reviewer, Codex login 
   side already sends a brake (gas input >= 0, brake input < 0), and restarting at 0 dropped 60 to 11 just as the
   request deepened. Only rises are faded; a lower lookup value is sent as it is.
 - a brake let off for up to QUICK_RETURN_FRAMES gas commands resumes where it was; longer gas phases empty the fade
-  over BLEND_FRAMES. A +0.35/-0.45 command-by-command back-and-forth kept the brake near 11 % before.
+  at half the fill rate (2 * BLEND_FRAMES commands), so a back-and-forth always fills it. A +0.35/-0.45
+  command-by-command back-and-forth kept the brake near 11 % before, and 3 gas + 1 brake commands near 20 %.
 - 0x2CB between ZERO_GAS and MAX_ACC_REGEN is faded only on the EVs (blend_regen), whose EVTable path already sends
   such values; the stock camera sends only the two ends, and how an engine car's ECM takes the values in between is
   unknown, so there 0x2CB switches at once and only the friction brake fades.
@@ -82,7 +83,8 @@ class GasBrakeHysteresis:
       if switch:
         if self.blend_enabled and self.gas_side and not want_gas:
           # back on the brake side: fade in after a real gas phase; a quick return resumes where it was let off
-          let_off = max(0, self.gas_frames - QUICK_RETURN_FRAMES) / BLEND_FRAMES
+          # (emptied at half the fill rate, so any gas/brake back-and-forth still fills it: 3 gas + 1 brake did not)
+          let_off = max(0, self.gas_frames - QUICK_RETURN_FRAMES) / (2 * BLEND_FRAMES)
           self.blend = max(0.0, self.blend_left - let_off)
           self.start_brake = self.last_brake
         self.gas_side = want_gas

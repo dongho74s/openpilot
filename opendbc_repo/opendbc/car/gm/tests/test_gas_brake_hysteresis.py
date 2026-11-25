@@ -124,7 +124,7 @@ def test_every_switch_from_the_gas_side_fades_and_reset_ends_it():
   h = GasBrakeHysteresis(blend=True)
   feed(h, 0.2, n=20)
   feed(h, -0.5, n=20)
-  feed(h, 0.5, n=gbh.BLEND_FRAMES + gbh.QUICK_RETURN_FRAMES)  # a real gas phase (above GAS_NOW: at once)
+  feed(h, 0.5, n=2 * gbh.BLEND_FRAMES + gbh.QUICK_RETURN_FRAMES)  # a real gas phase (above GAS_NOW: at once)
   assert feed(h, -0.5)[1] < 50  # fades again
   h.reset()
   assert feed(h, -0.5) == (-540, 50)  # a fresh controller takes the brake side as it is (stops, re-engage)
@@ -139,7 +139,7 @@ def test_a_quick_return_to_the_brake_side_resumes_instead_of_fading_from_0():
   h = GasBrakeHysteresis(blend=True)
   feed(h, 0.2, n=20)
   feed(h, -0.6, n=20)
-  feed(h, 0.5, n=gbh.BLEND_FRAMES + gbh.QUICK_RETURN_FRAMES)  # a real gas phase
+  feed(h, 0.5, n=2 * gbh.BLEND_FRAMES + gbh.QUICK_RETURN_FRAMES)  # a real gas phase
   assert feed(h, -0.6)[1] < 15  # fades in from 0 again
   # a fast back-and-forth cannot keep the brake weak: every return resumes where it was let off
   h = GasBrakeHysteresis(blend=True)
@@ -157,6 +157,14 @@ def test_a_quick_return_to_the_brake_side_resumes_instead_of_fading_from_0():
     brakes.append(feed(h, -0.45)[1])
     feed(h, 0.35)
   assert brakes[-1] == 45 and brakes == sorted(brakes)
+  # 3 gas + 1 brake commands (second review): it still fills
+  h = GasBrakeHysteresis(blend=True)
+  feed(h, 0.2, n=20)
+  brakes = []
+  for _ in range(20):
+    brakes.append(feed(h, -0.45)[1])
+    feed(h, 0.35, n=3)
+  assert brakes[-1] >= 40
 
 
 def test_the_fade_rises_from_the_brake_already_sent():
