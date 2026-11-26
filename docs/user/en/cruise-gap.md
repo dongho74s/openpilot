@@ -129,16 +129,17 @@ Changes apply within about one second, including while driving. Stronger output 
 The description above concerns upstream control. The final CANFD request override is described below.
 
 <a id="stop-brake-ease"></a>
-### `StopBrakeEase` · Ease the brake off before the stop, `StopBrakeEaseSpeed` · Ease start speed
+### `StopBrakeEase` · Ease the brake off before the stop, `StopBrakeEaseSpeed` · Ease start speed, `StopBrakeSettleTime` · Settle time after the stop
 
 Only on Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so on, camera ACC / SDGM openpilot longitudinal control). EVs (the Bolts) and other cars are unaffected (user request 2026-11-26).
 
 - `StopBrakeEase`: default `30`, range `0 to 60` (%), step `5`. `0` = off.
 - `StopBrakeEaseSpeed`: default `4`, range `1 to 10` (km/h), step `1`.
+- `StopBrakeSettleTime`: default `48` (0.48 s), range `0 to 100` (x0.01 s, 0 to 1 s), step `4` (0.04 s, one command). `0` starts the gentle rise at once.
 
 Like a driver letting off a little just before the car stops: while stopping, once the car is slower than `StopBrakeEaseSpeed`, the stopping brake is gradually reduced by up to `StopBrakeEase` % until just before the stop, never below brake 30 (about -0.15 m/s²).
 
-The wheel speed reads 0 below about 0.75 km/h, so the car still rolls 0.4 to 0.5 s after standstill is detected. The eased brake is therefore kept for 0.48 s after standstill and then rises by 3 per command back to the stop hold (usually within 0.7 s). Before, the hold came at the moment of standstill, braked the last few centimetres harder and the car rocked back with a thump when it really stopped (user report 2026-11-26, seen on the comma accelerometer).
+The wheel speed reads 0 below about 0.75 km/h, so the car still rolls 0.4 to 0.5 s after standstill is detected. The eased brake is therefore kept for `StopBrakeSettleTime` (default 0.48 s) after standstill and then rises by 3 per command (0.04 s) back to the stop hold (usually within 0.7 to 0.8 s at the default, about 1.2 to 1.3 s at 1 s). Raise it if a last jolt remains, lower it if the car seems to drift after stopping. The settle time applies from the next stop (user request 2026-11-26). Before, the hold came at the moment of standstill, braked the last few centimetres harder and the car rocked back with a thump when it really stopped (user report 2026-11-26, seen on the comma accelerometer).
 
 - **The hold at once:** wheels turning again in that time, soft hold, a road steeper than about 3 %, or a stop hold stronger than -0.8 m/s². A stop is settled like this only once.
 

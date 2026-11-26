@@ -380,7 +380,7 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 |---|---|---|
 | [가속 성향·드라이브 모드](cruise-gap.md#driving-mode) | `MyDrivingMode`, `MyDrivingModeAuto` | 연비, 안전, 일반, 고속 모드와 자동 전환 |
 | [가속 성향·속도별 가속값](cruise-gap.md#acceleration-table) | `CruiseMaxVals0`, `CruiseMaxVals1`, `CruiseMaxVals2`, `CruiseMaxVals3`, `CruiseMaxVals4`, `CruiseMaxVals5`, `CruiseMaxVals6` | 속도 구간별 최대 가속 성향 |
-| [정차·재출발](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `VEgoStopping`, `AChangeCostStarting` | 정지 위치, 정지 진입·정차 직전 브레이크 풀기와 재출발 특성 |
+| [정차·재출발](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `StopBrakeSettleTime`, `VEgoStopping`, `AChangeCostStarting` | 정지 위치, 정지 진입·정차 직전 브레이크 풀기와 재출발 특성 |
 | [가감속 튜닝](cruise-gap.md#longitudinal-tuning) | `LongTuningKpV`, `LongTuningKiV`, `LongTuningKf`, `LongActuatorDelay` | 현기차 `100/0/100`, 토요타·렉서스 `0/0/100` 고정·숨김; VW MEB(ID.4 포함)는 저장 게인 적용 |
 | [차간거리](cruise-gap.md#following-gap) | `TFollowGap1`, `TFollowGap2`, `TFollowGap3`, `TFollowGap4`, `DynamicTFollowLC`, `SpeedTFFactor`, `TFollowDecelBoost` | 차간 단계별 시간, 정상 선택 앞차 기준 차로 변경 완화와 감속 여유(기본 0%) |
 | [추종응답성](cruise-gap.md#lead-response) | `LeadAccelResponse`, `LeadAccelResponseTF1`–`LeadAccelResponseTF4` | 모든 차간 단계의 앞차 출발·가속 추종과 접근 반응 |
@@ -409,7 +409,7 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 - 예전에는 시속 1km 안팎에서 정지 단계로 넘어갈 때 브레이크가 한 번에 올라가고(트래버스 로그 41→52), 차가 서는 바로 그 순간 0.1 m/s 아래 고정 정지 브레이크(차량 기본 정지 감속, 트래버스 40)로 내려가면서 차가 되튀었습니다. 그래서 "밟았다 놨다 하며 선다"는 제보가 있었습니다.
 - 이제 정지 단계의 브레이크는 직전에 보낸 값에서 한 명령(0.04초)에 남은 차이의 4분의 1씩, 최소 3씩 올라갑니다. 0.1 m/s 아래 고정 정지 브레이크는 그때까지 보내던 정지 브레이크보다 작아지지 않습니다. 정지 감속을 약하게 두면 고정값까지만 천천히 올라갑니다.
 - 전기차(볼트들)는 순정 카메라와 같은 정지 유지가 ECM에 필요해서 바꾸지 않았습니다. 시속 1~5km에서는 엔진 크립 때문에 같은 브레이크가 0.25~0.3 m/s² 덜 먹히는데, 이 보정은 넣지 않았습니다. 실차 확인 전입니다.
-- 서기 직전에 브레이크를 살짝 풀어 마지막 덜컥을 줄이는 `StopBrakeEase`(기본 30%)·`StopBrakeEaseSpeed`(기본 4 km/h)도 있습니다([정차·재출발](cruise-gap.md#stop-brake-ease)).
+- 서기 직전에 브레이크를 살짝 풀어 마지막 덜컥을 줄이는 `StopBrakeEase`(기본 30%)·`StopBrakeEaseSpeed`(기본 4 km/h)와 정지 판정 뒤 풀린 브레이크를 두는 시간 `StopBrakeSettleTime`(기본 0.48초)도 있습니다([정차·재출발](cruise-gap.md#stop-brake-ease)).
 
 `VEgoStopping`(정지출발민감도)은 범위 `10~100`, 기본 `50`이며, `10`은 `0.10m/s`입니다. 기존의 `10` 미만 저장값은 자동으로 `10`으로 올리고, 주행 중에도 같은 최저값을 적용합니다.
 

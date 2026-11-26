@@ -381,7 +381,7 @@ While external navigation is connected, deceleration, countdowns, and navigation
 |---|---|---|
 | [Driving mode](cruise-gap.md#driving-mode) | `MyDrivingMode`, `MyDrivingModeAuto` | Eco, safe, normal, high-speed modes and automatic selection |
 | [Speed-based acceleration](cruise-gap.md#acceleration-table) | `CruiseMaxVals0` through `CruiseMaxVals6` | Maximum acceleration tendency by speed band |
-| [Stopping and restarting](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `VEgoStopping`, `AChangeCostStarting` | Stop position, stop entry, easing the brake off before the stop, and restart behavior |
+| [Stopping and restarting](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `StopBrakeSettleTime`, `VEgoStopping`, `AChangeCostStarting` | Stop position, stop entry, easing the brake off before the stop, and restart behavior |
 | [Longitudinal tuning](cruise-gap.md#longitudinal-tuning) | `LongTuningKpV`, `LongTuningKiV`, `LongTuningKf`, `LongActuatorDelay` | Hyundai/Kia/Genesis fix/hide `100/0/100`; Toyota/Lexus fix/hide `0/0/100`; VW MEB, including ID.4, applies saved gains |
 | [Following gap](cruise-gap.md#following-gap) | `TFollowGap1` through `TFollowGap4`, `DynamicTFollowLC`, `SpeedTFFactor`, `TFollowDecelBoost` | Gap times, lane-change relief using selected leads, and deceleration margin (default 0%) |
 | [Following responsiveness](cruise-gap.md#lead-response) | `LeadAccelResponse`, `LeadAccelResponseTF1`–`LeadAccelResponseTF4` | Lead-start, acceleration and approach response at every following-distance level |
@@ -410,7 +410,7 @@ Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so on, came
 - Before, entering stopping near 1 km/h stepped the brake up (Traverse log: 41 -> 52), and in the very instant the car stopped the fixed hold below 0.1 m/s (the car's stopAccel, 40 on the Traverse) stepped it down, and the car rocked back. This was reported as "the brake goes on and off as it stops".
 - Now the stopping brake rises from what was sent by a quarter of the gap per command (0.04 s), at least 3, and the fixed hold below 0.1 m/s is never lower than the stopping brake sent until then. A weaker stopping accel rises slowly to the hold.
 - The EVs (the Bolts) are unchanged, because their ECM needs the stock camera's stop hold. Between 1 and 5 km/h the engine's creep takes 0.25-0.3 m/s² off the same brake; that is not compensated. Not yet checked in the car.
-- `StopBrakeEase` (default 30%) and `StopBrakeEaseSpeed` (default 4 km/h) also ease the brake off just before the stop for a smaller last jolt ([Stopping and restarting](cruise-gap.md#stop-brake-ease)).
+- `StopBrakeEase` (default 30%) and `StopBrakeEaseSpeed` (default 4 km/h) also ease the brake off just before the stop for a smaller last jolt, and `StopBrakeSettleTime` (default 0.48 s) sets how long the eased brake is kept after standstill ([Stopping and restarting](cruise-gap.md#stop-brake-ease)).
 
 `VEgoStopping` has a range of `10–100` and a default of `50`; `10` means `0.10 m/s`. Previously stored values below `10` are automatically raised to `10`, and control enforces the same minimum during driving.
 

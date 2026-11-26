@@ -80,6 +80,9 @@ STOP_EASE_MAX_COMMANDS = 125  # 25 Hz commands (5 s): easing ends for a stop tha
 # 2026-11-26 "a thump at the very end", rlog 00000260: the accelerometer kept decelerating 0.4-0.5 s after standstill,
 # then rocked back). Jumping to the hold at standstill braked those last centimetres harder (-0.23 -> -0.36 m/s^2).
 STOP_SETTLE_COMMANDS = 12  # 25 Hz commands (0.48 s) the eased brake is kept after standstill, then it rises to the hold
+# StopBrakeSettleTime (user request 2026-11-26): that time in 0.01 s, 0-1 s, default 48; one 25 Hz command is 4 of it
+STOP_SETTLE_MAX_TIME = 100
+STOP_SETTLE_TIME_PER_COMMAND = 4
 STOP_SETTLE_MAX_PITCH = 0.03  # rad (about a 3 % grade): on a steeper road the hold comes at standstill as before
 
 
@@ -107,6 +110,7 @@ class CarController(CarControllerBase):
     self.stop_standstill_seen = False  # and has reached standstill since
     self.stop_settle_brake = None  # the brake kept just after standstill (STOP_SETTLE_COMMANDS), None when not settling
     self.stop_settle_left = 0
+    self.stop_settle_commands = STOP_SETTLE_COMMANDS  # StopBrakeSettleTime, read every 0.5 s
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -224,9 +228,10 @@ class CarController(CarControllerBase):
   def settle_stop_brake(self, CC, CS, stopping):
     """Keep the eased brake until the car has really stopped (StopBrakeEase on): at the first standstill of a stop that
     was rolling and eased (not given up for a creep / downhill / a too long stop), the brake stays at what was sent (at
-    least STOP_EASE_MIN_BRAKE) for STOP_SETTLE_COMMANDS, then rises by STOP_BRAKE_RISE per command to the hold. Checked
-    every command: a hold above STOP_SMOOTH_MAX_BRAKE, a road steeper than STOP_SETTLE_MAX_PITCH, soft hold and wheels
-    turning again (standstill lost) end it at once (Codex review 2026-11-26 R1, R2); a stop settles once."""
+    least STOP_EASE_MIN_BRAKE) for StopBrakeSettleTime (default STOP_SETTLE_COMMANDS; 0 starts the rise at once), then
+    rises by STOP_BRAKE_RISE per command to the hold. Checked every command: a hold above STOP_SMOOTH_MAX_BRAKE, a road
+    steeper than STOP_SETTLE_MAX_PITCH, soft hold and wheels turning again (standstill lost) end it at once (Codex
+    review 2026-11-26 R1, R2); a stop settles once."""
     if not (self.smooth_stop and CC.longActive and stopping):
       self.stop_rolling = self.stop_standstill_seen = False
       self.stop_settle_brake = None
@@ -244,7 +249,7 @@ class CarController(CarControllerBase):
     elif not self.stop_standstill_seen and self.stop_rolling and self.stop_ease_pct > 0 and self.stop_ease_applied and \
          not self.stop_ease_given_up and self.last_sent_brake < self.apply_brake:
       self.stop_settle_brake = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
-      self.stop_settle_left = STOP_SETTLE_COMMANDS
+      self.stop_settle_left = self.stop_settle_commands
     self.stop_standstill_seen = True
     if self.stop_settle_brake is None:
       return
@@ -280,6 +285,12 @@ class CarController(CarControllerBase):
         speed = read_int_param(params, "StopBrakeEaseSpeed")
         self.stop_ease_pct = int(np.clip(pct, 0, STOP_EASE_MAX_PCT)) if pct is not None else 0
         self.stop_ease_speed = float(np.clip(speed if speed is not None else 4, 1, 10)) / 3.6
+        settle = read_int_param(params, "StopBrakeSettleTime")  # an unreadable value keeps the default 0.48 s
+        if settle is None:
+          self.stop_settle_commands = STOP_SETTLE_COMMANDS
+        else:
+          settle = int(np.clip(settle, 0, STOP_SETTLE_MAX_TIME))
+          self.stop_settle_commands = (settle + STOP_SETTLE_TIME_PER_COMMAND // 2) // STOP_SETTLE_TIME_PER_COMMAND
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")
 
