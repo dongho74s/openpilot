@@ -513,6 +513,8 @@ function renderToolsMeta() {
   const track = document.createElement("span");
   track.className = "tools-meta__statusTrack";
   track.textContent = toolsMetaStatusText || "-";
+  // At rest the line under the title is just the branch and commit; a running job's status joins it.
+  statusEl.classList.toggle("is-idle", !toolsMetaStatusText || toolsMetaStatusText === getUIText("ready", "Ready"));
   statusEl.appendChild(track);
   window.CarrotToolsNotifications?.bindStatusGesture?.(statusEl, {
     setExpanded: setToolsLogExpanded,

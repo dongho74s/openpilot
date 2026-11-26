@@ -1028,3 +1028,7 @@
 #pageTools .tools-command-card .tools-console-help[hidden] {
   display: none !important;
 }
+
+#pageTools .tools-head #toolsMeta .tools-meta__info:not([hidden]) ~ .tools-meta__status.is-idle:not(.has-unread) {
+  display: none;
+}
