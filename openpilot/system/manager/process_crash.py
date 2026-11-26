@@ -22,6 +22,7 @@ MAX_PENDING = 32
 MAX_REPORTS = 20
 MAX_TEXT = 256 * 1024
 RETRY_SECONDS = 60
+RETRY_MAX_SECONDS = 3600  # a destination that keeps failing is tried at most hourly
 
 
 def enable_fault_handler():
@@ -108,7 +109,7 @@ def upload_report(target, payload, path):
   # Reuse the two existing tmux destinations; no new endpoint or settings dump.
   import requests
   from openpilot.selfdrive.carrot.web_upload import (
-    carrot_logs_web_target, create_web_upload_session_sync, post_tmux_web, tmux_web_target, web_upload_settings,
+    carrot_logs_web_target, create_web_upload_session_sync, post_tmux_web, tmux_upload_settings, tmux_web_target,
   )
   if os.environ.get('FAKEUPLOAD') == '1':
     return False
@@ -118,7 +119,9 @@ def upload_report(target, payload, path):
       settings = read_web_settings()
     except Exception:
       settings = {}
-    base, token = web_upload_settings(settings)
+    # The session must come from the server the report is posted to (tmux_web_target). With the WIP-FR dashcam
+    # receiver configured, that is the Carrot server: a receiver session was refused there on every retry.
+    base, token = tmux_upload_settings(settings)
     token = token or create_web_upload_session_sync(base, payload, requests.post, 'tmux')
     url, headers = tmux_web_target(settings, token)
   else:
@@ -135,6 +138,7 @@ class CrashCollector:
     self.lock = threading.Lock()
     self.threads = []
     self.retry_at = {}
+    self.failures = {}
     self.sock = None
 
   @staticmethod
@@ -176,6 +180,7 @@ class CrashCollector:
         old.with_suffix('.txt').unlink(missing_ok=True)
         old.unlink(missing_ok=True)
         self.retry_at.pop(old.name, None)
+        self.failures.pop(old.name, None)
 
   def upload_pending(self, now=None):
     now = time.monotonic() if now is None else now
@@ -184,6 +189,7 @@ class CrashCollector:
     for path in paths:
       if self.stop_event.is_set() or now < self.retry_at.get(path.name, 0):
         continue
+      failed = False
       try:
         with self.lock:
           report = json.loads(path.read_text(encoding='utf-8'))
@@ -199,11 +205,16 @@ class CrashCollector:
               if path.exists():
                 report['sent'].append(target)
                 self.write_json(path, report)
+          else:
+            failed = True
       except (OSError, ValueError, KeyError):
-        pass
+        failed = True
       with self.lock:
         if path.exists():
-          self.retry_at[path.name] = now + RETRY_SECONDS
+          # Back off while a destination keeps failing: every attempt can open an upload session on a shared server.
+          count = self.failures.get(path.name, 0) + 1 if failed else 0
+          self.failures[path.name] = count
+          self.retry_at[path.name] = now + min(RETRY_SECONDS * 2 ** max(count - 1, 0), RETRY_MAX_SECONDS)
 
   def _receive(self):
     while not self.stop_event.is_set():

@@ -256,3 +256,49 @@ def test_upload_uses_existing_tmux_destinations_and_snapshot(tmp_path, monkeypat
   assert crash.upload_report('carrot_logs', payload, path)
   assert calls == ['https://nas.invalid/api/v1/session', 'https://nas.invalid/api/v1/tmux/upload',
                    web_upload.carrot_logs_web_target()[0]]
+
+
+def test_dsm_session_comes_from_the_server_the_report_is_posted_to(tmp_path, monkeypatch):
+  # With the WIP-FR dashcam receiver configured (the branch default), tmux reports go to the Carrot server, so the
+  # session must be opened there too; a receiver session was rejected by the Carrot server on every retry.
+  import requests
+  from openpilot.selfdrive.carrot import web_upload
+  from openpilot.selfdrive.carrot.server.services import web_settings
+
+  path = tmp_path / 'crash.txt'
+  path.write_text('saved crash snapshot')
+  calls = []
+
+  def post(url, **kwargs):
+    calls.append((url, kwargs.get('headers', {}).get('Authorization')))
+    if url.endswith('/session'):
+      return SimpleNamespace(status_code=200, json=lambda: {'ok': True, 'token': 'carrot-session'})
+    return SimpleNamespace(status_code=200)
+
+  for key in ('FAKEUPLOAD', 'CARROT_WEB_UPLOAD_TOKEN', 'CARROT_WEB_UPLOAD_URL'):
+    monkeypatch.delenv(key, raising=False)
+  monkeypatch.setattr(web_settings, 'read_web_settings', lambda: {'web_upload_url': web_upload.DEFAULT_WEB_UPLOAD_URL})
+  monkeypatch.setattr(requests, 'post', post)
+  assert crash.upload_report('dsm', {'tmux_why': 'process_crash', 'dongle_id': 'test'}, path)
+  carrot = web_upload.CARROT_WEB_UPLOAD_URL
+  assert calls == [(f'{carrot}/api/v1/session', None), (f'{carrot}/api/v1/tmux/upload', 'Bearer carrot-session')]
+
+
+def test_a_failing_destination_backs_off_to_hourly(tmp_path):
+  calls = []
+
+  def upload(target, payload, path):
+    calls.append(target)
+    return target == 'carrot_logs'
+
+  c = collector(tmp_path, upload=upload)
+  c.record(event())
+  name = '1-2-1.json'
+  now, gaps = 0.0, []
+  for _ in range(10):
+    c.upload_pending(now=now)
+    gaps.append(c.retry_at[name] - now)
+    now = c.retry_at[name]
+  assert gaps == [60, 120, 240, 480, 960, 1920, 3600, 3600, 3600, 3600]
+  assert calls.count('carrot_logs') == 1 and calls.count('dsm') == 10
+  assert json.loads((tmp_path / name).read_text())['sent'] == ['carrot_logs']
