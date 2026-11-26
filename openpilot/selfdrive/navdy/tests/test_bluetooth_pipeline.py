@@ -498,3 +498,61 @@ def test_expired_partial_send_closes_before_reconnect_without_reusing_state(link
     assert new_state.pending == pipe.deque([(0, clock.ns)])
   finally:
     client.close()
+
+
+def test_stale_rejection_after_a_stall_each_way_keeps_the_link(link):
+  # Codex review 2026-11-26: 5.2 s back + 5.2 s out gave a 10.2 s receiver age on a valid stale rejection.
+  _, wire, state = link
+  tick(link)
+  wire.ack(0, status=1, age=10_212_200)
+  assert len(tick(link, 5.2)) == 1
+  assert state.diagnostics()['displayStatus'] == 1 and not wire.closed
+  tick(link, .2)
+  wire.ack(1, status=1, age=pipe.MAX_ACK_AGE_US + 1)
+  with pytest.raises(ValueError, match='acknowledgement age'):
+    tick(link, .2)
+
+
+def test_snapshot_that_never_left_is_dropped_not_sent_expired(link):
+  _, wire, state = link
+  wire.write_limit = 0
+  tick(link, seq=0)
+  assert state.tx and state.sequence == 1
+  tick(link, .6, seq=1)  # the first never reached the socket: dropped, its sequence reused
+  assert state.sequence == 1 and len(state.pending) == 1 and state.skipped == 1
+  wire.write_limit = 100000
+  tick(link, .1, seq=2)
+  assert [(f[0][1], f[1]['seq']) for f in wire.frames()] == [(0, 1), (1, 2)]
+  wire.ack(0)
+  wire.ack(1)
+  assert len(tick(link, .1, seq=3)) == 2 and not wire.closed
+
+
+def test_socket_that_takes_nothing_fails_within_the_tolerance_even_while_dropping(link):
+  _, wire, state = link
+  wire.write_limit = 0
+  tick(link)
+  with pytest.raises(TimeoutError, match='transmit deadline'):
+    for _ in range(20):
+      tick(link, .55)
+      assert len(state.pending) <= 1
+  assert not wire.output
+
+
+def test_socket_that_recovered_does_not_inherit_an_old_block(link):
+  _, wire, state = link
+  wire.write_limit = 0
+  tick(link)
+  tick(link, .6)  # dropped once, blocked again
+  wire.write_limit = 100000
+  tick(link, .1)
+  assert state.blocked_since_ns is None and len(state.pending) == 2
+  wire.ack(0)
+  wire.ack(1)
+  tick(link, .1)
+  wire.ack(2)
+  wire.write_limit = 0
+  tick(link, .1)  # a new block starts here, 0.9 s after the first one
+  for _ in range(10):
+    tick(link, .55)
+  assert not wire.closed and len(state.pending) <= 1

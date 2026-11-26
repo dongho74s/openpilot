@@ -19,6 +19,10 @@ MAX_WRITE_ATTEMPTS = 16
 # younger than TTL_US when they are sent, and the receiver judges a late frame's age from its own lease delta.
 STALL_TOLERANCE_NS = 6_000_000_000
 RESPONSE_TIMEOUT_NS = STALL_TOLERANCE_NS
+# The receiver's age of a frame includes the unknown return delay of the ACK that carried its lease, so one stall on
+# the way back and one on the way out can each take up to STALL_TOLERANCE_NS (Codex review 2026-11-26: 5.2 s + 5.2 s
+# gave a 10.2 s age on a valid stale rejection, which the old 10 s bound turned into a disconnect).
+MAX_ACK_AGE_US = 2 * STALL_TOLERANCE_NS // 1000 + 1_000_000
 LEASE_HISTORY = 8
 
 
@@ -97,6 +101,8 @@ class SnapshotPipeline:
     self.reader = reader_factory(conn)
     self.tx = b''
     self.tx_captured_ns = 0
+    self.tx_started = False
+    self.blocked_since_ns = None
     self.last_ack = None
     self.last_received_ns = None
     self.skipped = 0
@@ -118,7 +124,7 @@ class SnapshotPipeline:
           or lease != sequence + 1 or status not in (0, 1, 3)):
         raise ValueError('Navdy wireless v2 acknowledgement mismatch')
       raw = unpack_payload(wire, size, flags, crc)
-      if not 0 <= age <= 10_000_000 or (status == 0 and age >= TTL_US):
+      if not 0 <= age <= MAX_ACK_AGE_US or (status == 0 and age >= TTL_US):
         raise ValueError('Navdy wireless v2 invalid acknowledgement age')
       value = parse_response(raw)
       _, captured_ns = self.pending.popleft()
@@ -143,7 +149,14 @@ class SnapshotPipeline:
     for _ in range(MAX_WRITE_ATTEMPTS):
       if not self.tx:
         return
-      if not 0 <= time.monotonic_ns() - self.tx_captured_ns < STALL_TOLERANCE_NS:
+      now_ns = time.monotonic_ns()
+      if not self.tx_started:
+        if not 0 <= now_ns - self.tx_captured_ns < TTL_US * 1000:
+          # Not one byte of it reached the socket: drop it instead of sending an expired snapshot, and give its
+          # sequence back, since the receiver never saw it (Codex review 2026-11-26 P3).
+          self._drop_unsent()
+          return
+      elif not 0 <= now_ns - self.tx_captured_ns < STALL_TOLERANCE_NS:
         # A frame stuck behind a radio stall is completed (its age stays its own lease delta, so the receiver rejects
         # it as stale rather than showing it), but not past STALL_TOLERANCE_NS.
         raise TimeoutError('Navdy wireless v2 transmit deadline')
@@ -151,15 +164,30 @@ class SnapshotPipeline:
         sent = self.conn.send(self.tx)
       except BlockingIOError:
         self.blocked_writes += 1
+        # A socket that takes nothing for STALL_TOLERANCE_NS is dead, whether or not its frames were dropped unsent.
+        if self.blocked_since_ns is None:
+          self.blocked_since_ns = now_ns
+        elif now_ns - self.blocked_since_ns >= STALL_TOLERANCE_NS:
+          raise TimeoutError('Navdy wireless v2 transmit deadline') from None
         return
       if sent <= 0:
         raise ConnectionError('Navdy Bluetooth disconnected during write')
+      self.tx_started = True
+      self.blocked_since_ns = None
       if sent < len(self.tx):
         self.partial_writes += 1
       self.tx = self.tx[sent:]
       if not self.tx:
         self.last_tx_ms = round((time.monotonic_ns() - self.tx_captured_ns) / 1e6, 2)
         return
+
+  def _drop_unsent(self):
+    sequence, _ = self.pending.pop()
+    if sequence != self.sequence - 1:
+      raise ValueError('Navdy wireless v2 unsent frame is not the newest request')
+    self.sequence = sequence
+    self.tx = b''
+    self.skipped += 1
 
   def update(self, payload, *, captured_ns):
     if type(captured_ns) is not int:
@@ -196,6 +224,7 @@ class SnapshotPipeline:
     self.tx = REQUEST.pack(b'NVQ2', self.sequence, lease, delta_us,
                            len(raw), len(wire), zlib.crc32(raw), 1) + wire
     self.tx_captured_ns = captured_ns
+    self.tx_started = False
     self.pending.append((self.sequence, captured_ns))
     self.sequence += 1
     self._flush()

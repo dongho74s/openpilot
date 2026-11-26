@@ -18,6 +18,7 @@ import time
 from openpilot.selfdrive.navdy.navigation import FEEDBACK_PATH, STATUS_PATH
 from openpilot.selfdrive.navdy.transport import AdbTransport, LineReader, encode_frame
 from openpilot.selfdrive.navdy.bluetooth import BluetoothTransport, CONFIG_PATH, configured_connection
+from openpilot.selfdrive.navdy.bluetooth_pipeline import STALL_TOLERANCE_NS
 from openpilot.selfdrive.navdy.connection import UsbProbe
 from openpilot.selfdrive.navdy.ambient import DoorMonitor, led_gamma, read_override, road_state
 from openpilot.selfdrive.navdy.ambient_dark import DarkAmbient
@@ -51,7 +52,10 @@ USB_QUICK_RETRY = 0.25
 USB_QUICK_WINDOW = 4.0
 BLUETOOTH_HEALTHY_SECONDS = 2.0
 BLUETOOTH_ACK_MAX_GAP = 1.0
-BLUETOOTH_ACK_MAX_AGE = 2.0  # Covers the 1.5 s response deadline plus display polling.
+BLUETOOTH_ACK_MAX_AGE = 2.0  # how long a received ACK may wait for the display poll that counts it
+# A link may now ride out a radio stall of up to STALL_TOLERANCE_NS before it fails, so it still counts as recently
+# healthy that long after its last ACK (Codex review 2026-11-26: the 2 s bound cost the fast retry after every stall).
+BLUETOOTH_HEALTHY_RECENT = STALL_TOLERANCE_NS / 1e9 + 0.5
 
 
 class BluetoothReconnect:
@@ -76,7 +80,7 @@ class BluetoothReconnect:
 
   def healthy(self, now):
     return (self.first_ack is not None and self.last_ack - self.first_ack >= BLUETOOTH_HEALTHY_SECONDS
-            and 0 <= now - self.last_ack <= BLUETOOTH_ACK_MAX_AGE)
+            and 0 <= now - self.last_ack <= BLUETOOTH_HEALTHY_RECENT)
 
   def take_fast_retry(self, now):
     if not self.healthy(now) or now < self.next_fast_retry:

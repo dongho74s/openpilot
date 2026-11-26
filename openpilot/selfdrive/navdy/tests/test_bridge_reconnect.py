@@ -21,7 +21,9 @@ def test_uptime_sparse_or_duplicate_acks_cannot_earn_fast_retry(arrivals):
   assert not reconnect.take_fast_retry(102.1)
 
 
-@pytest.mark.parametrize('now,allowed', [(102., True), (104., True), (104.001, False), (101.9, False)])
+# The last ACK may be a whole radio stall old when the link finally fails (Codex review 2026-11-26).
+@pytest.mark.parametrize('now,allowed', [(102., True), (104., True), (108., True), (108.5, True), (108.501, False),
+                                       (101.9, False)])
 def test_fast_retry_requires_recent_healthy_ack_history(now, allowed):
   reconnect = bridge.BluetoothReconnect()
   healthy_session(reconnect)
