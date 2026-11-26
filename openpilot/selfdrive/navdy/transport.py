@@ -13,6 +13,14 @@ import time
 
 MAX_FRAME_BYTES = 32768
 ADB_PORT = 5038
+# Quick USB reconnect (user report 2026-11-26: the Navdy link dropped every 30-70 s on the road and came back after
+# about 4 s; the adb server's own log gives 'read failed: Protocol error' on nearly every drop since 2026-11-04, a USB
+# transfer error, after which adb re-attaches the device by itself). Once a session with this serial has exchanged
+# TRUSTED_EXCHANGES frames, the next connect in this process skips the HUD package query and the service start (two
+# adb shell round trips, about 2 s on the HUD) and goes straight to the forward and the socket. A session that ends
+# before that many exchanges clears the trust, so the next connect does the full checks again.
+TRUSTED_EXCHANGES = 5
+_trusted = {'serial': None}
 ADB_DISCOVERY_TIMEOUT = 15
 ADB_COMMAND_TIMEOUT = 3
 SERVICE = 'com.navdy.hud.app/.openpilot.OpenpilotStateService'
@@ -148,6 +156,9 @@ class AdbTransport:
       for serial, state in adb_devices(raw):
         if state != 'device':
           continue
+        if serial == _trusted['serial']:
+          candidates.append((serial, port))  # this HUD served a session in this process
+          continue
         # Verify the installed HUD package; never start services on an arbitrary phone.
         try:
           package = self.run(['shell', 'pm', 'path', 'com.navdy.hud.app'], serial=serial)
@@ -172,12 +183,14 @@ class AdbTransport:
       if not port.isdigit() or not 1024 <= int(port) <= 65535:
         raise ConnectionError('ADB did not allocate a Navdy forward port')
       self.port = int(port)
-      result = self.run(['shell', 'am', 'startservice', '-n', SERVICE])
-      if 'Error' in result or 'Exception' in result:
-        raise ConnectionError('Navdy service failed to start')
+      if self.serial != _trusted['serial']:
+        result = self.run(['shell', 'am', 'startservice', '-n', SERVICE])
+        if 'Error' in result or 'Exception' in result:
+          raise ConnectionError('Navdy service failed to start')
       self.conn = socket.create_connection(('127.0.0.1', self.port), timeout=0.8)
       self.conn.settimeout(0.8)
       self.reader = LineReader()
+      self.session_exchanges = 0
     except Exception:
       self.close()
       raise
@@ -186,9 +199,16 @@ class AdbTransport:
     if self.conn is None:
       self.connect()
     self.conn.sendall(encode_frame(payload))
-    return self.reader.receive(self.conn)
+    reply = self.reader.receive(self.conn)
+    self.session_exchanges = getattr(self, 'session_exchanges', 0) + 1
+    if self.session_exchanges >= TRUSTED_EXCHANGES:
+      _trusted['serial'] = self.serial
+    return reply
 
   def close(self):
+    if getattr(self, 'session_exchanges', 0) < TRUSTED_EXCHANGES:
+      _trusted['serial'] = None  # a session that never got going: the next connect does the full checks
+    self.session_exchanges = 0
     if self.conn is not None:
       self.conn.close()
       self.conn = None

@@ -271,3 +271,124 @@ def test_non_exchange_errors_do_not_consume_healthy_fast_retry(monkeypatch, tmp_
   state = run_wireless_bridge(monkeypatch, tmp_path, exchange, duration=8.)
   assert state.delays == [2., .2]
   assert state.failures[0]['diagnostics']['lastFailure']['phase'] == phase
+
+
+def run_usb_bridge(monkeypatch, tmp_path, *, drop_at, down_for=0., duration=8., healthy=True):
+  """USB-only bridge: the cable session drops once at drop_at ('Navdy closed its socket', an adb Protocol error on the
+  road, 2026-11-26) and the device is back after down_for."""
+  from openpilot import cereal
+
+  state = NS(now=100., usb_attempts=[], usb_opened=[], relay_attempts=[], statuses=[], sm=Messages(), dropped=False)
+  monkeypatch.setattr(bridge.time, 'monotonic', lambda: state.now)
+  monkeypatch.setattr(bridge.time, 'monotonic_ns', lambda: round(state.now * 1e9))
+  monkeypatch.setattr(bridge.time, 'sleep', lambda seconds: setattr(state, 'now', round(state.now + seconds, 9)))
+  monkeypatch.setattr(bridge, 'read_override', lambda: None)
+  monkeypatch.setattr(bridge, 'DoorMonitor', lambda camera=None: NS(camera_error='', start=lambda: None, close=lambda: None,
+                                                     door_open=False, gm=True, error=''))
+  monkeypatch.setattr(bridge, 'configured_connection', lambda _: (None, False))
+  monkeypatch.setattr(bridge, 'jetson_candidates', lambda: ['jetson-nx'])
+
+  def update(_):
+    state.sm.recv_time = dict.fromkeys(bridge.SERVICES, state.now)
+    state.sm.logMonoTime = dict.fromkeys(bridge.SERVICES, round(state.now * 1e9))
+
+  state.sm.update = update
+  monkeypatch.setattr(cereal, 'messaging', NS(SubMaster=lambda _: state.sm), raising=False)
+
+  class Usb:
+    def connect(self):
+      state.usb_attempts.append(state.now)
+      if state.dropped and state.now < drop_at + down_for:
+        raise ConnectionError('Navdy USB not found')
+      state.usb_opened.append(state.now)
+      self.opened = state.now
+
+    def exchange(self, payload):
+      if not state.dropped and state.now >= drop_at and (healthy or state.now - self.opened < 2):
+        state.dropped = True
+        raise ConnectionError('Navdy closed its socket')
+      return {'navigationFeedback': None}
+
+    def close(self):
+      pass
+
+  class Relay:
+    def __init__(self, host):
+      state.relay_attempts.append(state.now)
+
+    def connect(self):
+      state.now = round(state.now + 4., 9)  # a Jetson connect that waits 4 s and fails
+      raise ConnectionError('Jetson relay unavailable')
+
+    def close(self):
+      pass
+
+  monkeypatch.setattr(bridge, 'AdbTransport', Usb)
+  monkeypatch.setattr(bridge, 'SshTransport', Relay)
+  monkeypatch.setattr(bridge, 'UsbProbe', lambda _: NS(poll=lambda now: None, close=lambda: None))
+  original_write = bridge.atomic_json
+
+  def write(path, value):
+    if path.name == 'status.json':
+      state.statuses.append(value)
+    original_write(path, value)
+
+  monkeypatch.setattr(bridge, 'atomic_json', write)
+  bridge.run(feedback=tmp_path / 'feedback.json', status=tmp_path / 'status.json', duration=duration)
+  state.delays = [s['retryInSeconds'] for s in state.statuses if 'retryInSeconds' in s]
+  return state
+
+
+def test_a_healthy_usb_drop_is_retried_within_a_quarter_second(monkeypatch, tmp_path):
+  state = run_usb_bridge(monkeypatch, tmp_path, drop_at=103.)
+  assert state.delays == [bridge.USB_QUICK_RETRY]
+  assert state.usb_opened[1] - 103. <= bridge.USB_QUICK_RETRY + bridge.DISPLAY_INTERVAL + 1e-6  # was 2 s + connect
+
+
+def test_while_the_cable_is_coming_back_only_the_cable_is_retried(monkeypatch, tmp_path):
+  """No Jetson relay detour (a 4 s connect) inside USB_QUICK_WINDOW; the cable is back after 0.8 s."""
+  state = run_usb_bridge(monkeypatch, tmp_path, drop_at=103., down_for=0.8)
+  assert not [t for t in state.relay_attempts if t < 103. + bridge.USB_QUICK_WINDOW]
+  assert set(state.delays) == {bridge.USB_QUICK_RETRY}
+  assert state.usb_opened[1] - 103. < 1.3
+
+
+def test_an_unproven_usb_session_keeps_the_backoff(monkeypatch, tmp_path):
+  state = run_usb_bridge(monkeypatch, tmp_path, drop_at=100.5, healthy=False)
+  assert state.delays[0] == 2.
+
+
+def test_a_trusted_hud_reconnects_without_the_package_query_and_service_start(monkeypatch):
+  from openpilot.selfdrive.navdy import transport as t
+  calls = []
+
+  def command(cmd, **kwargs):
+    calls.append(cmd[3:] if cmd[3] == '-s' else cmd[3:])
+    args = cmd[cmd.index('-s') + 2:] if '-s' in cmd else cmd[3:]
+    out = {'forward': '45123\n', 'shell': 'package:/data/app/hud.apk\n'}.get(args[0], '')
+    return NS(stdout=out, returncode=0)
+
+  class Conn:
+    def __init__(self, *a, **k): self.sent = []
+    def settimeout(self, _): pass
+    def sendall(self, data): self.sent.append(data)
+    def recv(self, _): return b'{"navigationFeedback":null}\n'
+    def close(self): pass
+
+  monkeypatch.setattr(t.socket, 'create_connection', lambda *a, **k: Conn())
+  monkeypatch.setitem(t._trusted, 'serial', None)
+  inventory = lambda port: 'List of devices attached\nNAVDY01 device usb:3-1\n' if port == 5038 else ''
+
+  def session(n):
+    calls.clear()
+    link = t.AdbTransport(adb='/usr/bin/adb', command=command, inventory=inventory)
+    link.connect()
+    for _ in range(n):
+      link.exchange({'x': 1})
+    link.close()
+    return [c for c in calls if 'shell' in c]
+
+  assert len(session(t.TRUSTED_EXCHANGES)) == 2  # pm path + am startservice the first time
+  assert session(t.TRUSTED_EXCHANGES) == []  # trusted: straight to the forward and the socket
+  assert session(1) == [] and t._trusted['serial'] is None  # still trusted, but it ended early: trust cleared
+  assert len(session(1)) == 2  # so the next connect does the full checks again

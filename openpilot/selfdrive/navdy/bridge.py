@@ -45,6 +45,10 @@ DISPLAY_MAX_AGE = 0.5
 DEVICE_MAX_AGE = 1.5  # deviceState is published at 2 Hz.
 BLUETOOTH_FAST_RETRY = 0.2
 BLUETOOTH_FAST_RETRY_COOLDOWN = 30.0
+# A USB link that drops after a healthy session (an adb 'Protocol error', 2026-11-26) is retried every
+# USB_QUICK_RETRY for USB_QUICK_WINDOW instead of the 2-4-8 s backoff, which kept the HUD blank about 4 s per drop.
+USB_QUICK_RETRY = 0.25
+USB_QUICK_WINDOW = 4.0
 BLUETOOTH_HEALTHY_SECONDS = 2.0
 BLUETOOTH_ACK_MAX_GAP = 1.0
 BLUETOOTH_ACK_MAX_AGE = 2.0  # Covers the 1.5 s response deadline plus display polling.
@@ -290,6 +294,7 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
     next_attempt = 0.0
     candidate_index = 0
     failures = 0
+    usb_quick_until = 0.0
     bluetooth_reconnect = BluetoothReconnect()
     bluetooth_connect = None
     peer = None
@@ -446,6 +451,8 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
               transport = None
               if bluetooth_only:
                 raise
+              if time.monotonic() < usb_quick_until:
+                raise  # the cable dropped just now: retry it quickly, not a relay first (a Jetson connect waits 4 s)
               hosts = jetson_candidates()
               options = ([('bluetooth', peer)] if peer and policy != 'usb_only' else [])
               options.extend(('jetson', host) for host in hosts)
@@ -598,8 +605,18 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
           extended_feedback = False
           model_navigation.clear('model_disconnected')
           model_route_cache.update(model_navigation)
-          failures += 1
-          retry_delay = BLUETOOTH_FAST_RETRY if fast_retry else min(10, 2 ** min(failures, 4))
+          failed_at = time.monotonic()
+          if transport_name == 'usb' and phase == 'exchange' and connected_at and failed_at - connected_at >= 2:
+            usb_quick_until = failed_at + USB_QUICK_WINDOW
+          quick_usb = not bluetooth_only and failed_at < usb_quick_until
+          if not quick_usb:
+            failures += 1
+          if fast_retry:
+            retry_delay = BLUETOOTH_FAST_RETRY
+          elif quick_usb:
+            retry_delay = USB_QUICK_RETRY
+          else:
+            retry_delay = min(10, 2 ** min(failures, 4))
           diagnostics.record('retry_scheduled', transport=transport_name, retryInSeconds=retry_delay, fastRetry=fast_retry)
           atomic_json(status, {'updatedAt': time.monotonic(), 'connected': False, 'transport': transport_name,
                                'transportPolicy': policy, 'connectionMode': connection_mode,
