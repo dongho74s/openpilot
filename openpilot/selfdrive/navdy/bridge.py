@@ -295,6 +295,7 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
     candidate_index = 0
     failures = 0
     usb_quick_until = 0.0
+    usb_session_healthy = False  # this USB session got replies for 2 s or more
     bluetooth_reconnect = BluetoothReconnect()
     bluetooth_connect = None
     peer = None
@@ -451,9 +452,9 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
               transport = None
               if bluetooth_only:
                 raise
-              if time.monotonic() < usb_quick_until:
-                raise  # the cable dropped just now: retry it quickly, not a relay first (a Jetson connect waits 4 s)
-              hosts = jetson_candidates()
+              # The cable dropped just now: no Jetson relay detour (its connect waits 4 s) while the cable is retried
+              # quickly; a configured Bluetooth peer is still tried as before (Codex review 2026-11-26 P2).
+              hosts = [] if time.monotonic() < usb_quick_until else jetson_candidates()
               options = ([('bluetooth', peer)] if peer and policy != 'usb_only' else [])
               options.extend(('jetson', host) for host in hosts)
               if not options:
@@ -472,6 +473,7 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
             if transport_name == 'bluetooth':
               bluetooth_connect = getattr(transport, 'connect_diagnostics', None)
             connected_at = time.monotonic()
+            usb_session_healthy = False
             diagnostics.record('transport_open', transport=transport_name, connectedAt=connected_at,
                                 connectTimings=connect_timings(bluetooth_connect) if transport_name == 'bluetooth' else None)
             # Discovery/service startup can block. Drain fresh messages before sending.
@@ -535,6 +537,8 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
             last_handover = {'at': received, 'from': last_connected_transport, 'to': transport_name}
           last_connected_transport = transport_name
           healthy = bluetooth_reconnect.healthy(received) if transport_name == 'bluetooth' else received - connected_at >= 2
+          if transport_name == 'usb' and healthy:
+            usb_session_healthy = True  # a real reply 2 s or more into the session (Codex review 2026-11-26 P2)
           if healthy:
             failures = 0
             if transport_name == 'bluetooth':
@@ -580,6 +584,10 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
                                'reason': ''})
           diagnostics.end_phase()
         except (OSError, ValueError, subprocess.SubprocessError) as error:
+          failed_at = time.monotonic()  # before any cleanup (a forward removal can take seconds)
+          if transport_name == 'usb' and phase == 'exchange' and usb_session_healthy:
+            usb_quick_until = failed_at + USB_QUICK_WINDOW
+          usb_session_healthy = False
           if transport_name == 'usb' and phase == 'exchange':
             usb_faults.capture(getattr(transport, 'serial', None))
           if transport_name == 'bluetooth' and transport is not None and phase == 'connect':
@@ -605,10 +613,7 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
           extended_feedback = False
           model_navigation.clear('model_disconnected')
           model_route_cache.update(model_navigation)
-          failed_at = time.monotonic()
-          if transport_name == 'usb' and phase == 'exchange' and connected_at and failed_at - connected_at >= 2:
-            usb_quick_until = failed_at + USB_QUICK_WINDOW
-          quick_usb = not bluetooth_only and failed_at < usb_quick_until
+          quick_usb = not bluetooth_only and time.monotonic() < usb_quick_until
           if not quick_usb:
             failures += 1
           if fast_retry:

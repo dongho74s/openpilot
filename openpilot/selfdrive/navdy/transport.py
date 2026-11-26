@@ -191,6 +191,7 @@ class AdbTransport:
       self.conn.settimeout(0.8)
       self.reader = LineReader()
       self.session_exchanges = 0
+      self.session_serial = self.serial  # a session was opened with this HUD
     except Exception:
       self.close()
       raise
@@ -206,8 +207,12 @@ class AdbTransport:
     return reply
 
   def close(self):
-    if getattr(self, 'session_exchanges', 0) < TRUSTED_EXCHANGES:
-      _trusted['serial'] = None  # a session that never got going: the next connect does the full checks
+    # Only a session that was opened with the trusted HUD and ended early clears the trust (it may have restarted);
+    # a discovery that found it briefly absent or offline does not (Codex review 2026-11-26 P2).
+    opened = getattr(self, 'session_serial', None)
+    if opened is not None and opened == _trusted['serial'] and getattr(self, 'session_exchanges', 0) < TRUSTED_EXCHANGES:
+      _trusted['serial'] = None
+    self.session_serial = None
     self.session_exchanges = 0
     if self.conn is not None:
       self.conn.close()

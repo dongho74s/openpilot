@@ -273,7 +273,8 @@ def test_non_exchange_errors_do_not_consume_healthy_fast_retry(monkeypatch, tmp_
   assert state.failures[0]['diagnostics']['lastFailure']['phase'] == phase
 
 
-def run_usb_bridge(monkeypatch, tmp_path, *, drop_at, down_for=0., duration=8., healthy=True):
+def run_usb_bridge(monkeypatch, tmp_path, *, drop_at, down_for=0., duration=8., healthy=True, peer=None, replies=True,
+                   close_takes=0.):
   """USB-only bridge: the cable session drops once at drop_at ('Navdy closed its socket', an adb Protocol error on the
   road, 2026-11-26) and the device is back after down_for."""
   from openpilot import cereal
@@ -285,8 +286,9 @@ def run_usb_bridge(monkeypatch, tmp_path, *, drop_at, down_for=0., duration=8., 
   monkeypatch.setattr(bridge, 'read_override', lambda: None)
   monkeypatch.setattr(bridge, 'DoorMonitor', lambda camera=None: NS(camera_error='', start=lambda: None, close=lambda: None,
                                                      door_open=False, gm=True, error=''))
-  monkeypatch.setattr(bridge, 'configured_connection', lambda _: (None, False))
+  monkeypatch.setattr(bridge, 'configured_connection', lambda _: (peer, False))
   monkeypatch.setattr(bridge, 'jetson_candidates', lambda: ['jetson-nx'])
+  state.bt_attempts = []
 
   def update(_):
     state.sm.recv_time = dict.fromkeys(bridge.SERVICES, state.now)
@@ -307,10 +309,25 @@ def run_usb_bridge(monkeypatch, tmp_path, *, drop_at, down_for=0., duration=8., 
       if not state.dropped and state.now >= drop_at and (healthy or state.now - self.opened < 2):
         state.dropped = True
         raise ConnectionError('Navdy closed its socket')
+      if not replies:
+        state.now = round(state.now + 0.8, 9)
+        raise TimeoutError('timed out')
       return {'navigationFeedback': None}
 
     def close(self):
+      state.now = round(state.now + close_takes, 9)
+
+  class Wireless:
+    def __init__(self, target):
+      state.bt_attempts.append(state.now)
+
+    def connect(self):
+      raise ConnectionError('peer unavailable')
+
+    def close(self):
       pass
+
+  monkeypatch.setattr(bridge, 'BluetoothTransport', Wireless)
 
   class Relay:
     def __init__(self, host):
@@ -392,3 +409,28 @@ def test_a_trusted_hud_reconnects_without_the_package_query_and_service_start(mo
   assert session(t.TRUSTED_EXCHANGES) == []  # trusted: straight to the forward and the socket
   assert session(1) == [] and t._trusted['serial'] is None  # still trusted, but it ended early: trust cleared
   assert len(session(1)) == 2  # so the next connect does the full checks again
+
+
+def test_bluetooth_fallback_is_not_held_back_by_the_quick_usb_window(monkeypatch, tmp_path):
+  """Codex review 2026-11-26 P2: usb_first with a paired peer still tries Bluetooth right after a cable drop."""
+  state = run_usb_bridge(monkeypatch, tmp_path, drop_at=103., down_for=3., peer='54:ED:A3:00:48:23')
+  assert state.bt_attempts and state.bt_attempts[0] - 103. < 0.6
+  assert not [t for t in state.relay_attempts if t < 103. + bridge.USB_QUICK_WINDOW]
+
+
+def test_a_session_without_replies_does_not_open_the_quick_window(monkeypatch, tmp_path):
+  """Codex review 2026-11-26 P2: time spent in a slow cleanup is not a healthy session."""
+  state = run_usb_bridge(monkeypatch, tmp_path, drop_at=1e9, replies=False, close_takes=3., duration=30.)
+  assert bridge.USB_QUICK_RETRY not in state.delays and state.delays[:3] == [2, 4, 8]
+
+
+def test_a_briefly_absent_hud_keeps_its_trust(monkeypatch):
+  """Codex review 2026-11-26 P2: a discovery that does not find the trusted HUD (or a connect that never opened a
+  session) leaves the trust alone."""
+  from openpilot.selfdrive.navdy import transport as t
+  monkeypatch.setitem(t._trusted, 'serial', 'NAVDY01')
+  link = t.AdbTransport(adb='/usr/bin/adb', command=lambda *a, **k: NS(stdout='', returncode=0),
+                        inventory=lambda port: 'List of devices attached\n' if port == 5038 else '')
+  with pytest.raises(ConnectionError):
+    link.connect()
+  assert t._trusted['serial'] == 'NAVDY01'
