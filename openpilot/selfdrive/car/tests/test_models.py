@@ -12,6 +12,7 @@ from opendbc.car import DT_CTRL, gen_empty_fingerprint, structs
 from opendbc.car.can_definitions import CanData
 from opendbc.car.car_helpers import FRAME_FINGERPRINT, interfaces
 from opendbc.car.fingerprints import MIGRATION
+from opendbc.car.gm.values import CAR as GM, GMFlags
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from opendbc.car.structs import car
 from opendbc.car.tests.routes import non_tested_cars, routes, CarTestRoute
@@ -347,6 +348,9 @@ class TestCarModelBase(unittest.TestCase):
         if CS.brakePressed and not self.safety.get_brake_pressed_prev():
           if self.CP.carFingerprint in (HONDA.HONDA_PILOT, HONDA.HONDA_RIDGELINE) and CS.brake > 0.05:
             brake_pressed = False
+          # Malibu ASCM harness without 0xBE: openpilot also takes the pedal position, the panda only the switch in 0xC9
+          if self.CP.carFingerprint == GM.CHEVROLET_MALIBU_ASCM and self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG:
+            brake_pressed = False
 
         self.assertEqual(brake_pressed, self.safety.get_brake_pressed_prev())
 
@@ -429,6 +433,8 @@ class TestCarModelBase(unittest.TestCase):
       if CS.brakePressed and not self.safety.get_brake_pressed_prev():
         if self.CP.carFingerprint in (HONDA.HONDA_PILOT, HONDA.HONDA_RIDGELINE) and CS.brake > 0.05:
           brake_pressed = False
+        if self.CP.carFingerprint == GM.CHEVROLET_MALIBU_ASCM and self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG:
+          brake_pressed = False
       checks['brakePressed'] += brake_pressed != self.safety.get_brake_pressed_prev()
       checks['regenBraking'] += CS.regenBraking != self.safety.get_regen_braking_prev()
       checks['steeringDisengage'] += CS.steeringDisengage != self.safety.get_steering_disengage_prev()
@@ -449,7 +455,9 @@ class TestCarModelBase(unittest.TestCase):
           checks['cruiseState'] += CS.cruiseState.enabled != self.safety.get_cruise_engaged_prev()
       else:
         # Check for user button enable on rising edge of controls allowed
-        button_enable = CS.buttonEnable and (not CS.brakePressed or CS.standstill)
+        # Malibu ASCM without 0xBE: the panda's controls_allowed follows its own brake (the switch, exception above)
+        enable_brake = brake_pressed if self.CP.carFingerprint == GM.CHEVROLET_MALIBU_ASCM else CS.brakePressed
+        button_enable = CS.buttonEnable and (not enable_brake or CS.standstill)
         mismatch = button_enable != (self.safety.get_controls_allowed() and not controls_allowed_prev)
         checks['controlsAllowed'] += mismatch
         controls_allowed_prev = self.safety.get_controls_allowed()

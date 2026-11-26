@@ -338,12 +338,27 @@ def test_brake_comes_from_the_pedal_position_like_the_panda(runtime, brake_pos, 
   assert ret.brakePressed == expected
 
 
-@pytest.mark.parametrize("brake_pos,ecm_brake,expected", [(0, 1, True), (100, 0, False), (0, 0, False)])
-def test_without_0xbe_car_state_reads_the_brake_switch(runtime, brake_pos, ecm_brake, expected):
+@pytest.mark.parametrize("brake_pos,ecm_brake,expected", [(0, 1, True), (0, 0, False), (7, 0, False), (8, 0, True),
+                                                         (11, 0, True), (100, 0, True), (8, 1, True)])
+def test_without_0xbe_the_brake_switch_or_the_pedal_position_counts(runtime, brake_pos, ecm_brake, expected):
+  # The panda keeps the switch alone (ASCM_INT_C9_BRAKE, above); openpilot's brake is pressed whenever the panda's is.
+  # 9-11 with the switch off for 0.87 s was the light press the ECM faulted its cruise on (rlog 0000004e--11)
   _, ret = run(runtime, ticks=300, cp=malibu_cp(runtime, accel_pos=False), accel_pos=False, brake_pos=brake_pos,
                ecm_brake=ecm_brake)
   assert ret.canValid
   assert ret.brakePressed == expected
+
+
+def test_without_0xbe_a_light_press_counts_from_the_frame_it_reaches_8(runtime):
+  # The pedal as logged at 100 Hz when the cruise faulted (0000004e--11 53.367-53.427 s), the switch still off
+  ci = malibu_interface(runtime, malibu_cp(runtime, accel_pos=False))
+  packer = runtime.CANPacker(DBC[MALIBU_ASCM][Bus.pt])
+  t0 = time.monotonic_ns()
+  pedal = [0] * 100 + [1, 4, 6, 8, 9, 10, 11] + [9] * 20
+  pressed = [ci.update([(t0 + tick * 10_000_000, frames(packer, tick, accel_pos=False, brake_pos=pos))]).brakePressed
+             for tick, pos in enumerate(pedal)]
+  assert pressed.index(True) == pedal.index(8)
+  assert all(pressed[pedal.index(8):])
 
 
 def test_the_ascm_lkas_frame_is_required_on_bus_2(runtime):

@@ -48,6 +48,13 @@ BOLT_ACC_PEDAL_PANDA_GAS_THRESHOLD = 595  # safety_gm.h, Bolt ACC with pedal in 
 # flipped gasPressed every 20-120 ms; carrot took each flip as a gas tap (+10 km/h, 30 -> 140) and the panda dropped
 # the gas frames sent in the gaps. The pedal rests at ~475 (450-486 in both logged segments, AcceleratorPedal2 0).
 BOLT_ACC_PEDAL_GAS_RELEASE_MARGIN = 35
+# Malibu ASCM harness without 0xBE: the pedal position in 0xF1 (raw) from which openpilot also counts the brake as
+# pressed. The brake switch in 0xC9 came a median 0.1 s (up to 1.5 s) after the pedal reached 8, and the ECM faulted
+# its cruise (AcceleratorPedal2 CruiseState 3, "cruise fault") 0.87 s into a light press (9-11) that kept the switch
+# off while openpilot kept sending its long commands (rlog 0000004e--877ac7e666--11, 2026-11-26, 66 km/h). In the 92
+# logged segments the pedal rests at 0 with the switch off, and 8 or more without the switch came only while a foot
+# pressed or left the pedal (140 runs replayed through this check, 121 then reaching the switch).
+ASCM_INT_BRAKE_PEDAL_POSITION = 8
 
 
 def ascm_path_watch_supported(CP) -> bool:
@@ -258,10 +265,13 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint in ASCM_INT_CAR:
       # Behind an ASCM the brake comes from the pedal position, as on the ASCM path (StarPilot ASCM_INT). Same byte and
       # threshold as the panda's 0xBE check for this harness (HW_ASCM_INT), which also requires 0xBE in its RX checks.
-      # Without 0xBE both sides use the brake switch in 0xC9 (ASCM_INT_C9_BRAKE; the panda then RX-checks 0xF1, which
-      # ret.brake above reads).
+      # Without 0xBE the panda uses the brake switch in 0xC9 (ASCM_INT_C9_BRAKE; it then RX-checks 0xF1, which ret.brake
+      # above reads). openpilot takes the switch or the pedal position in 0xF1, whichever comes first, so a light press
+      # disengages it before the ECM faults its cruise (ASCM_INT_BRAKE_PEDAL_POSITION). On the same input it is
+      # pressed whenever the panda's is, so openpilot never notices the brake later than the panda.
       if self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value:
-        ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
+        ret.brakePressed = (pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0 or
+                            pt_cp.vl["EBCMBrakePedalPosition"]["BrakePedalPosition"] >= ASCM_INT_BRAKE_PEDAL_POSITION)
       else:
         ret.brakePressed = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"] >= 10
     elif self.CP.networkLocation == NetworkLocation.fwdCamera:
