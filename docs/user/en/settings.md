@@ -23,7 +23,7 @@ The driving model (the internal model running on the comma's own GPU) is changed
 
 ## Connecting to Carrot Web
 
-**Speed & Decel > Speed Camera > Navdy Connection Mode** selects the existing
+**System > Network and map > Navdy Connection Mode** selects the existing
 configuration, wired USB, or wireless Bluetooth. Wired mode uses direct Comma USB
 or a paired Jetson's USB relay, without Bluetooth fallback. Wireless mode leaves
 USB available for diagnostics. Phone reconnection, ambient BLE and Navigation
@@ -132,7 +132,7 @@ Each entry in `carrot_settings.json` contains:
 |---|---|
 | `name` | Unique name used by the code and Params |
 | `title` | Title shown in Carrot Web |
-| `descr` | Direction of adjustment, mode numbers, and cautions |
+| `descr` | A short plain-language note, checked against the code, on what the setting changes, what raising or lowering it does, and what special values such as 0 or -1 mean (English `edescr`, Chinese `cdescr`) |
 | `min` / `max` | Allowed range |
 | `unit` | Step used by the `+` and `-` controls |
 | `default` | Initial catalog value |
@@ -159,26 +159,26 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **199 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
+The current `carrot_settings.json` contains **225 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 123 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
-| Vehicle and hardware | 18 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
-| Display | 34 | Information, path, brightness/on-road view, external HUD |
-| System | 12 | Recording/power, network/map, sound, software |
+| Driving control | 153 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Vehicle and hardware | 21 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
+| Display | 36 | Information, path, brightness/on-road view, external HUD |
+| System | 15 | Recording/power, camera, driving model, network/map, sound, software |
 
 ## Driving control
 
 These 123 settings can affect vehicle motion. Change one item at a time.
 
 <a id="start-auto"></a>
-### Startup and auto — 9 settings
+### Startup and auto — 10 settings
 
 | Section | Parameters | Purpose |
 |---|---|---|
 | Startup | `AlwaysLateral`, `AutoEngage`, `DisableMinSteerSpeed` | Always-on lateral control, automatic engagement, and low-speed steering limits |
-| Auto cruise | `AutoCruiseControl`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist` | Automatic cruise activation and accelerator-pedal behavior |
+| Auto cruise | `AutoCruiseControl`, `SoftHoldOnCancel`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist`, `CruiseDelay` | Automatic cruise activation and accelerator-pedal behavior (`CruiseDelay` is currently unused) |
 
 - `AlwaysLateral` permits lateral control even when cruise is not engaged. On supported Tesla vehicles it can also steer at true standstill in a forward-driving gear; moving below the minimum steering speed remains restricted. See [Tesla engagement](tesla.md#engagement-and-standstill).
 - Always Lateral waits for the first confirmation of valid model, vehicle-parameter, pose, and other required inputs after system startup. Once confirmed, this startup check ends; later input interruptions or disengagement/reengagement do not rearm it. Existing runtime safety handling remains unchanged. Expiry of the startup waiting period alone does not pass this check.
@@ -205,7 +205,7 @@ Volkswagen's separate `SET` button sets current speed and `RES` restores the pre
 With `NavigationSetSpeed` enabled, `WIP-FR` SET engagement uses the greater of current speed and a valid navigation road limit plus 10 km/h (plus 5 for a 30 km/h limit); see [navigation-based initial set speed](buttons-presets.md#button-modes). The toggle defaults off and updates within about 0.1 seconds for the next SET engagement. Missing/stale navigation, stock ACC, and buttons while already engaged retain their existing behavior.
 
 <a id="vehicle-steering"></a>
-### Vehicle steering — 44 top-level + 6 ONNX detail + 1 search-only setting
+### Vehicle steering — 50 top-level + 6 ONNX detail + 1 search-only setting
 
 | Section | Parameters | Purpose |
 |---|---|---|
@@ -357,15 +357,15 @@ Hyundai/Kia/Genesis angle-control vehicles use the former combined mode 3 as sta
 
 Force-sensor trends do not establish loss of hand contact or driver consent to handover. Existing `steeringPressed` and driver monitoring remain unchanged. Making this behavior standard does not establish the same steering feel on every vehicle.
 
-### Speed and deceleration — 23 settings
+### Speed and deceleration — 30 settings (including 5 decel-cancel details)
 
 | Section | Parameters | Purpose |
 |---|---|---|
-| [Speed cameras](speed-deceleration.md#speed-camera) | `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviRearCameraHoldDistance`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `AutoNaviCountDownMode`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleNaviDecelCancel`(`VehicleNaviDecelCancelBox`, `VehicleNaviDecelCancelMobileZone`, `VehicleNaviDecelCancelBump`, `VehicleNaviDecelCancelUnknown`, `VehicleNaviDecelCancelEarlyWarning`), `VehicleNaviSectionAvgControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime` | Event types, rear-camera post-pass hold, stock camera distance matching and virtual distance, PV5 warning-confirmed camera retention/cancellation and section speed caps, deceleration start, and target speed |
-| [Road speed limit](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | Desired-speed adjustment from the road limit |
+| [Speed cameras](speed-deceleration.md#speed-camera) | `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviRearCameraHoldDistance`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleNaviDecelCancel`(`VehicleNaviDecelCancelBox`, `VehicleNaviDecelCancelMobileZone`, `VehicleNaviDecelCancelBump`, `VehicleNaviDecelCancelUnknown`, `VehicleNaviDecelCancelEarlyWarning`), `VehicleNaviSectionAvgControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime` | Event types, rear-camera post-pass hold, stock camera distance matching and virtual distance, PV5 warning-confirmed camera retention/cancellation and section speed caps, deceleration start, and target speed |
+| [Road speed limit](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit`, `ApplyModelSpeed` | Desired-speed adjustment from the road limit, and set-speed changes from the driving model's expected speed |
 | [Speed bumps](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | Completion time, crossing speed, and early-release distance |
-| [Curves and turns](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | Curve slowing from curvature and distance, prompt recovery after confirmed easing, and route-turn speed |
-| [Traffic lights](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | Stop/go detection, stop-position adjustment, and automatic stopped-vehicle alignment |
+| [Curves and turns](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor` | Curve slowing from curvature and distance, prompt recovery after confirmed easing, and route-turn speed |
+| [Traffic lights](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `SignalAssistMode`, `TrafficStopDistanceAdjust` | Stop/go detection, stop-position adjustment, and automatic stopped-vehicle alignment |
 
 `AutoNaviSpeedCtrlMode` is `0` off, `1` fixed speed cameras, `2` cameras plus speed bumps, or `3` those events plus mobile-camera events.
 
@@ -377,15 +377,15 @@ While external navigation is connected, deceleration, countdowns, and navigation
 
 `TrafficLightDetectMode` is `0` off, `1` stop detection, or `2` stop and go detection. This is model-based assistance; the driver must always verify the signal.
 
-### Cruise and following gap — 29 settings overall, 26 on Hyundai/Kia/Genesis
+### Cruise and following gap — 40 settings overall, 33 on Hyundai/Kia/Genesis
 
 | Section | Parameters | Purpose |
 |---|---|---|
 | [Driving mode](cruise-gap.md#driving-mode) | `MyDrivingMode`, `MyDrivingModeAuto` | Eco, safe, normal, high-speed modes and automatic selection |
 | [Speed-based acceleration](cruise-gap.md#acceleration-table) | `CruiseMaxVals0` through `CruiseMaxVals6` | Maximum acceleration tendency by speed band |
-| [Stopping and restarting](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `StopBrakeSettleTime`, `StopCreepBrake`, `VEgoStopping`, `AChangeCostStarting` | Stop position, stop entry, easing the brake off before the stop, and restart behavior |
+| [Stopping and restarting](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `StopBrakeSettleTime`, `StopCreepBrake`, `VEgoStopping`, `AChangeCostStarting`, `ResumeDelay`, `AccelForce` | Stop position, stop entry, easing the brake off before the stop, restart behavior, and the Traverse auto resume (Auto Engage 2) RES interval and pull-away force |
 | [Longitudinal tuning](cruise-gap.md#longitudinal-tuning) | `LongTuningKpV`, `LongTuningKiV`, `LongTuningKf`, `LongActuatorDelay` | Hyundai/Kia/Genesis fix/hide `100/0/100`; Toyota/Lexus fix/hide `0/0/100`; VW MEB, including ID.4, applies saved gains |
-| [Following gap](cruise-gap.md#following-gap) | `TFollowGap1` through `TFollowGap4`, `DynamicTFollowLC`, `SpeedTFFactor`, `TFollowDecelBoost` | Gap times, lane-change relief using selected leads, and deceleration margin (default 0%) |
+| [Following gap](cruise-gap.md#following-gap) | `CruiseGapLevels`, `TFollowGap1` through `TFollowGap4`, `DynamicTFollowLC`, `SpeedTFFactor`, `TFollowDecelBoost` | Gap times, lane-change relief using selected leads, and deceleration margin (default 0%) |
 | [Following responsiveness](cruise-gap.md#lead-response) | `LeadAccelResponse`, `LeadAccelResponseTF1`–`LeadAccelResponseTF4` | Lead-start, acceleration and approach response at every following-distance level |
 | [Carrot cruise](cruise-gap.md#carrot-cruise) | `CruiseEcoControl`, `CruiseCoastingPercent`, `CarrotCruiseDecel`, `CarrotCruiseAtcDecel` | Economy control, coasting margin with a fixed entry reference (default 0%: existing control), and cruise deceleration limits |
 
@@ -427,15 +427,15 @@ These settings describe the car, harness, and device hardware configuration. Do 
 
 | Group | Parameters | Purpose |
 |---|---|---|
-| Hyundai/Kia | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera` | SCC connection, LDWS behavior, and speed-event haptics |
+| Hyundai/Kia | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera`, `MaxAngleFrames` | SCC connection, LDWS behavior, speed-event haptics (currently never sent), and the wait before briefly dropping a held large steering angle to avoid an EPS fault |
 | CAN FD/HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdDebug`, `HDPuse` | HDA2 selection, cluster direct send, CAN FD diagnostics, and HDP |
-| Radar | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity` | SCC radar, front-track orientation, corner radar, and Carrot Radar processing and cut-in sensitivity |
-| Driver monitoring | `DriverMonitoringEnabled` (search only), `DriverMonitoringMode`, `GmClusterTakeSteering`, `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | Driver monitoring, the GM cluster steering alert and selected vehicle alerts |
-| Vehicle assistance | `MaxAngleFrames`, `SpeedFromPCM`, `AutoStopOff`, `BoltPedalLongMode` | Steering-angle frames, stock-SCC speed control, Traverse auto stop off, and the Bolt ACC w Pedal longitudinal mode |
+| Radar | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar` | Lead-sensor choice (the stored value is used only on Hyundai/Kia/Genesis), front-track orientation, and corner radar |
+| Driver monitoring | `DriverMonitoringEnabled` (search only), `DriverMonitoringMode`, `GmClusterTakeSteering`, `SimulationIgnorePhoneDM` | Monitoring criteria, the GM cluster steering alert, and ignoring phone-only detection (test) |
+| Vehicle assistance | `SpeedFromPCM`, `AutoStopOff`, `BoltPedalLongMode`, `MuteDoor`, `MuteSeatbelt` | Stock-SCC speed control, Traverse auto stop off, the Bolt ACC w Pedal longitudinal mode, and ignoring door and seatbelt signals |
 | Device hardware | `HardwareC3xLite` | Speakerless C3X Lite audio and process configuration |
 
 > [!CAUTION]
-> Incorrect `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity`, or `SpeedFromPCM` values can change vehicle identification, SCC, radar, or longitudinal behavior. Confirm the vehicle, model year, HDA generation, harness location, and whether stock ACC is retained.
+> Incorrect `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, or `SpeedFromPCM` values can change vehicle identification, SCC, radar, or longitudinal behavior. Confirm the vehicle, model year, HDA generation, harness location, and whether stock ACC is retained.
 
 `DriverMonitoringEnabled` defaults to ON and is available only through Carrot Web setting search. Search for the parameter name to find it. The OFF option is intended for an absent or failed DM camera; leaving the default ON unchanged is recommended. Turning it off stops normal-driving driver-monitoring alerts, monitoring-triggered force deceleration, and lockout, and may violate applicable laws or driving requirements depending on where and how the vehicle is used. Driver View keeps face preview with neutral enforcement. A Web OFF persists across drives and restarts until you manually turn the setting back ON. File and QR backups, restores and setting profiles exclude this value, so a backup from another device cannot turn monitoring off.
 
@@ -469,16 +469,12 @@ In versions supporting Bosch MRRevo14F reception, detecting the Bosch message gr
 
 In modes `EnableRadarTracks=1`–`3`, a confirmed departing front lead can receive bounded future headway relief in ACC when outward radar motion and a visual switch to a farther vehicle agree. See [predicted CUT-OUT behavior](radar.md).
 
-`CarrotRadarMode` continuously tracks vehicles with the front and corner radars to detect cut-ins, then matches camera and radar information in a new way to select the vehicle ahead. On vehicles with neither corner-radar nor radar-track support, it behaves the same as the existing mode. It can change acceleration and braking, so enable it only on the same vehicle after completing validation. The value is latched when the next OnRoad session starts, so end the current drive and restart the vehicle or reboot the device after changing it. The previous `RadarMotionMode` value is migrated to the new name once on the first startup after updating.
-
-`CarrotRadarCutInSensitivity` controls only Carrot Radar Mode CUT-IN detection: `0` disables it, `1` is insensitive, `3` is normal (default), and `5` is very sensitive; `2` and `4` are the intermediate levels. Levels `1` through `5` require `0.50`, `0.40`, `0.35`, `0.25`, and `0.20 s` of continuing measured motion evidence, while the physical future prediction remains fixed at 5.0 seconds. A front-radar track with at least 0.50 m of strongly one-way progress in its recent measured history may receive at most one 20 Hz radar-frame credit so timestamp quantization does not discard a completed dwell; small adjacent drift does not. It does not affect conventional radar mode or `EnableCornerRadar`. The value is read at the next OnRoad start, so restart the vehicle or reboot the device after changing it.
-
 `HardwareC3xLite` must remain off on standard C3 and C3X hardware. Enable it only on a C3X Lite, then reboot the device. The setting skips the unavailable amplifier so startup is not delayed by I2C retries, uses the GPIO buzzer for alerts, disables `micd`, `soundd`, and `loggerd`, and turns off `RecordAudio`. Normal route logging is unavailable while this hardware mode is enabled.
 
 <a id="display"></a>
 ## Display
 
-Display contains 34 settings. External-HUD settings control the layout and output of separate display hardware.
+Display contains 36 settings. External-HUD settings control the layout and output of separate display hardware.
 
 `ClusterHud` (External HUD Display) switches a **direct USB HUD or a registered ESP32-S3 Wi-Fi HUD** on or off. A HUD connected to Jetson starts automatically even when this value is `0`, and normally turns its display off with ignition. Use the existing always-on `ClusterHudDebug` modes to keep it visible offroad. Brightness and layout settings also apply to the Jetson HUD.
 
@@ -564,15 +560,16 @@ The Replay event timeline also identifies Carrot Navi connection and route-sessi
 <a id="system"></a>
 ## System
 
-The 13 system settings cover recording, power, the driving model, network, maps, sound, and software menus.
+The 15 system settings cover recording, power, cameras, the driving model, network, navigation input, sound, and software menus.
 
 | Group | Parameters | Purpose |
 |---|---|---|
 | Recording and power | `RecordRoadCam`, `MaxTimeOffroadMin` | Road-camera storage and delayed shutdown |
+| Camera | `UseWideCamera`, `CarrotVisionEnabled` | Wide road camera use (turn off only if it is broken) and Carrot Web road video |
 | Driving model | `InternalModelLiveSwitch` | Switch to a compiled driving model while disengaged, without restarting (test) |
-| Network and map | `HotspotOnBoot`, `MapboxStyle` | Boot hotspot and map background style |
-| Sound | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage` | Prompt language and volume |
-| Software | `SoftwareMenu` | Carrot Web software-menu availability |
+| Network and map | `HotspotOnBoot`, `MapboxStyle`, `CarrotNaviSource`, `NavdyConnectionMode` | Boot hotspot and map background style (neither currently changes anything), navigation input and the Navdy link |
+| Sound | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage`, `AutoNaviCountDownMode`, `FcwWarningTest` | Prompt language and volume, the spoken seconds countdown to turns and cameras, and the Traverse FCW warning test |
+| Software | `SoftwareMenu` | Off stops the offroad update checker and hides the Carrot Web software menu |
 
 Check storage use for recording and network use, heat, and privacy before enabling live streaming.
 
@@ -580,7 +577,7 @@ Check storage use for recording and network use, heat, and privacy before enabli
 
 In this migration branch, `MaxTimeOffroadMin` supports up to `4320` minutes (three days); existing saved values are unchanged. Automatic shutdown happens only while the harness is detected as connected, and never while ignition is on: USB power such as a phone charger or laptop, detected as no harness, never powers off by itself (unless the harness is misdetected as connected). The offroad timer requests shutdown only after the longer of the setting and five minutes offroad, and only once the device has gone onroad (ignition ON) since hardwared started or an hour after booting (so even a setting of 0 does not power off right after an install or power-up, 2026-11-16). The low-voltage shutdown has no such wait. Low-voltage shutdown follows after both raw and filtered battery voltage stay below `11.0V` (changed from `11.3V` on 2026-11-16) for ten seconds with fresh measurements. Ignition ON, voltage recovery or missing measurements reset that confirmation. The manager checks fresh ignition, offroad and harness state again immediately before requesting poweroff; stale automatic requests cannot latch a manual shutdown. The estimated battery-capacity cutoff is not used. Manual shutdown/reboot behavior is unchanged. Long operation and a low voltage threshold increase depletion and no-start risk.
 
-`CarrotNaviSource`, under Speed and deceleration, selects `0` network guidance or `1` Navdy. Restart after saving. The default transport policy tries direct USB, then the configured Bluetooth peer and paired Jetson relays; USB reattachment takes priority. An explicitly configured `bluetooth_only` policy keeps telemetry on Bluetooth even with USB attached for diagnostics. Bluetooth requires the compatible Navdy receiver and prior pairing; a Git update alone does not install the APK or enroll a peer. See [Bluetooth setup](../../../tools/navdy/BLUETOOTH.md). Navdy mode does not fall back to network guidance; music and clock synchronization remain available. See [input and expiry rules](speed-deceleration.md#navdy-input).
+`CarrotNaviSource`, under System > Network and map, selects `0` network guidance or `1` Navdy. Restart after saving. The default transport policy tries direct USB, then the configured Bluetooth peer and paired Jetson relays; USB reattachment takes priority. An explicitly configured `bluetooth_only` policy keeps telemetry on Bluetooth even with USB attached for diagnostics. Bluetooth requires the compatible Navdy receiver and prior pairing; a Git update alone does not install the APK or enroll a peer. See [Bluetooth setup](../../../tools/navdy/BLUETOOTH.md). Navdy mode does not fall back to network guidance; music and clock synchronization remain available. See [input and expiry rules](speed-deceleration.md#navdy-input).
 
 `SoundVolumeAdjust = -1` displays **Automatic** and adjusts general sound volume using microphone ambient-noise measurements. `0` mutes general sounds; `1-200` remains a percentage multiplier of automatic volume, not a fixed absolute volume. `-1` and the existing `100` use the same volume curve. Changes apply at the next noise measurement while no alert is playing. The reboot chime has no ambient sample and uses its default `0.5` gain in automatic mode. Engage volume and browser playback volume retain their separate settings. DM's first audible warning has a 70% minimum output gain; its final warning always uses 100%, regardless of volume settings or ambient-noise attenuation. The preceding visual-only notice remains silent. See [driver monitoring](driver-monitoring.md) for details.
 

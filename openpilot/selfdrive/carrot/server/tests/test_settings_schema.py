@@ -348,7 +348,7 @@ def test_wide_camera_fallback_setting_is_exposed(settings, params):
 
   system = next(category for category in settings["menu"] if category["id"] == "SYSTEM")
   camera = next(group for group in system["groups"] if group["id"] == "SYS_CAMERA")
-  assert camera["params"] == ["UseWideCamera"]
+  assert camera["params"][0] == "UseWideCamera"
 
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   assert '{"UseWideCamera", {PERSISTENT, BOOL, "1"}}' in params_keys

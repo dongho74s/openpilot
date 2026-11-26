@@ -111,7 +111,7 @@ A **long LFA press** temporarily toggles the speed condition used by lane mode, 
 | `3` | Activate Carrot cruise |
 
 > [!IMPORTANT]
-> The catalog description says `0: cruise ON`, but the running code enters the paddle branch only when `PaddleMode > 0`. On this branch, interpret `0` as **paddle function disabled**.
+> The running code enters the paddle branch only when `PaddleMode > 0`, so `0` means **paddle function disabled**. The old catalog description `0: cruise ON` was wrong and was corrected on 2026-11-27. Paddles are used only on Hyundai/Kia/Genesis CAN-FD cars, and `1` and `2` need `AutoCruiseControl` on.
 
 Vehicles that do not report paddle events will not respond. Left and right paddles currently use the same mode behavior.
 

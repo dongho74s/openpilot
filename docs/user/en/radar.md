@@ -74,9 +74,9 @@ Select inversion only after confirming a left/right mismatch between video and r
 |---:|---|
 | `0` | Disabled |
 | `1` | Use supported corner-radar tracks |
-| `2` | Also use corner radar for cut-in detection |
+| `2` | Currently behaves the same as `1` |
 
-Corner-radar objects are created only when the vehicle code recognizes a supported message group. The supported 0x430 message family is also classified as corner-radar input rather than front radar. The cut-in processing in mode `2` currently focuses on Hyundai-family implementations and must not be generalized to other manufacturers.
+Corner-radar objects are created only when the vehicle code recognizes a supported message group. The supported 0x430 message family is also classified as corner-radar input rather than front radar. The running code only checks whether the value is above `0`, so `1` and `2` behave the same (the one helper that treats `2` differently is used only by tests). Corner radar is used only on Hyundai/Kia/Genesis.
 
 ### Carrot Radar Mode
 

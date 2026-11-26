@@ -23,9 +23,9 @@ carrotpilot의 세부 설정은 **Carrot Web에서 모두 확인하고 변경하
 
 ## Carrot Web 접속
 
-**속도·감속 → 과속카메라 → Navdy 연결 방식**에서 `기존 설정`, `유선 USB`, `무선 Bluetooth`를 선택할 수 있습니다. 유선은 콤마 직접 USB 또는 등록된 Jetson의 USB 경유만 사용하며 블루투스로 자동 대체하지 않습니다. 무선에서는 USB를 진단용으로 연결해도 데이터는 Bluetooth로 보냅니다. 폰 자동 재연결·앰비언트 연결과 내비 입력 선택은 유지됩니다. 연결 변경은 잠시 안내 데이터를 끊으므로 주차 중 변경하세요. 새 설정이 포함된 최초 업데이트는 정상 빌드와 재시작이 필요하며, 이후에는 약 5초 주기와 진행 중인 연결 시도 종료 후 반영됩니다.
+**시스템 → 네트워크·지도 → Navdy 연결 방식**에서 `기존 설정`, `유선 USB`, `무선 Bluetooth`를 선택할 수 있습니다. 유선은 콤마 직접 USB 또는 등록된 Jetson의 USB 경유만 사용하며 블루투스로 자동 대체하지 않습니다. 무선에서는 USB를 진단용으로 연결해도 데이터는 Bluetooth로 보냅니다. 폰 자동 재연결·앰비언트 연결과 내비 입력 선택은 유지됩니다. 연결 변경은 잠시 안내 데이터를 끊으므로 주차 중 변경하세요. 새 설정이 포함된 최초 업데이트는 정상 빌드와 재시작이 필요하며, 이후에는 약 5초 주기와 진행 중인 연결 시도 종료 후 반영됩니다.
 
-이 이식 브랜치는 `CarrotNaviSource`를 추가합니다. **속도·감속 → 내비 입력 선택**의 `0`은 기존 네트워크, `1`은 Navdy입니다. 저장 후 재부팅해야 적용됩니다. 기본 정책은 직접 USB를 우선하며, 없으면 설정된 블루투스 기기와 등록된 Jetson을 시도합니다. USB가 다시 연결되면 USB로 돌아갑니다. 별도로 `bluetooth_only`를 설정한 기기는 진단용 USB가 연결되어도 데이터는 블루투스로만 송수신합니다. 호환 Navdy 앱과 사전 페어링이 필요하며 Git 업데이트만으로 APK 설치나 페어링이 되지는 않습니다. [블루투스 설정](../../../tools/navdy/BLUETOOTH.md)을 참고하세요. Navdy 선택 시 네트워크 안내로 자동 대체하지 않으며 음악·시각 동기화는 유지합니다. [수신 조건과 만료 처리](speed-deceleration.md#navdy-input)를 확인하세요.
+이 이식 브랜치는 `CarrotNaviSource`를 추가합니다. **시스템 → 네트워크·지도 → 내비 입력 선택**의 `0`은 기존 네트워크, `1`은 Navdy입니다. 저장 후 재부팅해야 적용됩니다. 기본 정책은 직접 USB를 우선하며, 없으면 설정된 블루투스 기기와 등록된 Jetson을 시도합니다. USB가 다시 연결되면 USB로 돌아갑니다. 별도로 `bluetooth_only`를 설정한 기기는 진단용 USB가 연결되어도 데이터는 블루투스로만 송수신합니다. 호환 Navdy 앱과 사전 페어링이 필요하며 Git 업데이트만으로 APK 설치나 페어링이 되지는 않습니다. [블루투스 설정](../../../tools/navdy/BLUETOOTH.md)을 참고하세요. Navdy 선택 시 네트워크 안내로 자동 대체하지 않으며 음악·시각 동기화는 유지합니다. [수신 조건과 만료 처리](speed-deceleration.md#navdy-input)를 확인하세요.
 
 1. comma 장치와 휴대폰 또는 PC를 같은 네트워크에 연결합니다.
 2. 브라우저에서 `http://장치-IP:7000`을 엽니다.
@@ -128,7 +128,7 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 |---|---|
 | `name` | 코드와 Params에서 사용하는 고유 이름 |
 | `title` | Carrot Web에 표시되는 한국어 제목 |
-| `descr` | 값의 방향, 모드 번호와 주의사항 |
+| `descr` | 무엇을 바꾸는지, 올리고 내리면 어떻게 되는지, 0·-1 같은 특수값의 뜻을 코드 기준으로 쉽게 적은 짧은 설명(영어 `edescr`, 중국어 `cdescr`) |
 | `min` / `max` | 입력 가능한 범위 |
 | `unit` | `+`와 `-` 버튼으로 한 번에 움직이는 단위 |
 | `default` | 설정 카탈로그가 사용하는 초기 기준값 |
@@ -155,26 +155,26 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 
 ## 전체 설정 지도
 
-현재 `carrot-wip`의 `carrot_settings.json`에는 **199개 파라미터**가 있습니다. 운전자 감시 예외 설정과 `NNFF` 2개는 검색으로만 표시되며, 나머지는 아래 메뉴에 표시됩니다.
+현재 `carrot_settings.json`에는 **225개 파라미터**가 있습니다. 운전자 감시 예외 설정과 `NNFF` 2개는 검색으로만 표시되며, 나머지는 아래 메뉴에 표시됩니다.
 
 | 대분류 | 항목 수 | 중분류 |
 |---|---:|---|
-| 주행 제어 | 123 | 시작·오토, 버튼·프리셋, 차량 조향, 속도·감속, 크루즈·차간 |
-| 차량·하드웨어 | 18 | 현대·기아, CANFD·HDA, 레이더, 운전자 모니터링, 차량 보조, 기기 하드웨어 |
-| 화면 표시 | 34 | 정보 표시, 경로 표시, 밝기·주행화면, 외부 HUD |
-| 시스템 | 12 | 녹화·전원, 네트워크·지도, 사운드, 소프트웨어 |
+| 주행 제어 | 153 | 시작·오토, 버튼·프리셋, 차량 조향, 속도·감속, 크루즈·차간 |
+| 차량·하드웨어 | 21 | 현대·기아, CANFD·HDA, 레이더, 운전자 모니터링, 차량 보조, 기기 하드웨어 |
+| 화면 표시 | 36 | 정보 표시, 경로 표시, 밝기·주행화면, 외부 HUD |
+| 시스템 | 15 | 녹화·전원, 카메라, 주행 모델, 네트워크·지도, 사운드, 소프트웨어 |
 
 ## 주행 제어
 
 주행 제어는 차량 움직임에 영향을 줄 수 있는 123개 항목입니다. 한 번에 여러 값을 변경하지 마세요.
 
 <a id="start-auto"></a>
-### 시작·오토 — 9개
+### 시작·오토 — 10개
 
 | 세부 구역 | 파라미터 | 용도 |
 |---|---|---|
 | 시작 동작 | `AlwaysLateral`, `AutoEngage`, `DisableMinSteerSpeed` | 상시 조향, 주행 시작 시 자동 활성화, 저속 조향 제한 |
-| 오토크루즈 | `AutoCruiseControl`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist` | 크루즈 자동 활성화와 가속 페달 입력 시 동작 |
+| 오토크루즈 | `AutoCruiseControl`, `SoftHoldOnCancel`, `AutoGasTokSpeed`, `AutoGasCancelSpeed`, `AutoGasSyncSpeed`, `CruiseOnDist`, `CruiseDelay` | 크루즈 자동 활성화와 가속 페달 입력 시 동작(`CruiseDelay`는 지금 쓰이지 않음) |
 
 - `AlwaysLateral`: 크루즈가 켜져 있지 않아도 조향 제어를 허용합니다. 지원 Tesla 차량에서는 전진 기어의 실제 정차 상태에서도 조향할 수 있으며, 최소 조향 속도 이하로 이동할 때의 제한은 유지됩니다. [Tesla 제어 진입](tesla.md#engagement-and-standstill)을 참고하세요.
 - 상시 조향도 시스템 시작 후 최초 준비 확인 전에는 조향하지 않습니다. 모델·차량 파라미터·자세 정보 등 필수 입력이 한 번 정상으로 확인되면 이 시작 검사는 종료되며, 이후 입력의 일시적 불량이나 조향 해제·재작동으로 다시 차단하지 않습니다. 기존 주행 중 안전 처리는 그대로 유지됩니다. 초기 대기시간 경과만으로 준비를 통과하지 않습니다.
@@ -201,7 +201,7 @@ Carrot Web 설정 화면에서는 다음 기능을 사용할 수 있습니다.
 `WIP-FR`의 `NavigationSetSpeed`를 켜면 SET 인게이지에 유효한 내비 제한속도 +10km/h(30 제한은 +5)와 현재속도 중 큰 값을 사용하는 [내비 기반 초기 설정속도](buttons-presets.md#button-modes)가 적용됩니다. 기본값은 꺼짐이며, 변경은 약 0.1초 내 반영되어 다음 SET 진입부터 적용됩니다. 내비가 없거나 오래된 경우, 순정 ACC 및 이미 인게이지된 상태의 버튼 동작은 기존과 같습니다.
 
 <a id="vehicle-steering"></a>
-### 차량 조향 — 상위 44개 + ONNX 상세 6개 + 검색 전용 1개
+### 차량 조향 — 상위 50개 + ONNX 상세 6개 + 검색 전용 1개
 
 | 세부 구역 | 파라미터 | 용도 |
 |---|---|---|
@@ -352,17 +352,17 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 
 힘 센서의 추세는 손 접촉 해제나 운전자의 인계 동의를 뜻하지 않습니다. 기존 `steeringPressed` 판정과 운전자 감시는 그대로이며, 기본 적용이 모든 차량에서 동일한 조향감을 보장하지는 않습니다.
 
-### 속도·감속 — 23개
+### 속도·감속 — 30개(감속 중지 세부 5개 포함)
 
 아래 표의 **세부 구역 제목을 누르면** 카메라 감속 계산, 제한속도 연동과 커브·신호 로직을 설명한 페이지로 이동합니다.
 
 | 세부 구역 | 파라미터 | 용도 |
 |---|---|---|
-| [과속카메라](speed-deceleration.md#speed-camera) | `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviRearCameraHoldDistance`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `AutoNaviCountDownMode`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleNaviDecelCancel`(`VehicleNaviDecelCancelBox`, `VehicleNaviDecelCancelMobileZone`, `VehicleNaviDecelCancelBump`, `VehicleNaviDecelCancelUnknown`, `VehicleNaviDecelCancelEarlyWarning`), `VehicleNaviSectionAvgControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime` | 안전운전 이벤트의 대상, 후면단속 통과 후 유지, 순정 카메라 거리 연결·가상거리, PV5 단속 상태에 따른 카메라 유지·해제와 구간단속 제한속도 유지, 감속 시점과 목표 속도 |
-| [도로 제한속도](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit` | 도로 제한속도에 맞춘 목표 속도 조절 |
+| [과속카메라](speed-deceleration.md#speed-camera) | `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviRearCameraHoldDistance`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleNaviDecelCancel`(`VehicleNaviDecelCancelBox`, `VehicleNaviDecelCancelMobileZone`, `VehicleNaviDecelCancelBump`, `VehicleNaviDecelCancelUnknown`, `VehicleNaviDecelCancelEarlyWarning`), `VehicleNaviSectionAvgControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime` | 안전운전 이벤트의 대상, 후면단속 통과 후 유지, 순정 카메라 거리 연결·가상거리, PV5 단속 상태에 따른 카메라 유지·해제와 구간단속 제한속도 유지, 감속 시점과 목표 속도 |
+| [도로 제한속도](speed-deceleration.md#road-speed-limit) | `AutoRoadSpeedLimitOffset`, `AutoRoadSpeedAdjust`, `AutoSpeedUptoRoadSpeedLimit`, `ApplyModelSpeed` | 도로 제한속도에 맞춘 목표 속도 조절, 주행 모델 예상 속도로 설정속도 바꾸기 |
 | [과속방지턱](speed-deceleration.md#speed-bump) | `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`, `AutoNaviSpeedBumpEndDistance` | 방지턱 감속 완료 시점, 통과 속도와 조기 종료 거리 |
-| [커브·턴](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor`, `ApplyModelSpeed` | 곡률·남은 거리 기반 감속, 회전 완화 확인 후 빠른 복구와 경로 턴 속도 |
-| [신호감지](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `TrafficStopDistanceAdjust` | 신호 정지·출발 감지, 정지 위치 및 정지차 기준 자동 보정 |
+| [커브·턴](speed-deceleration.md#curve-turn) | `AutoCurveSpeedFactor`, `AutoCurveSpeedLowerLimit`, `TurnSpeedControlMode`, `MapTurnSpeedFactor` | 곡률·남은 거리 기반 감속, 회전 완화 확인 후 빠른 복구와 경로 턴 속도 |
+| [신호감지](speed-deceleration.md#traffic-light) | `TrafficLightDetectMode`, `SignalAssistMode`, `TrafficStopDistanceAdjust` | 신호 정지·출발 감지, 정지 위치 및 정지차 기준 자동 보정 |
 
 `AutoNaviSpeedCtrlMode`는 `0` 미사용, `1` 과속카메라, `2` 과속카메라+방지턱, `3` 과속카메라+방지턱+이동식카메라입니다.
 
@@ -374,7 +374,7 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 
 `TrafficLightDetectMode`는 `0` 미사용, `1` 정지만 감지, `2` 정지와 출발을 모두 감지합니다. 모델 판단에 의존하므로 운전자가 항상 직접 확인해야 합니다.
 
-### 크루즈·차간 — 전체 29개, 현대·기아·제네시스 26개
+### 크루즈·차간 — 전체 40개, 현대·기아·제네시스 33개
 
 아래 표의 **세부 구역 제목을 누르면** 실제 코드 기준의 계산 방식, 값의 방향과 주의사항을 설명한 페이지로 이동합니다.
 
@@ -382,9 +382,9 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 |---|---|---|
 | [가속 성향·드라이브 모드](cruise-gap.md#driving-mode) | `MyDrivingMode`, `MyDrivingModeAuto` | 연비, 안전, 일반, 고속 모드와 자동 전환 |
 | [가속 성향·속도별 가속값](cruise-gap.md#acceleration-table) | `CruiseMaxVals0`, `CruiseMaxVals1`, `CruiseMaxVals2`, `CruiseMaxVals3`, `CruiseMaxVals4`, `CruiseMaxVals5`, `CruiseMaxVals6` | 속도 구간별 최대 가속 성향 |
-| [정차·재출발](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `StopBrakeSettleTime`, `StopCreepBrake`, `VEgoStopping`, `AChangeCostStarting` | 정지 위치, 정지 진입·정차 직전 브레이크 풀기와 재출발 특성 |
+| [정차·재출발](cruise-gap.md#stop-resume) | `StopDistanceCarrot`, `StoppingAccel`, `StopBrakeEase`, `StopBrakeEaseSpeed`, `StopBrakeSettleTime`, `StopCreepBrake`, `VEgoStopping`, `AChangeCostStarting`, `ResumeDelay`, `AccelForce` | 정지 위치, 정지 진입·정차 직전 브레이크 풀기와 재출발 특성, 트래버스 자동 재출발(오토인게이지 2)의 RES 간격과 출발 힘 |
 | [가감속 튜닝](cruise-gap.md#longitudinal-tuning) | `LongTuningKpV`, `LongTuningKiV`, `LongTuningKf`, `LongActuatorDelay` | 현기차 `100/0/100`, 토요타·렉서스 `0/0/100` 고정·숨김; VW MEB(ID.4 포함)는 저장 게인 적용 |
-| [차간거리](cruise-gap.md#following-gap) | `TFollowGap1`, `TFollowGap2`, `TFollowGap3`, `TFollowGap4`, `DynamicTFollowLC`, `SpeedTFFactor`, `TFollowDecelBoost` | 차간 단계별 시간, 정상 선택 앞차 기준 차로 변경 완화와 감속 여유(기본 0%) |
+| [차간거리](cruise-gap.md#following-gap) | `CruiseGapLevels`, `TFollowGap1`, `TFollowGap2`, `TFollowGap3`, `TFollowGap4`, `DynamicTFollowLC`, `SpeedTFFactor`, `TFollowDecelBoost` | 차간 단계별 시간, 정상 선택 앞차 기준 차로 변경 완화와 감속 여유(기본 0%) |
 | [추종응답성](cruise-gap.md#lead-response) | `LeadAccelResponse`, `LeadAccelResponseTF1`–`LeadAccelResponseTF4` | 모든 차간 단계의 앞차 출발·가속 추종과 접근 반응 |
 | [당근 크루즈](cruise-gap.md#carrot-cruise) | `CruiseEcoControl`, `CruiseCoastingPercent`, `CarrotCruiseDecel`, `CarrotCruiseAtcDecel` | 연비 제어, 진입 기준속도를 고정하는 코스팅 여유(기본 0%: 기존 제어), 당근 크루즈 감속 특성 |
 
@@ -422,19 +422,19 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 <a id="vehicle-hardware"></a>
 ## 차량·하드웨어
 
-차량·하드웨어에는 일반 메뉴 18개와 검색 전용 운전자 감시 예외 설정 1개가 있습니다. 차종, 하네스와 기기 하드웨어 구성을 결정하므로 화면 표시 설정처럼 시험 삼아 켜면 안 됩니다.
+차량·하드웨어에는 일반 메뉴 20개와 검색 전용 운전자 감시 예외 설정 1개가 있습니다. 차종, 하네스와 기기 하드웨어 구성을 결정하므로 화면 표시 설정처럼 시험 삼아 켜면 안 됩니다.
 
 | 중분류 | 파라미터 | 용도 |
 |---|---|---|
-| 현대·기아 | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera` | SCC 연결 방식, LDWS 차량과 카메라 구간 햅틱 |
+| 현대·기아 | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera`, `MaxAngleFrames` | SCC 연결 방식, LDWS 차량, 카메라 구간 햅틱(지금은 실제로 나가지 않음)과 큰 조향각 유지 때 조향 오류 방지 시간 |
 | CANFD·HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdDebug`, `HDPuse` | HDA2 차량, 계기판 직접 송신과 CAN FD 디버그·HDP 기능 |
-| 레이더 | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity` | SCC 레이더, 전방 트랙 좌우 보정, 코너 레이더와 당근레이더 처리·컷인 감도 |
-| 운전자 모니터링 | `DriverMonitoringEnabled`(검색 전용), `DriverMonitoringMode`, `GmClusterTakeSteering`, `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | 운전자 모니터링, GM 계기판 핸들 경고와 일부 차량 경고음 처리 |
-| 차량 보조 | `MaxAngleFrames`, `SpeedFromPCM`, `AutoStopOff`, `BoltPedalLongMode` | 최대 조향각 관련 프레임, 순정 SCC 속도 제어 방식, 트래버스 오토스톱 자동 끄기와 볼트 ACC w Pedal 종제어 방식 |
+| 레이더 | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar` | 앞차를 찾는 센서 선택(현대·기아·제네시스만 설정값 사용), 전방 트랙 좌우 보정과 코너 레이더 |
+| 운전자 모니터링 | `DriverMonitoringEnabled`(검색 전용), `DriverMonitoringMode`, `GmClusterTakeSteering`, `SimulationIgnorePhoneDM` | 운전자 모니터링 기준, GM 계기판 핸들 경고와 휴대폰 단독 판정 제외(시험) |
+| 차량 보조 | `SpeedFromPCM`, `AutoStopOff`, `BoltPedalLongMode`, `MuteDoor`, `MuteSeatbelt` | 순정 SCC 속도 제어 방식, 트래버스 오토스톱 자동 끄기, 볼트 ACC w Pedal 종제어 방식과 문·안전벨트 감지 무시 |
 | 기기 하드웨어 | `HardwareC3xLite` | 스피커가 없는 C3X Lite의 알림음과 프로세스 구성 |
 
 > [!CAUTION]
-> `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity`, `SpeedFromPCM`은 잘못 설정하면 차량 인식, SCC, 레이더와 가감속 동작이 달라질 수 있습니다. 차종, 연식, HDA 구성, 하네스 연결 위치와 순정 ACC 사용 여부를 확인한 뒤 변경하세요.
+> `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, `SpeedFromPCM`은 잘못 설정하면 차량 인식, SCC, 레이더와 가감속 동작이 달라질 수 있습니다. 차종, 연식, HDA 구성, 하네스 연결 위치와 순정 ACC 사용 여부를 확인한 뒤 변경하세요.
 
 - `HyundaiCameraSCC`: 현대·기아 차량의 롱컨, 크루즈 동기화와 CAN FD 배선 구성에 따라 모드가 달라집니다.
   설정이 `0`이고 차량에 카메라 SCC가 적용되지 않은 상태에서, 이번 onroad의 카메라 버스(bus2, 다중 Panda에서는 해당 카메라 버스)에서 `SCC_CONTROL`(CAN-FD) 또는 `SCC12`(일반 CAN)를 수신하면 CAN 오류 화면에 **CameraSCC 설정을 켜 주세요** 안내가 표시됩니다. 수신 이력에 따른 설정 확인 안내이며 모든 CAN 오류의 원인을 확정하지는 않습니다. 설정을 자동 변경하지 않으며, 기존 제어 해제와 진입 차단은 유지됩니다. 정차 후 차량·배선에 맞는 모드를 설정하고 다음 onroad에서 확인하세요.
@@ -447,15 +447,13 @@ GM 차량의 `CustomSteerMax`는 300을 넘겨도 300으로 제한됩니다. 트
 Bosch MRRevo14F 수신을 지원하는 버전에서 Bosch MRRevo14F 후보 차종(실차 검증은 아반떼 AD뿐)의 Bosch 메시지 그룹이 감지되고 `EnableRadarTracks=1`~`3`이면, 이미 전송 중인 트랙을 passive 방식으로 수신하며 시작 시 레이더 활성화 UDS 쓰기와 SCC ECU 통신 비활성화를 건너뜁니다. `EnableRadarTracksResult`는 갱신하지 않으므로 실제 수신·CAN 유효성·레이더 오류로 확인하세요. passive는 차량 제어 전체가 꺼진다는 뜻이 아닙니다. [Bosch passive 수신 예외](radar.md#bosch-passive-reception)를 참고하세요.
 
 `EnableRadarTracks=1`~`3`에서는 확인된 프런트 선행차의 바깥쪽 레이더 움직임과 비전의 먼 차량 전환이 일치하면 ACC의 미래 추종 거리 요구를 제한적으로 완화합니다. [CUT-OUT 예측 처리](radar.md)를 참고하세요.
-- `CarrotRadarMode`: 전방·코너 레이더로 차량의 움직임을 계속 추적해 끼어드는 차량을 감지하고, 카메라 영상과 레이더 정보를 새로운 방식으로 맞춰 앞차를 선택합니다. 코너 레이더와 레이더 트랙 기능이 모두 없는 차량에서는 기존 방식과 동일하게 동작합니다. 가감속 동작이 달라질 수 있으므로 검증을 마친 동일 차량에서만 켭니다. 변경값은 다음 OnRoad가 시작될 때 고정되므로, 변경 후 현재 주행을 끝내고 차량을 재시동하거나 기기를 재부팅해야 적용됩니다. 기존 `RadarMotionMode` 값은 업데이트 후 처음 시작할 때 새 이름으로 한 번 자동 이관됩니다.
-- `CarrotRadarCutInSensitivity`: 당근레이더모드 전용 CUT-IN 감도입니다. `0`은 사용 안 함, `1`은 둔감, `3`은 보통(기본값), `5`는 아주 민감이며 `2`와 `4`는 중간 단계입니다. 단계 `1`~`5`는 실제 측정 움직임이 각각 `0.50`, `0.40`, `0.35`, `0.25`, `0.20초` 계속될 때 확정하며, 물리 미래 예측시간은 5.0초로 고정합니다. 전방 레이더의 최근 실측 이력에서 0.50m 이상 강한 단방향 진입이 확인되면 timestamp 양자화로 확정을 놓치지 않도록 최대 20Hz 레이더 한 프레임만 반영하며, 작은 인접 차로 흔들림에는 적용하지 않습니다. 기존 레이더모드와 `EnableCornerRadar`에는 영향을 주지 않습니다. 다음 OnRoad 시작 때 읽으므로 변경 후 차량을 재시동하거나 기기를 재부팅해야 적용됩니다.
 `DriverMonitoringEnabled`의 기본값은 켜짐이며 Carrot Web 설정 검색에서만 찾을 수 있습니다. 파라미터 이름으로 검색하세요. 끄기 기능은 DM 카메라가 없거나 고장 난 경우를 위한 것으로, 기본 켜짐을 변경하지 않는 것을 권장합니다. 끄면 일반 주행 중 운전자 감시 경고·감시로 인한 강제 감속·재사용 제한이 사라지며, 사용 지역과 조건에 따라 적용 법규나 운행 요건에 위배될 수 있습니다. Driver View에서는 얼굴 미리보기만 유지하고 판정은 중립입니다. Web에서 끈 설정은 다음 주행과 재시작 후에도 유지되므로 직접 다시 켜야 합니다. 파일·QR 백업, 복원 및 설정 프로필은 이 값을 제외합니다. 복원 작업은 현재 값을 바꾸지 않으며 다른 기기의 끄기 값을 가져오지 않습니다.
 
 기어와 속도에 관계없이 정차 중에도 실제 차량 CANCEL 버튼을 놓았다 다시 누르는 방식으로 3초 안에 세 번 누르면 `DriverMonitoringEnabled` 설정을 바꾸지 않고 현재 시동 구간 동안 감시를 끕니다. 기어 또는 속도가 바뀌어도 횟수를 초기화하지 않습니다. 자동 제어 CANCEL 반사와 BT CANCEL은 세지 않습니다. 다른 차량 버튼의 누름 또는 놓음 신호, 무효·오래된 차량 상태, 입력 스트림 끊김이나 시간 초과는 횟수를 초기화하며, 실제 입력과 구분할 수 없는 순정 ACC 속도 버튼 반사도 보수적으로 초기화할 수 있습니다. 다음 시동을 켜거나 manager/기기를 재시작하면 임시 꺼짐 상태만 해제하므로, 저장된 설정이 켜짐일 때만 감시가 다시 켜집니다. `DriverMonitoringMode`와 `CarrotVisionEnabled`는 바꾸지 않습니다.
 
 - `DriverMonitoringMode`: 운전자 감시가 켜져 있을 때 적용됩니다. 기본값 0은 카메라 사용 시 콤마 순정 감시 기준이며, 카메라 미장착·고장 시에는 15·30·45초 조작 감시로 전환합니다. 1은 빈 도로 시간 완화와 조작 후 카메라 경고 유예를 적용하는 시험 전용 실험 모드입니다. 공통 예외로 P단·완전 정차·인게이지 해제가 유효한 신호로 1초간 확인되면 재사용 제한을 초기화합니다. 모드 변경은 재부팅 없이 약 0.5초 주기로 적용됩니다. 전환해도 누적 감시시간·경고 횟수·재사용 제한은 초기화되지 않으며, 이전 조작 유예와 전방주시 연속 판정은 종료됩니다. [운전자 감시와 실험 모드 조건](driver-monitoring.md)을 확인하세요. 현대·기아·제네시스 CAN-FD의 검증된 원본 `STEER_TOUCH_2AF` 수신 신호를 차종명 제한 없이 처리하며 카메라·모드에 따라 유지와 새 접촉을 구분합니다.
 - **GM 계기판 핸들 경고 (실험)** (`GmClusterTakeSteering`): 트래버스 SDGM 카메라 하네스에서 오픈파일럿 롱컨을 쓸 때만 동작하는 실험 기능입니다. 다른 차종이나 순정 롱컨에서는 저장해도 아무것도 바꾸지 않습니다. 기본값 `0`은 끔입니다. 오픈파일럿은 평소 순정 카메라에 손이 핸들에 있다고 알려 순정 'Take Steering' 경고를 숨깁니다. `1`은 경고음이 나는 운전자 감시 경고(2단계 이상)부터, `2`는 첫 감시 경고(1단계)부터, 경고가 떠 있는 동안만 손을 뗐다고 알려 순정 카메라의 계기판 핸들 경고 표시를 유도합니다. 조향 명령, 운전자 감시 판단과 실제 핸들 토크 신호는 바뀌지 않습니다. 제조사 매뉴얼에 따르면 Take Steering 경고가 반복되면 순정 차선유지(LKA)가 잠시 사용할 수 없게 될 수 있습니다. 순정 카메라의 반응 시간, 경고음, 순정 차선유지 설정 필요 여부, 다른 계기판 메시지와 반복 경고 뒤 복구는 실차에서 확인되지 않았습니다. 약 0.5초 안에 재부팅 없이 적용됩니다.
-- `CarrotVisionEnabled`: 운전자 감시와 별도로 웹 도로 영상을 켭니다. `DisableDM`은 이관 전용이며, 기존 `DisableDM=2`의 영상 기능만 최초 전환 시 `CarrotVisionEnabled`로 승계합니다.
+- `CarrotVisionEnabled`(**시스템 → 카메라**): 운전자 감시와 별도로 웹 도로 영상을 켭니다. `DisableDM`은 이관 전용이며, 기존 `DisableDM=2`의 영상 기능만 최초 전환 시 `CarrotVisionEnabled`로 승계합니다.
 - `SpeedFromPCM`: 기본값은 `2`(커브·카메라 감속)이며, PCM 차량의 버튼 스패밍과 속도 선택에 영향을 줍니다. `3`에서 토요타·렉서스는 순정 설정속도를 사용하며 가감속 제어 방식은 바뀌지 않습니다. `TOYOTA_RAV4_TSS2_2022`의 PCM 직접 가감속에서는 `0`도 유효한 순정 설정속도 변경·크루즈 재개를 반영하며 낮은 감속 목표를 유지합니다. [버튼 전송 상세](buttons-presets.md#button-spam)를 참고하세요.
 - `AutoStopOff`: 기본값은 `0`(사용 안 함)입니다. `1`이면 시동마다 엔진 오토스톱을 자동으로 끕니다. 트래버스에서 오픈파일럿 롱컨을 쓸 때만 동작하는 시험 기능입니다.
   - 시동 5초 뒤, 정차 중이고 크루즈와 오픈파일럿이 꺼져 있을 때 오토스톱 끄기 버튼 누름(`0x1E1`)을 대신 보냅니다. 그다음 오토스톱 꺼짐 상태(`0x1F4`)가 1이 됐는지 확인합니다.
@@ -469,7 +467,7 @@ Bosch MRRevo14F 수신을 지원하는 버전에서 Bosch MRRevo14F 후보 차�
 <a id="display"></a>
 ## 화면 표시
 
-화면 표시에는 34개 항목이 있습니다. 외부 HUD 항목은 별도 하드웨어의 화면 구성과 출력 방식을 조정합니다.
+화면 표시에는 36개 항목이 있습니다. 외부 HUD 항목은 별도 하드웨어의 화면 구성과 출력 방식을 조정합니다.
 
 `ClusterHud`(외부 HUD 활성화)는 **본체 USB에 직접 연결한 HUD 또는 등록된 ESP32-S3 Wi-Fi HUD**를 켜고 끄는 설정입니다. Jetson에 연결한 HUD는 이 값이 `0`이어도 자동 실행되며, 기본적으로 시동 OFF 시 화면을 끕니다. 시동 OFF에도 표시하려면 기존 `ClusterHudDebug`의 항상 켜기를 사용합니다. 밝기·화면 구성 설정은 Jetson HUD에도 적용됩니다.
 
@@ -559,21 +557,23 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 <a id="system"></a>
 ## 시스템
 
-시스템에는 녹화, 전원, 주행 모델, 네트워크, 지도, 소리와 소프트웨어 메뉴를 다루는 13개 항목이 있습니다.
+시스템에는 녹화, 전원, 카메라, 주행 모델, 네트워크, 내비 입력, 소리와 소프트웨어 메뉴를 다루는 15개 항목이 있습니다.
 
 | 중분류 | 파라미터 | 용도 |
 |---|---|---|
 | 녹화·전원 | `RecordRoadCam`, `MaxTimeOffroadMin` | 도로 카메라 저장과 시동 OFF 후 자동 전원 종료 시간 |
+| 카메라 | `UseWideCamera`, `CarrotVisionEnabled` | 광각 전방 카메라 사용(고장 시 끄기)과 당근웹 도로 영상 |
 | 주행 모델 | `InternalModelLiveSwitch` | 컴파일된 주행 모델을 재시동 없이 디스인게이지 상태에서 바로 바꾸기(시험) |
-| 네트워크·지도 | `HotspotOnBoot`, `MapboxStyle` | 부팅 시 핫스팟과 지도 배경 스타일 |
-| 사운드 | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage` | 안내음 언어와 일반·인게이지 볼륨 |
+| 네트워크·지도 | `HotspotOnBoot`, `MapboxStyle`, `CarrotNaviSource`, `NavdyConnectionMode` | 부팅 핫스팟과 지도 배경 스타일(둘 다 지금은 동작에 쓰이지 않음), 내비 입력 선택과 Navdy 연결 방식 |
+| 사운드 | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage`, `AutoNaviCountDownMode`, `FcwWarningTest` | 안내음 언어, 일반·인게이지 볼륨, 회전·카메라 남은 초 카운트다운 소리와 트래버스 FCW 경고 시험 |
 | 소프트웨어 | `SoftwareMenu` | Carrot Web의 소프트웨어 메뉴 활성화 |
 
 - `RecordRoadCam`: `0` 녹화 안 함, `1` 일반 카메라, `2` 일반+광각 카메라입니다. 저장 공간 사용량을 확인하세요.
 - `MaxTimeOffroadMin`: 시동 OFF 후 종료 시간으로 최대 `4320`분(3일)을 지원하며 기존 저장값은 자동 변경하지 않습니다. 자동 종료는 차량 하네스가 연결된 것으로 판정될 때만 합니다. 하네스 미연결로 판정되는 폰 충전기·노트북 같은 USB 전원에서는 자동 종료하지 않습니다(USB 연결인데 하네스가 연결로 잘못 판정되면 예외). 시동 ON 중에는 자동 종료하지 않습니다. 시간 종료는 오프로드가 된 뒤 설정 시간과 5분 중 긴 쪽이 지나고, 시동 ON으로 운행 화면에 들어간 적이 있거나 부팅 후 1시간이 지났을 때만 요청합니다(설정이 0이어도 설치·전원 연결 직후 바로 꺼지지 않음, 2026-11-16). 저전압 종료에는 이 대기가 없습니다. 저전압 종료는 원시·필터링 전압이 모두 `11.0V` 미만으로 10초 연속 확인되면 요청합니다(2026-11-16 `11.3V`에서 변경). 시동 ON·전압 회복·측정 중단 시 저전압 확인 시간을 초기화합니다. 실제 종료 명령 직전에도 최신 시동·오프로드·하네스 상태를 재확인하며 오래된 자동 요청은 종료를 유발하지 않습니다. 추정 배터리 잔량 종료 조건은 사용하지 않으며 수동 종료·재부팅 동작은 그대로입니다. 긴 유지 시간과 낮은 전압 기준은 배터리 방전·시동 불가 위험을 높입니다.
 - `InternalModelLiveSwitch`(주행 중 주행 모델 즉시 전환, 시험, `0/1`, 기본 `0`): 켜면 도구 → 주행 모델 카드에서 주행 중에도 모델을 고를 수 있고, 이미 컴파일된 모델과 기본 모델은 재시동·재부팅 없이 디스인게이지 상태에서 바로 바뀝니다. 바꾸는 동안과 새 모델의 과거 기록이 찰 때까지(약 6~8초) 인게이지가 막히고('주행 모델 바꾸는 중'), 조향·가감속 제어(`AlwaysLateral` 포함)와 정차 후 순정 크루즈 재출발 신호도 모두 멈춥니다. 젯슨·eGPU 모델로 달리는 시동에서는 다음 시동부터 바뀝니다. 끄면(기본) 예전처럼 주차하고 시동을 끈 상태에서만 고를 수 있고 다음 주행부터 바뀝니다. 전환을 기다리는 중에 끄면 전환을 취소하고 다음 시동에 적용하지만, 이미 새 모델을 불러오기 시작했으면 새 모델 기록이 찰 때까지 차단은 그대로 이어집니다. 실차 주행으로는 아직 확인하지 않은 시험 기능이니 주차(P) 상태에서 먼저 확인하세요. 자세한 동작은 [Carrot Web 주행 모델](carrot-web.md)을 참고하세요.
-- `HotspotOnBoot`: USIM을 장착한 장치에서 자동 핫스팟을 사용할 때의 설정입니다.
-- `SoftwareMenu`: 메모리 문제가 있을 때 끌 수 있는 Carrot Web 메뉴 설정입니다.
+- `HotspotOnBoot`: 부팅 때 핫스팟을 켜려는 설정이지만 지금은 이 값으로 핫스팟을 켜는 코드가 없습니다. 당근웹 기기 화면의 읽기 전용 테더링 표시에만 쓰입니다.
+- `MapboxStyle`: 지금은 어디서도 값을 읽지 않아 바꿔도 지도 모양이 달라지지 않습니다.
+- `SoftwareMenu`: 끄면 시동이 꺼져 있을 때 도는 업데이트 확인·내려받기 프로그램과 Carrot Web의 소프트웨어 메뉴가 함께 꺼집니다. 메모리 문제가 있을 때 끄는 용도입니다.
 
 `SoundVolumeAdjust`는 `-1`이면 **자동**으로 표시되며 마이크로 측정한 주변 소음에 따라 일반 안내음의 음량을 조절합니다. `0`은 일반 안내음 끄기, `1~200`은 자동 음량에 곱하는 비율(%)입니다. 기존 `100`과 `-1`의 음량 곡선은 같으며 양수 설정도 고정 절대 음량은 아닙니다. 변경은 안내음이 재생되지 않을 때 다음 소음 측정부터 반영됩니다. 재부팅음은 소음 측정이 없으므로 자동 모드에서 기본 게인 `0.5`를 사용합니다. 인게이지 음량과 웹 브라우저 재생 음량은 별도 설정을 유지합니다. DM 첫 경고음은 출력 음량 최소 70%, 마지막 경고음은 항상 100%이며 볼륨 설정이나 주변 소음에 의해 낮아지지 않습니다. 그보다 앞선 화면 예고는 무음입니다. 자세한 내용은 [운전자 모니터링](driver-monitoring.md)을 참고하세요.
 
@@ -598,7 +598,7 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 ### 차량 구성을 확인해야 하는 설정
 
 - `HyundaiCameraSCC`, `CanfdHDA2`
-- `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity`
+- `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`
 - `SpeedFromPCM`, `DisableMinSteerSpeed`
 - `LateralTorqueCustom`, `CustomSteer*`
 - `DriverMonitoringMode`
