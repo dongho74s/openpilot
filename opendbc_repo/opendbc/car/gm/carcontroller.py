@@ -76,6 +76,11 @@ STOP_EASE_MIN_BRAKE = 30  # counts: never eased below this (1-5 km/h logs: about
 STOP_EASE_CANCEL_COMMANDS = 8  # 25 Hz commands (0.32 s, net) of a non-decelerating car end easing for that stop
 STOP_EASE_MIN_DECEL = -0.05  # m/s^2: weaker than this counts as not decelerating
 STOP_EASE_MAX_COMMANDS = 125  # 25 Hz commands (5 s): easing ends for a stop that takes longer
+# The wheel speed reads 0 below about 0.75 km/h, so standstill comes 0.4-0.5 s before the car really stops (user report
+# 2026-11-26 "a thump at the very end", rlog 00000260: the accelerometer kept decelerating 0.4-0.5 s after standstill,
+# then rocked back). Jumping to the hold at standstill braked those last centimetres harder (-0.23 -> -0.36 m/s^2).
+STOP_SETTLE_COMMANDS = 12  # 25 Hz commands (0.48 s) the eased brake is kept after standstill, then it rises to the hold
+STOP_SETTLE_MAX_PITCH = 0.03  # rad (about a 3 % grade): on a steeper road the hold comes at standstill as before
 
 
 class CarController(CarControllerBase):
@@ -96,6 +101,10 @@ class CarController(CarControllerBase):
     self.stop_ease_cancelled = False
     self.stop_ease_not_slowing = 0
     self.stop_ease_commands = 0
+    self.stop_rolling = False  # this stop was seen rolling (not standstill) while stopping
+    self.stop_standstill_seen = False  # and has reached standstill since
+    self.stop_settle_brake = None  # the brake kept just after standstill (STOP_SETTLE_COMMANDS), None when not settling
+    self.stop_settle_left = 0
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -206,6 +215,40 @@ class CarController(CarControllerBase):
     closeness = (self.stop_ease_speed - CS.out.vEgo) / self.stop_ease_speed  # 0 at the start speed, 1 at the stop
     eased = self.apply_brake * (1. - self.stop_ease_pct / 100. * closeness)
     self.apply_brake = int(round(max(STOP_EASE_MIN_BRAKE, eased)))
+
+  def settle_stop_brake(self, CC, CS, stopping):
+    """Keep the eased brake until the car has really stopped (StopBrakeEase on): at the first standstill of a stop that
+    was rolling, the brake stays at what was sent (at least STOP_EASE_MIN_BRAKE) for STOP_SETTLE_COMMANDS, then rises by
+    STOP_BRAKE_RISE per command to the hold. Only for a hold of at most STOP_SMOOTH_MAX_BRAKE on a road within
+    STOP_SETTLE_MAX_PITCH; soft hold and wheels turning again (standstill lost) end it at once, and a stop settles once."""
+    if not (self.smooth_stop and CC.longActive and stopping):
+      self.stop_rolling = self.stop_standstill_seen = False
+      self.stop_settle_brake = None
+      return
+    if CS.out.softHoldActive > 0:
+      self.stop_settle_brake = None
+      return
+    if not CS.out.standstill:
+      self.stop_rolling = True
+      self.stop_settle_brake = None  # never kept while the wheels turn: the hold (or the stopping brake) at once
+      return
+    if not self.stop_standstill_seen:
+      self.stop_standstill_seen = True
+      pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
+      if self.stop_rolling and self.stop_ease_pct > 0 and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE \
+         and abs(pitch) <= STOP_SETTLE_MAX_PITCH:
+        self.stop_settle_brake = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
+        self.stop_settle_left = STOP_SETTLE_COMMANDS
+    if self.stop_settle_brake is None:
+      return
+    if self.stop_settle_left > 0:
+      self.stop_settle_left -= 1
+    else:
+      self.stop_settle_brake += STOP_BRAKE_RISE
+    if self.stop_settle_brake >= self.apply_brake:
+      self.stop_settle_brake = None  # at the hold
+      return
+    self.apply_brake = int(self.stop_settle_brake)
 
   def update(self, CC, CS, now_nanos):
     test_fcw = self.fcw_warning_test.update(CS.out, CC) if self.fcw_warning_test is not None else False
@@ -383,7 +426,10 @@ class CarController(CarControllerBase):
         if self.gas_brake_hysteresis is not None and not gas_brake_hysteresis_active:
           self.gas_brake_hysteresis.reset()
         self.ease_stop_brake(CC, CS, stopping)
-        if self.smooth_stop and CC.longActive and stopping and not CS.out.standstill and \
+        self.settle_stop_brake(CC, CS, stopping)
+        # not again once the stop has reached standstill: wheels turning after it get the hold at once (the settle above
+        # may have left the last sent brake below it)
+        if self.smooth_stop and CC.longActive and stopping and not CS.out.standstill and not self.stop_standstill_seen and \
            0. < CS.out.vEgo < STOP_SMOOTH_MAX_SPEED and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE:
           # The stopping brake rises from what was sent, not in one step (user report 2026-11-26: entering stopping
           # near 1 km/h stepped the brake 41 -> 52 just before the stop): a quarter of the gap per command, at least

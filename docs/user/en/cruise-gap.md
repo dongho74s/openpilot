@@ -136,9 +136,13 @@ Only on Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so 
 - `StopBrakeEase`: default `30`, range `0 to 60` (%), step `5`. `0` = off.
 - `StopBrakeEaseSpeed`: default `4`, range `1 to 10` (km/h), step `1`.
 
-Like a driver letting off a little just before the car stops: while stopping, once the car is slower than `StopBrakeEaseSpeed`, the stopping brake is gradually reduced by up to `StopBrakeEase` % until just before the stop, never below brake 30 (about -0.15 m/s²). At standstill the stop hold is back in the next command.
+Like a driver letting off a little just before the car stops: while stopping, once the car is slower than `StopBrakeEaseSpeed`, the stopping brake is gradually reduced by up to `StopBrakeEase` % until just before the stop, never below brake 30 (about -0.15 m/s²).
 
-- **Not eased:** a stopping brake stronger than -0.8 m/s², rolling back, standstill.
+The wheel speed reads 0 below about 0.75 km/h, so the car still rolls 0.4 to 0.5 s after standstill is detected. The eased brake is therefore kept for 0.48 s after standstill and then rises by 3 per command back to the stop hold (usually within 0.7 s). Before, the hold came at the moment of standstill, braked the last few centimetres harder and the car rocked back with a thump when it really stopped (user report 2026-11-26, seen on the comma accelerometer).
+
+- **The hold at once:** wheels turning again in that time, soft hold, a road steeper than about 3 %, or a stop hold stronger than -0.8 m/s². A stop is settled like this only once.
+
+- **Not eased:** a stopping brake stronger than -0.8 m/s², rolling back.
 - **Ends:** if the car is not decelerating for more than 0.32 s (counted so that noise cannot reset it; a downhill or the creep, for example) or easing has lasted 5 s in that stop, easing ends for that stop and the brake is joined back up to the stopping brake. Once the car has stood still, the stop is not eased again until it ends. The next stop eases again. An unreadable stored value turns easing off.
 - **Higher:** a smaller last jolt, a slightly longer stop (tens of cm at 30%).
 - **Higher start speed:** eases earlier and more gradually; lower eases only right before the stop.

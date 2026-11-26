@@ -119,16 +119,64 @@ def into_a_stop(d, accel=-0.5):
   d.run(accel, 0.4, state="stopping", v=1.5)  # above the 4 km/h start speed: not eased
 
 
-def test_the_brake_eases_off_as_the_car_slows_and_the_hold_comes_back_at_standstill(runtime, monkeypatch):
-  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
-  into_a_stop(d)
+def eased_to_the_stop(d):
   seq = []
   for v in (1.0, 0.8, 0.6, 0.4, 0.2, 0.05):
     seq += brakes(d.run(-0.5, 0.2, state="stopping", v=v, a=-0.3))
+  return seq
+
+
+def test_the_brake_eases_off_as_the_car_slows_and_stays_eased_until_the_car_has_really_stopped(runtime, monkeypatch):
+  """User report 2026-11-26 "a thump at the very end": the wheel speed reads 0 below about 0.75 km/h and the car rolls
+  0.4-0.5 s more; the hold now comes after STOP_SETTLE_COMMANDS, rising by STOP_BRAKE_RISE, instead of at standstill."""
+  from opendbc.car.gm.carcontroller import STOP_SETTLE_COMMANDS, STOP_BRAKE_RISE
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  seq = eased_to_the_stop(d)
   assert seq == sorted(seq, reverse=True) and min(seq) >= 30
   assert seq[0] < 50 and seq[-1] <= 38  # 50 * (1 - 0.3 * closeness), near the stop about 36
-  held = brakes(d.run(-0.5, 0.3, state="stopping", v=0.0))
-  assert set(held) == {50}  # standstill: the full hold in the next command
+  stopped = brakes(d.run(-0.5, 1.2, state="stopping", v=0.0))
+  assert set(stopped[:STOP_SETTLE_COMMANDS]) == {seq[-1]}  # kept for 0.48 s after standstill
+  rise = stopped[STOP_SETTLE_COMMANDS:stopped.index(50)]
+  assert rise and all(0 < b2 - b1 <= STOP_BRAKE_RISE for b1, b2 in zip([seq[-1]] + rise, rise + [50]))
+  assert set(stopped[stopped.index(50):]) == {50} and stopped.index(50) * 0.04 < 1.0  # before an AutoResume creep release
+
+
+def test_wheels_turning_again_get_the_hold_at_once_and_a_stop_settles_once(runtime, monkeypatch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  eased_to_the_stop(d)
+  assert max(brakes(d.run(-0.5, 0.2, state="stopping", v=0.0))) < 50  # settling
+  assert brakes(d.run(-0.5, 0.08, state="stopping", v=0.2, a=0.1)) == [50, 50]  # rolling again: the hold at once
+  assert set(brakes(d.run(-0.5, 0.6, state="stopping", v=0.0))) == {50}  # standstill again: no second settle
+
+
+def test_soft_hold_ends_the_settle_at_once(runtime, monkeypatch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  eased_to_the_stop(d)
+  d.run(-0.5, 0.12, state="stopping", v=0.0)
+  assert min(brakes(d.run(-0.5, 0.2, state="stopping", v=0.0, soft_hold=1))) >= 50
+
+
+@pytest.mark.parametrize("pitch", [0.05, -0.05])
+def test_on_a_steep_road_the_hold_comes_at_standstill(runtime, monkeypatch, pitch):
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  for v in (1.0, 0.6, 0.2):
+    d.run(-0.5, 0.2, state="stopping", v=v, a=-0.3, pitch=pitch)
+  assert set(brakes(d.run(-0.5, 0.3, state="stopping", v=0.0, pitch=pitch))) == {50}
+
+
+def test_no_settle_without_easing_or_for_a_strong_hold(runtime, monkeypatch):
+  off = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopBrakeEase=0)
+  off.run(-0.2, 1.0, v=1.0)  # pid braking 20
+  off.run(-0.5, 0.2, state="stopping", v=0.3)
+  assert set(brakes(off.run(-0.5, 0.3, state="stopping", v=0.0))[1:]) == {50}
+  strong = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(strong, accel=-1.0)
+  strong.run(-1.0, 0.3, state="stopping", v=0.4, a=-0.3)
+  assert set(brakes(strong.run(-1.0, 0.3, state="stopping", v=0.0))) == {100}  # above STOP_SMOOTH_MAX_BRAKE
 
 
 def test_easing_ends_for_the_stop_when_the_car_stops_slowing(runtime, monkeypatch):
