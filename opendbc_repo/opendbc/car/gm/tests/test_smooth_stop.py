@@ -1,12 +1,21 @@
 """The end of a stop on the engine camera-ACC / SDGM Chevrolets (user report 2026-11-26, Traverse: "the brake goes on and
 off as it stops"). Logged stops stepped the brake 41 -> 52 when LongControl entered stopping near 1 km/h and 52 -> 40
 (CP.stopAccel's fixed hold) in the instant the car stopped. Real DBC, packer and CarController; no device I/O."""
+from types import SimpleNamespace
+
 import pytest
 
 from opendbc.car.gm.values import CAR
 from opendbc.car.gm.tests.test_display_speed import build_cp, runtime  # noqa: F401
 from opendbc.car.gm.tests.test_bolt_acc_pedal import bolt_cp
 from opendbc.car.gm.tests.test_gas_brake_hysteresis import Drive, controller
+
+_Drive = Drive
+
+
+def Drive(runtime, monkeypatch, cp, **params):  # noqa: N802 - these tests pin the creep brake off unless they set it
+  params.setdefault("StopCreepBrake", 0)
+  return _Drive(runtime, monkeypatch, cp, **params)
 
 ENGINE_CARS = [CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_SILVERADO]
 
@@ -297,6 +306,66 @@ def test_a_malibu_rolling_again_after_standstill_gets_the_hold_at_once(runtime, 
   assert set(brakes(d.run(-0.81, 0.6, state="stopping", v=0.0))) == {200}  # stood again: the hold, no second settle
   away = brakes(d.run(0.5, 0.2, state="starting", v=0.3))  # LongControl leaves stopping: no hold forced
   assert away[-1] == 0
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Low-speed creep brake (StopCreepBrake, user request 2026-11-26: "it crawls at low speed instead of stopping")
+
+@pytest.mark.parametrize("pct,extra", [(None, 24), (100, 24), (0, 0), (200, 47), (300, 71), (500, 71), (-10, 0)])
+def test_the_creep_brake_adds_below_six_kmh(runtime, monkeypatch, pct, extra):
+  params = {} if pct is None else {"StopCreepBrake": pct}
+  d = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **params)
+  d.run(-0.43, 1.0, v=0.4, a=-0.1)  # pid, braking 43 looked up
+  assert brakes(d.run(-0.43, 0.2, v=0.4, a=-0.1))[-1] == 43 + extra  # 25 at 0.3 m/s, 21 at 0.6: 24 at 0.4
+
+
+@pytest.mark.parametrize("v,extra", [(0.2, 25), (0.6, 21), (1.0, 16), (1.5, 10), (1.8, 0), (3.0, 0)])
+def test_the_creep_brake_follows_the_speed(runtime, monkeypatch, v, extra):
+  d = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopCreepBrake=100)
+  d.run(-0.5, 1.0, v=v, a=-0.3)
+  assert brakes(d.run(-0.5, 0.2, v=v, a=-0.3))[-1] == 50 + extra
+
+
+@pytest.mark.parametrize("req,extra", [(-0.3, 24), (-0.18, 12), (-0.05, 0)])
+def test_the_creep_brake_is_scaled_by_the_request(runtime, monkeypatch, req, extra):
+  d = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopCreepBrake=100)
+  d.run(req, 1.0, v=0.4, a=-0.1)
+  assert brakes(d.run(req, 0.2, v=0.4, a=-0.1))[-1] == int(round(-100 * req)) + extra
+
+
+def test_the_creep_brake_holds_through_the_stop_and_is_kept_at_standstill(runtime, monkeypatch):
+  """Stopping (-0.51) at 1 km/h gets 51 + 25; at standstill nothing is added, but what was sent is kept for the stop
+  instead of dropping to the hold (51) in the instant the car stops."""
+  d = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopCreepBrake=100,
+             StopBrakeEase=0)
+  d.run(-0.51, 1.0, v=0.6, a=-0.3)
+  rolling = brakes(d.run(-0.51, 0.6, state="stopping", v=0.25, a=-0.3))
+  assert rolling[-1] == 51 + 25
+  stopped = brakes(d.run(-0.51, 1.0, state="stopping", v=0.0))
+  assert set(stopped) == {76}  # kept, never below
+
+
+def test_the_creep_brake_is_eased_off_before_the_stop(runtime, monkeypatch):
+  """StopBrakeEase eases from the creep-braked request, so it acts on a car that really decelerates."""
+  d = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopCreepBrake=100,
+             StopBrakeEase=60, StopBrakeEaseSpeed=4)
+  d.run(-0.51, 1.0, v=1.5, a=-0.3)
+  d.run(-0.51, 0.4, state="stopping", v=1.5, a=-0.3)
+  seq = []
+  for v in (1.0, 0.6, 0.3, 0.1):
+    seq += brakes(d.run(-0.51, 0.2, state="stopping", v=v, a=-0.3))
+  assert seq[0] > 51 and seq[-1] < seq[0] and min(seq) >= 30
+  stopped = brakes(d.run(-0.51, 1.5, state="stopping", v=0.0))
+  assert stopped[-1] == 51  # the settle rises to the hold, none of the creep brake at standstill
+
+
+def test_no_creep_brake_on_the_bolt_or_at_standstill(runtime, monkeypatch):
+  bolt = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True), StopCreepBrake=300)
+  bolt.run(-0.43, 1.0, v=0.4, a=-0.1)
+  assert not bolt.c.smooth_stop and bolt.c.creep_brake(SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=0.4)),
+                                                       -0.43) == 0
+  d = _Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopCreepBrake=300)
+  assert d.c.creep_brake(SimpleNamespace(out=SimpleNamespace(standstill=True, vEgo=0.0)), -0.5) == 0
 
 
 def test_wheels_turning_again_get_the_hold_at_once_and_a_stop_settles_once(runtime, monkeypatch):

@@ -91,6 +91,14 @@ STOP_SETTLE_RISE_COMMANDS = 12
 # The Malibus' hold floor waits for standstill (the request brakes the last 0.1 m/s) for at most this many commands
 # (1 s) of a stop, and only while easing is on and not ended (Codex review 2026-11-26 P1)
 STOP_HOLD_DELAY_MAX_COMMANDS = 25
+# Low-speed creep brake (StopCreepBrake %, user request 2026-11-26 "it crawls at low speed instead of stopping"):
+# below about 6 km/h the engine's creep ate part of a braking request. Traverse 00000261, 319 samples, achieved aEgo
+# 0.3 s later minus the request: 1.3-1.6 m/s +0.13, 1.0-1.3 +0.17, 0.6-1.0 +0.18..+0.21, 0.15-0.6 +0.25..+0.30 m/s^2;
+# the car crawled at 1-1.5 km/h for 1-1.5 s before it stopped. At 100 % about 90 % of that is added as brake counts
+# (100 counts ~ 1 m/s^2), scaled by the request: full from -0.3 m/s^2, none above -0.05. Only while rolling.
+STOP_CREEP_BP = [0.3, 0.6, 1.0, 1.5, 1.8]  # m/s
+STOP_CREEP_V = [25, 21, 16, 10, 0]  # brake counts at 100 %
+STOP_CREEP_MAX_PCT = 300  # StopCreepBrake 0-300 %, a wide range on purpose (user request 2026-11-26)
 
 
 class CarController(CarControllerBase):
@@ -125,6 +133,8 @@ class CarController(CarControllerBase):
     self.stop_settle_start = 0
     self.stop_hold_delay_commands = 0
     self.stop_request_brake = None  # the stopping request's own brake in this command, below the hold floor
+    self.stop_creep_pct = 100  # StopCreepBrake, read every 0.5 s
+    self.stop_keep_brake = 0  # brake sent at the first standstill above the hold (creep brake, no easing), kept
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -240,6 +250,15 @@ class CarController(CarControllerBase):
     self.stop_ease_applied = self.stop_ease_applied or eased < self.apply_brake
     self.apply_brake = eased
 
+  def creep_brake(self, CS, request):
+    """Brake counts that make up for the engine's creep at low speed (STOP_CREEP_BP / STOP_CREEP_V at StopCreepBrake
+    100 %), scaled by the braking request; 0 at standstill, above STOP_CREEP_BP[-1] or for a request above -0.05."""
+    if not self.smooth_stop or self.stop_creep_pct <= 0 or CS.out.standstill or \
+       not (0. < CS.out.vEgo < STOP_CREEP_BP[-1]):
+      return 0
+    scale = float(np.interp(request, [-0.3, -0.05], [1., 0.]))
+    return int(round(float(np.interp(CS.out.vEgo, STOP_CREEP_BP, STOP_CREEP_V)) * scale * self.stop_creep_pct / 100.))
+
   def settle_stop_brake(self, CC, CS, stopping):
     """Keep the eased brake until the car has really stopped (StopBrakeEase on): at the first standstill of a stop that
     was rolling and eased (not given up for a creep / downhill / a too long stop), the brake stays at what was sent (at
@@ -253,6 +272,7 @@ class CarController(CarControllerBase):
     if not (self.smooth_stop and CC.longActive and stopping):
       self.stop_rolling = self.stop_standstill_seen = False
       self.stop_settle_brake = None
+      self.stop_keep_brake = 0
       return
     if CS.out.softHoldActive > 0:
       self.stop_settle_brake = None
@@ -274,8 +294,14 @@ class CarController(CarControllerBase):
          not self.stop_ease_given_up and self.last_sent_brake < self.apply_brake:
       self.stop_settle_brake = self.stop_settle_start = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
       self.stop_settle_left = self.stop_settle_commands
+    if not self.stop_standstill_seen and self.stop_settle_brake is None and self.stop_rolling and \
+       self.last_sent_brake > self.apply_brake:
+      # what was sent while rolling (the creep brake, without easing) is above the hold: keep it for this stop rather
+      # than let go of brake in the instant the car stops
+      self.stop_keep_brake = int(min(self.last_sent_brake, STOP_SMOOTH_MAX_BRAKE))
     self.stop_standstill_seen = True
     if self.stop_settle_brake is None:
+      self.apply_brake = int(max(self.apply_brake, self.stop_keep_brake))
       return
     if self.stop_settle_left > 0:
       self.stop_settle_left -= 1
@@ -316,6 +342,8 @@ class CarController(CarControllerBase):
         speed = read_int_param(params, "StopBrakeEaseSpeed")
         self.stop_ease_pct = int(np.clip(pct, 0, STOP_EASE_MAX_PCT)) if pct is not None else 0
         self.stop_ease_speed = float(np.clip(speed if speed is not None else 4, 1, 10)) / 3.6
+        creep = read_int_param(params, "StopCreepBrake")  # an unreadable value keeps the default 100 %
+        self.stop_creep_pct = 100 if creep is None else int(np.clip(creep, 0, STOP_CREEP_MAX_PCT))
         settle = read_int_param(params, "StopBrakeSettleTime")  # an unreadable value keeps the default 0.48 s
         if settle is None:
           self.stop_settle_commands = STOP_SETTLE_COMMANDS
@@ -447,8 +475,9 @@ class CarController(CarControllerBase):
           if self.smooth_stop:
             # Never below what the stopping request was getting (user report 2026-11-26: the brake went from carrot's
             # StoppingAccel 52 to CP.stopAccel's 40 in the very instant the car stopped, and the car rocked back).
-            stop_brake = int(round(np.interp(brake_accel if self.long_pitch else actuators.accel,
-                                             self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            stop_request = brake_accel if self.long_pitch else actuators.accel
+            stop_brake = int(round(np.interp(stop_request, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            stop_brake += self.creep_brake(CS, stop_request)
             self.apply_brake = int(min(max(self.apply_brake, stop_brake), self.params.MAX_BRAKE))
             self.stop_request_brake = stop_brake
             pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
@@ -478,6 +507,11 @@ class CarController(CarControllerBase):
                 accel if self.long_pitch else actuators.accel, brake_accel if self.long_pitch else actuators.accel,
                 self.apply_gas, self.apply_brake, self.params.ZERO_GAS, self.params.MAX_ACC_REGEN)
               gas_brake_hysteresis_active = True
+            if self.apply_brake > 0 and actuators.longControlState in (LongCtrlState.pid, LongCtrlState.stopping):
+              # the share of the brake side the hysteresis is sending, so its fade-in stays a fade-in
+              share = self.gas_brake_hysteresis.blend if gas_brake_hysteresis_active else 1.
+              creep = self.creep_brake(CS, brake_accel if self.long_pitch else actuators.accel) * share
+              self.apply_brake = int(min(self.apply_brake + round(creep), self.params.MAX_BRAKE))
           # Don't allow any gas above inactive regen while stopping
           # FIXME: brakes aren't applied immediately when enabling at a stop
           if stopping:

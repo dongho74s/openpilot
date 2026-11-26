@@ -135,6 +135,7 @@ Only on Chevrolet engine cars (camera ACC / SDGM such as the Traverse, Trailblaz
 
 - `StopBrakeEase`: default `30`, range `0 to 60` (%), step `5`. `0` = off.
 - `StopBrakeEaseSpeed`: default `4`, range `1 to 10` (km/h), step `1`.
+- `StopCreepBrake`: default `100`, range `0 to 300` (%), step `10`. `0` = off. When slowing to a stop below about 6 km/h, adds the brake the engine's creep takes away (at 100 %: +25 near 1 km/h, +16 at 3.6 km/h, +10 at 5.4 km/h, 0 at 6.5 km/h, scaled down for a request weaker than -0.3 m/s²). Added after a Traverse log of 2026-11-26 decelerated 0.25-0.30 m/s² less than requested at 1-2 km/h and crawled at about 1.4 km/h for 1-1.5 s. Nothing is added at standstill; what was sent while rolling is kept for the stop if it is above the hold. Easing before the stop eases from this brake.
 - `StopBrakeSettleTime`: default `48` (0.48 s), range `0 to 100` (x0.01 s, 0 to 1 s), step `4` (0.04 s, one command). `0` starts the gentle rise at once.
 
 Like a driver letting off a little just before the car stops: while stopping, once the car is slower than `StopBrakeEaseSpeed`, the stopping brake is gradually reduced by up to `StopBrakeEase` % until just before the stop, never below brake 30 (about -0.15 m/s²).

@@ -364,6 +364,7 @@
                 "StopBrakeEase",
                 "StopBrakeEaseSpeed",
                 "StopBrakeSettleTime",
+                "StopCreepBrake",
                 "VEgoStopping",
                 "AChangeCostStarting"
               ]
@@ -3876,6 +3877,23 @@
       "max": 100,
       "default": 48,
       "unit": 4
+    },
+    {
+      "group": "주행튜닝",
+      "name": "StopCreepBrake",
+      "title": "저속 크립 보상 브레이크 %(100)",
+      "descr": "쉐보레 엔진차(트래버스·말리부 등, 오픈파일럿 종제어)에서 시속 약 6km 아래로 서서히 설 때, 엔진 크립이 먹어 버리는 만큼 브레이크를 더해 요청한 감속대로 서게 합니다. 0~300%, 기본 100%, 10% 단위. 0이면 꺼짐.\n2026-11-26 트래버스 주행 로그에서 시속 1~2km에서는 요청보다 0.25~0.30 m/s², 시속 4~5km에서는 0.13~0.17 m/s²씩 덜 감속해 시속 1.4km 근처에서 1~1.5초 끌렸습니다. 100%면 그 부족분의 약 90%(시속 1km 근처 브레이크 +25, 3.6km +16, 5.4km +10, 6.5km 0)를 더하고, 요청이 약하면(-0.3 m/s²보다 약하면) 비례해서 줄입니다. 멈춰 있을 때는 더하지 않고, 굴러가며 보낸 값이 정지 유지보다 크면 그 정차 동안 그대로 유지합니다.\n'정차 직전 브레이크 풀기'는 이 값을 더한 브레이크에서 풉니다. 아직 끌리면 올리고, 서는 순간이 세면 내리거나 풀기를 올립니다. 주행 중에도 1초 안에 반영됩니다. 전기차(볼트)와 다른 차종은 바뀌지 않습니다. 실차로는 확인하지 않았습니다.",
+      "egroup": "LONG",
+      "etitle": "Low-speed creep brake %(100)",
+      "edescr": "On Chevrolet engine cars (Traverse, Malibu and so on, openpilot longitudinal), when slowing to a stop below about 6 km/h, adds the brake the engine's creep takes away so the car decelerates as requested. 0-300 %, default 100 %, step 10 %. 0 = off.\nIn a Traverse log of 2026-11-26 the car decelerated 0.25-0.30 m/s² less than requested at 1-2 km/h and 0.13-0.17 m/s² less at 4-5 km/h, and crawled at about 1.4 km/h for 1-1.5 s. At 100 % about 90 % of that is added (brake +25 near 1 km/h, +16 at 3.6 km/h, +10 at 5.4 km/h, 0 at 6.5 km/h), scaled down for a weak request (weaker than -0.3 m/s²). Nothing is added at standstill; if what was sent while rolling is above the stop hold, it is kept for that stop.\n'Ease the brake off before the stop' eases from this brake. Raise it if the car still crawls; lower it, or raise the easing, if the stop itself is too firm. Applies within a second, also while driving. EVs (the Bolts) and other cars are unchanged. Not yet checked in a real car.",
+      "cgroup": "纵向控制",
+      "ctitle": "低速蠕行补偿制动 %(100)",
+      "cdescr": "在雪佛兰燃油车（Traverse、Malibu 等，openpilot 纵向控制）上，低于约 6 km/h 缓慢停车时，补上被发动机蠕行抵消的制动，使车辆按请求减速。0~300%，默认 100%，以 10% 为单位。0 为关闭。\n2026-11-26 的 Traverse 日志中，1~2 km/h 时减速比请求少 0.25~0.30 m/s²，4~5 km/h 时少 0.13~0.17 m/s²，在约 1.4 km/h 拖行 1~1.5 秒。100% 时补上约 90%（约 1 km/h 制动 +25，3.6 km/h +16，5.4 km/h +10，6.5 km/h 0），请求较弱（弱于 -0.3 m/s²）时按比例减少。静止时不增加；若行驶中发出的值高于停车保持，则本次停车保持该值。\n“停车前松开制动”从加上此值后的制动开始松开。仍拖行则调高；停住瞬间太猛则调低或调高松开比例。行驶中 1 秒内生效。电动车（Bolt）和其他车型不变。尚未在实车确认。",
+      "hidden_brands": ["body", "chrysler", "ford", "honda", "hyundai", "mazda", "nissan", "psa", "rivian", "subaru", "tesla", "toyota", "volkswagen"],
+      "min": 0,
+      "max": 300,
+      "default": 100,
+      "unit": 10
     },
     {
       "group": "가속설정",
