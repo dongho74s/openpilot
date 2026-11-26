@@ -12,7 +12,13 @@ from openpilot.selfdrive.navdy.transport import parse_response
 
 MAX_IN_FLIGHT = 2
 MAX_WRITE_ATTEMPTS = 16
-RESPONSE_TIMEOUT_NS = 1_500_000_000
+# Radio stalls (user request 2026-11-26 "fix the Bluetooth drops too"): paired HCI captures on 2026-10-24 showed
+# requests delayed 1.6-5.2 s below the HUD app while it paged the phone, and the link was torn down by a 1.5 s
+# response deadline (here), a 0.5 s partial-transmit expiry (here) or the HUD's own 1.5 s read deadline, then took
+# seconds to reconnect. Both sides now ride out a stall of up to STALL_TOLERANCE_NS; fresh snapshots still must be
+# younger than TTL_US when they are sent, and the receiver judges a late frame's age from its own lease delta.
+STALL_TOLERANCE_NS = 6_000_000_000
+RESPONSE_TIMEOUT_NS = STALL_TOLERANCE_NS
 LEASE_HISTORY = 8
 
 
@@ -137,8 +143,9 @@ class SnapshotPipeline:
     for _ in range(MAX_WRITE_ATTEMPTS):
       if not self.tx:
         return
-      if not 0 <= time.monotonic_ns() - self.tx_captured_ns < TTL_US * 1000:
-        # Never complete a partially transmitted old frame or renew its age.
+      if not 0 <= time.monotonic_ns() - self.tx_captured_ns < STALL_TOLERANCE_NS:
+        # A frame stuck behind a radio stall is completed (its age stays its own lease delta, so the receiver rejects
+        # it as stale rather than showing it), but not past STALL_TOLERANCE_NS.
         raise TimeoutError('Navdy wireless v2 transmit deadline')
       try:
         sent = self.conn.send(self.tx)

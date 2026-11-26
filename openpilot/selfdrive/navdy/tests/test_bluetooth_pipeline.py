@@ -164,8 +164,9 @@ def test_silent_or_too_late_response_has_absolute_deadline(link, with_ack):
   tick(link, .2)
   if with_ack:
     wire.ack(0)
+  tick(link, pipe.RESPONSE_TIMEOUT_NS / 1e9 - 0.3)  # a radio stall up to the tolerance keeps the link
   with pytest.raises(TimeoutError, match='response deadline'):
-    tick(link, 1.3)
+    tick(link, .5)
 
 
 def test_write_backpressure_has_one_buffer_and_original_expiry(link):
@@ -176,8 +177,9 @@ def test_write_backpressure_has_one_buffer_and_original_expiry(link):
   wire.write_limit = 0
   tick(link, .2)
   assert len(state.pending) == 1
-  with pytest.raises(TimeoutError, match='transmit deadline'):
-    tick(link, .3)
+  tick(link, pipe.STALL_TOLERANCE_NS / 1e9 - 0.3)  # blocked behind a stall, still within the tolerance
+  with pytest.raises(TimeoutError, match='transmit deadline|response deadline'):  # the same tolerance ends both
+    tick(link, .1)
 
 
 def test_partial_write_is_completed_without_duplicate_bytes(link):
@@ -310,7 +312,7 @@ def test_short_send_rechecks_original_expiry_before_every_write(link):
 
   def delayed_send(data):
     sent = original_send(data)
-    clock.ns += 250_000_000
+    clock.ns += pipe.STALL_TOLERANCE_NS // 2 + 100_000_000
     return sent
 
   wire.send = delayed_send
@@ -480,8 +482,8 @@ def test_expired_partial_send_closes_before_reconnect_without_reusing_state(link
   wire.write_limit = 1
   client.exchange_batch(PAYLOAD, captured_ns=clock.ns)
   old_bytes = bytes(wire.output)
-  clock.ns += 500_000_000
-  with pytest.raises(TimeoutError, match='transmit deadline'):
+  clock.ns += pipe.STALL_TOLERANCE_NS
+  with pytest.raises(TimeoutError, match='transmit deadline|response deadline'):
     client.exchange_batch(PAYLOAD, captured_ns=clock.ns)
   assert client.conn is client.pipeline is None
   assert wire.closed and bytes(wire.output) == old_bytes
