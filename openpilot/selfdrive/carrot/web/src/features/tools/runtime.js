@@ -304,8 +304,16 @@ function renderGitPullStatus(status = {}) {
   button.classList.toggle("is-current", !hasUpdates && !hasError && !waiting);
   button.classList.toggle("has-git-error", !hasUpdates && hasError);
   badge.hidden = false;
-  badge.textContent = label;
-  badge.dataset.prefix = getUIText("tools_new_commits", "New");
+  badge.textContent = hasUpdates ? getUIText("tools_commit_count", "{count}", { count: label }) : label;
+  const leadLabel = document.getElementById("btnGitPullLabel");
+  if (leadLabel) {
+    leadLabel.textContent = waiting
+      ? getUIText("tools_update_checking", "Checking for updates")
+      : (hasUpdates ? getUIText("tools_new_commits", "New commits")
+        : (hasError ? getUIText("tools_update_error", "Update check failed") : getUIText("tools_update_current", "Up to date")));
+  }
+  const leadAction = document.getElementById("btnGitPullAction");
+  if (leadAction) leadAction.textContent = getUIText("tools_pull_action", "Get");
   badge.dataset.state = waiting ? "waiting" : (hasUpdates ? "updates" : (hasError ? "error" : "current"));
 
   if (navButton) {
@@ -470,10 +478,16 @@ function formatToolsMetaAgo(value) {
 }
 
 function syncToolsUpdateAgo() {
+  const ago = formatToolsMetaAgo(toolsMetaLastValues?.GitPullTime);
+  const agoText = ago ? `${getUIText("update_ago_label", "Updated")} ${ago}` : "";
+  const sub = document.getElementById("btnGitPullSub");
+  if (sub) {
+    const branch = String(toolsMetaLastValues?.GitBranch || "").trim();
+    sub.textContent = [branch, agoText].filter(Boolean).join(" · ");
+  }
   const el = document.getElementById("toolsUpdateAgo");
   if (!el) return;
-  const ago = formatToolsMetaAgo(toolsMetaLastValues?.GitPullTime);
-  el.textContent = ago ? `${getUIText("update_ago_label", "Updated")} ${ago}` : "";
+  el.textContent = agoText;
   el.hidden = !ago;
 }
 
@@ -513,16 +527,18 @@ function renderToolsMeta() {
     const page = document.getElementById("pageTools");
     setToolsLogExpanded(!page?.classList.contains("tools-log-expanded"));
   });
-  // The last-update time keeps the left slot (the log-title spot) so it is
-  // always visible, even when the status text next to it has to truncate.
-  const agoEl = document.createElement("span");
-  agoEl.id = "toolsUpdateAgo";
-  agoEl.className = "tools-meta__update";
-  agoEl.title = formatToolsMetaDateTime(toolsMetaLastValues?.GitPullTime) || "";
-  meta.appendChild(agoEl);
+  // Under the title: the branch and commit ("WIP-FR · db696a3"), then the live status.
+  const infoEl = document.createElement("span");
+  infoEl.className = "tools-meta__info";
+  const branch = String(toolsMetaLastValues?.GitBranch || "").trim();
+  const commit = String(toolsMetaLastValues?.GitCommit || "").trim().slice(0, 7);
+  infoEl.textContent = [branch, commit].filter(Boolean).join(" · ");
+  infoEl.hidden = !infoEl.textContent;
+  meta.appendChild(infoEl);
 
   meta.appendChild(statusEl);
   syncToolsUpdateAgo();
+  syncToolsShortcutDetails();
   if (!meta.dataset.metaTapBound) {
     meta.dataset.metaTapBound = "1";
     meta.addEventListener("click", (event) => {
@@ -533,6 +549,24 @@ function renderToolsMeta() {
   }
   ensureToolsUpdateAgoTicker();
   requestToolsMetaTickerSync();
+}
+
+// The second line of each shortcut tile and the branch on its row.
+function syncToolsShortcutDetails() {
+  const set = (id, text) => {
+    const node = document.getElementById(id);
+    if (node) node.textContent = text || "";
+  };
+  const values = toolsMetaLastValues || {};
+  const car = String(values.CarSelected3 || values.CarName || "").trim();
+  set("toolsCarSelectSub", car || getUIText("tools_car_select_sub", "Choose the car"));
+  const languageNames = { ko: "한국어", en: "English", zh: "中文" };
+  set("toolsLanguageSub", languageNames[typeof LANG === "string" ? LANG : ""] || "");
+  set("toolsWebSettingsSub", getUIText("tools_web_settings_sub", "Screen and start page"));
+  set("toolsDeviceInfoSub", getUIText("tools_info_sub", "Version and network"));
+  set("toolsBluetoothSub", getUIText("tools_bluetooth_sub", "Remote buttons"));
+  set("toolsNavigationSub", getUIText("tools_nav_sub", "Find a destination"));
+  set("toolsBranchValue", String(values.GitBranch || "").trim());
 }
 
 function renderToolsShortcuts() {
@@ -735,7 +769,7 @@ async function refreshToolsMetaInfo(options = {}) {
   }
 
   toolsMetaLoadPromise = (async () => {
-    const values = await bulkGet(["GitBranch", "GitCommit", "GitCommitDate", "GitRemote", "DeviceType", "DongleId", "HardwareSerial", "GitPullTime", "DevicePosition"]);
+    const values = await bulkGet(["GitBranch", "GitCommit", "GitCommitDate", "GitRemote", "DeviceType", "DongleId", "HardwareSerial", "GitPullTime", "DevicePosition", "CarSelected3", "CarName"]);
     toolsMetaInfoText = buildToolsMetaInfo(values);
     toolsMetaInfoDialogText = buildToolsMetaInfoDialog(values);
     toolsMetaLoadedAt = Date.now();
@@ -835,8 +869,9 @@ function toolsProgressSet(percent = null, opts = {}) {
   const active = opts.active !== false;
   const indeterminate = Boolean(opts.indeterminate);
   if (!active) {
-    host.hidden = false;
-    host.setAttribute("aria-hidden", "false");
+    // Idle: no empty track under the title (2026-11-27 design); it appears while a job runs.
+    host.hidden = true;
+    host.setAttribute("aria-hidden", "true");
     host.classList.remove("is-indeterminate");
     bar.style.width = "0%";
     return;

@@ -22,7 +22,7 @@
 .page--setting #settingTabBar.setting-tabbar {
   display: flex;
   gap: 18px;
-  margin: 6px 0 2px;
+  margin: 14px 0 0;
   padding: 0 2px;
   border: 0;
   border-radius: 0;
@@ -33,16 +33,29 @@
 .page--setting #settingTabBar .setting-tab {
   flex: 0 0 auto;
   width: auto;
-  min-height: 44px;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: none;
   box-shadow: none;
   color: var(--set-ink3);
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.page--setting .setting-home-sub {
+  margin: 6px 0 0;
+  padding: 0 2px;
+  color: var(--set-ink2);
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.page--setting .setting-home-sub[hidden] {
+  display: none;
 }
 
 .page--setting #settingTabBar .setting-tab.is-active {
@@ -80,11 +93,11 @@
 }
 
 .page--setting #carrotTabContent #groupList > .setting-inline-search-slot {
-  margin: 6px 0 4px;
+  margin: 18px 0 4px;
 }
 
 .page--setting #carrotTabContent .setting-inline-search {
-  padding: 0 14px;
+  padding: 0 15px;
   border: 0;
   border-radius: 15px;
   background: var(--set-card);
@@ -106,7 +119,13 @@
 }
 
 .page--setting #carrotTabContent .setting-inline-search__icon {
+  width: 17px;
+  height: 17px;
   color: var(--set-ink3);
+}
+
+.page--setting #carrotTabContent .setting-inline-search__field {
+  gap: 9px;
 }
 
 /* the card that counts changed settings and switches to "changed only" */
@@ -114,8 +133,9 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 76px;
-  padding: 14px 18px;
+  min-height: 0;
+  margin-top: 4px;
+  padding: 16px 18px;
   border: 0;
   border-radius: var(--set-radius);
   background: var(--set-card);
@@ -126,7 +146,7 @@
 }
 
 .page--setting .setting-changed-card__n {
-  min-width: 44px;
+  min-width: 46px;
   color: var(--set-accent);
   font-size: 34px;
   font-weight: 700;
@@ -152,6 +172,17 @@
 .page--setting .setting-changed-card__hint {
   color: var(--set-ink2);
   font-size: 13px;
+  font-weight: 500;
+}
+
+.page--setting .setting-changed-card__chev {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 0 -2px;
+  border-top: 1.7px solid var(--set-ink3);
+  border-right: 1.7px solid var(--set-ink3);
+  transform: rotate(45deg);
 }
 
 .page--setting .setting-changed-card__state:empty {
@@ -177,11 +208,11 @@
   gap: 10px;
   width: 100%;
   min-width: 0;
-  min-height: 84px;
+  min-height: 86px;
   margin: 0;
   padding: 15px 16px 14px;
   border: 0;
-  border-radius: 18px;
+  border-radius: var(--set-radius);
   background: var(--set-card);
   box-shadow: var(--set-shadow);
   color: var(--set-ink);
@@ -257,7 +288,7 @@
   align-items: baseline;
   gap: 10px 12px;
   min-height: 0;
-  margin-top: 16px;
+  margin-top: 18px;
   padding: 0 4px;
   border-radius: 0;
   background: none;
@@ -278,7 +309,9 @@
 }
 
 .page--setting #carrotTabContent #groupList > .groupBtn--favorites .setting-group-meta {
+  color: var(--set-ink2);
   font-size: 13px;
+  font-weight: 500;
 }
 
 .page--setting .setting-fav-strip {
@@ -286,7 +319,7 @@
   grid-column: 1 / -1;
   gap: 10px;
   margin: 0 -4px;
-  padding: 2px 4px 6px;
+  padding: 0 0 6px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -299,14 +332,15 @@
   display: flex;
   flex: 0 0 132px;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   padding: 14px 15px 13px;
-  border-radius: 16px;
+  border-radius: var(--set-radius);
   background: var(--set-card);
   box-shadow: var(--set-shadow);
 }
 
 .page--setting .setting-fav__k {
+  height: 18px;
   overflow: hidden;
   color: var(--set-ink2);
   font-size: 13px;
@@ -317,9 +351,10 @@
 }
 
 .page--setting .setting-fav__v {
+  margin-top: 10px;
   overflow: hidden;
   color: var(--set-ink);
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.05;
@@ -333,6 +368,7 @@
 }
 
 .page--setting .setting-fav__d {
+  margin-top: 6px;
   color: var(--set-ink3);
   font-size: 12px;
   font-weight: 500;
@@ -343,6 +379,7 @@
 .page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider {
   justify-content: flex-start;
   margin: 18px 0 0;
+  min-height: 0;
   padding: 0 4px;
   border: 0;
 }
@@ -358,41 +395,95 @@
   letter-spacing: 0;
 }
 
-/* ── Group screen header: the back chevron and the group name as the page title ── */
-.page--setting #settingScreenItems > .row-between {
-  margin: 4px 0 12px;
+/* ── Group screen header: "‹ 설정", the group name as the page title, "38개 중 17개 바꿈" ── */
+.page--setting #settingScreenItems > .row-between,
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) > .row-between {
+  display: block;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
 }
 
-.page--setting #itemsTitle.section-title {
+.page--setting #settingScreenItems > .row-between > #groupMeta {
+  display: none !important;
+}
+
+.page--setting #itemsTitle.section-title,
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) #itemsTitle {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: 0;
   color: var(--set-ink);
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
   letter-spacing: -0.035em;
+  line-height: 1.15;
 }
 
-.page--setting #itemsTitle .setting-title-backIcon {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  margin-left: -6px;
+.page--setting #itemsTitle .setting-title-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  margin-left: -2px;
   color: var(--set-ink2);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) #itemsTitle .setting-title-backIcon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin: 0 2px 0 4px;
+  border: 0;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  transform: rotate(45deg);
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) #itemsTitle:active .setting-title-backIcon {
+  background: none;
+  transform: rotate(45deg) translateX(-1px);
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) #itemsTitle .setting-title-text {
+  font-size: 30px;
+  line-height: 1.15;
 }
 
 .page--setting #itemsTitle .setting-title-backIcon svg {
-  width: 22px;
-  height: 22px;
+  display: none;
+}
+
+.page--setting .setting-items-sub {
+  margin: 6px 0 0;
+  color: var(--set-ink2);
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.page--setting .setting-items-sub b {
+  color: var(--set-accent);
+  font-weight: 650;
+}
+
+.page--setting .setting-items-sub[hidden] {
+  display: none;
 }
 
 /* ── Filter above a list: All / Changed as chips ── */
 .page--setting .setting-filter {
   display: flex;
   gap: 8px;
-  margin: 0 0 6px;
+  margin: 18px 0 4px;
   padding: 0;
   border-radius: 0;
   background: none;
@@ -417,7 +508,7 @@
 .page--setting .setting-filter__option[aria-checked="true"] {
   background: var(--set-ink);
   box-shadow: none;
-  color: var(--set-card);
+  color: var(--md-surface);
 }
 
 .page--setting .setting-filter__count {
@@ -454,7 +545,7 @@
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-group-card__title {
-  margin: 24px 4px 10px;
+  margin: 28px 4px 10px;
   padding: 0;
   border: 0;
   color: var(--set-ink2);
@@ -643,7 +734,7 @@
   max-height: min(90dvh, 760px);
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 8px 22px calc(22px + env(safe-area-inset-bottom, 0px));
+  padding: 8px 22px calc(26px + env(safe-area-inset-bottom, 0px));
   border-radius: 30px 30px 0 0;
   background: var(--c-sheet);
   color: var(--set-ink);
@@ -666,6 +757,7 @@
   width: 38px;
   height: 5px;
   margin: 0 auto 14px;
+  flex: none;
   border-radius: 3px;
   background: var(--set-ink3);
   opacity: 0.5;
@@ -686,7 +778,7 @@
 
 .setting-sheet__title {
   margin: 0;
-  font-size: 21px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.3;
@@ -702,12 +794,17 @@
   border: 0;
   border-radius: 50%;
   background: var(--set-fill);
-  color: var(--set-ink2);
+  color: var(--set-ink);
   cursor: pointer;
 }
 
+.setting-sheet__close svg {
+  width: 13px;
+  height: 13px;
+}
+
 .setting-sheet__control {
-  margin-top: 24px;
+  margin-top: 26px;
 }
 
 /* stepper: − value + */
@@ -751,7 +848,7 @@
   box-shadow: none;
   color: var(--set-ink);
   font-family: var(--font-sans);
-  font-size: 56px;
+  font-size: 64px;
   font-weight: 650;
   letter-spacing: -0.045em;
   line-height: 1;
@@ -881,13 +978,13 @@
 /* ruler: the value sits under the needle, the dot is the default */
 .setting-sheet__ruler {
   position: relative;
-  height: 64px;
-  margin: 22px -22px 0;
+  height: 70px;
+  margin: 26px -22px 0;
   overflow: hidden;
   touch-action: none;
   cursor: grab;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
 }
 
 .setting-sheet__ruler.is-dragging {
@@ -921,7 +1018,7 @@
 
 .setting-sheet__tick-label {
   position: absolute;
-  top: 42px;
+  top: 44px;
   color: var(--set-ink3);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -947,12 +1044,8 @@
   height: 32px;
   margin-left: -1.5px;
   border-radius: 2px;
-  background: var(--set-ink);
-  pointer-events: none;
-}
-
-.setting-sheet.is-changed .setting-sheet__needle {
   background: var(--set-accent);
+  pointer-events: none;
 }
 
 .setting-sheet__tools {
@@ -960,7 +1053,31 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 14px;
+  margin-top: 18px;
+}
+
+.setting-sheet__steps {
+  display: flex;
+  gap: 6px;
+}
+
+.setting-sheet__step {
+  min-width: 42px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--set-fill);
+  color: var(--set-ink2);
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.setting-sheet__step[aria-checked="true"] {
+  background: var(--set-ink);
+  color: var(--c-sheet);
 }
 
 .setting-sheet__tools-label {
@@ -995,6 +1112,7 @@
 }
 
 .setting-sheet__key {
+  display: none;
   margin-top: 10px;
   color: var(--set-ink3);
   font-family: var(--font-mono);
@@ -1136,4 +1254,60 @@
 .page--setting.setting-layout-split .setting-fav {
   flex-basis: 116px;
   padding: 12px;
+}
+
+/* Phones: the favourites strip runs to the screen edge (the screens clip at the edge, not at the gutter), and the
+   settings menu is a small round button at the top right instead of a large floating one over the tiles. */
+@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
+  .page.page--setting:not(.setting-layout-split) > .page-fab-layer--setting {
+    top: 12px;
+    right: max(var(--page-gutter-inline, 20px), env(safe-area-inset-right, 0px));
+    bottom: auto;
+  }
+}
+
+.page--setting:not(.setting-layout-split) .page-fab-layer--setting .setting-fab-menu {
+  --fab-size: 40px;
+  transform-origin: right top;
+}
+
+.page--setting:not(.setting-layout-split) .page-fab-layer--setting .setting-fab-actions {
+  top: calc(var(--fab-size) + 10px);
+  bottom: auto;
+  transform: translateY(-8px) scale(0.96);
+  transform-origin: right top;
+}
+
+.page--setting:not(.setting-layout-split) .page-fab-layer--setting .setting-fab-menu.is-open .setting-fab-actions {
+  transform: translateY(0) scale(1);
+}
+
+.page--setting:not(.setting-layout-split) #btnSettingSearch.fab {
+  --fab-size: 40px;
+  width: var(--fab-size);
+  height: var(--fab-size);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  box-shadow: var(--c-card-shadow), inset 0 0 0 1px var(--set-line);
+}
+
+.page--setting:not(.setting-layout-split) #btnSettingSearch.fab svg {
+  width: 18px;
+  height: 18px;
+}
+
+.page-fab-layer--setting .setting-fab-action {
+  border: 0;
+  border-radius: 14px;
+  background: var(--c-sheet);
+  box-shadow: var(--c-bar-shadow), inset 0 0 0 1px var(--c-line);
+  color: var(--md-on-surface);
+  font-weight: 650;
+}
+
+/* the title row leaves room for the menu button */
+.page--setting:not(.setting-layout-split) #settingTabBar.setting-tabbar,
+.page--setting:not(.setting-layout-split) #itemsTitle .setting-title-back {
+  padding-right: 52px;
 }

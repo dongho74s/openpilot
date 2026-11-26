@@ -1,7 +1,7 @@
 /* App-shell, viewport and page geometry. */
 :root {
   --content-max-width: 720px;
-  --nav-bar-height: 74px;
+  --nav-bar-height: 78px;
   --nav-bar-height-desktop: 82px;
   --kb-gap: 36px;
 
@@ -16,7 +16,7 @@
   --page-shell-max-height: none;
   --page-content-height: calc(var(--app-vv-height, 100dvh) - var(--nav-bar-height) - env(safe-area-inset-bottom, 0px));
   --page-min-height: var(--page-content-height);
-  --page-gutter-inline: var(--sp-lg);
+  --page-gutter-inline: 20px;
   --page-gutter-block: var(--sp-lg);
   --page-bottom-gutter: calc(var(--nav-bar-height) + 20px + env(safe-area-inset-bottom, 0px));
   --page-split-gutter-inline: var(--page-gutter-inline);

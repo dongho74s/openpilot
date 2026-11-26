@@ -208,4 +208,4 @@ function open() {
     finally { if (dialog.open) timer = setTimeout(poll, 1000); }
   }; poll();
 }
-globalThis.CarrotBluetooth = { init() { const button = document.getElementById("btnToolsBluetooth"); if (button) { button.textContent = t("title"); button.onclick = open; } } };
+globalThis.CarrotBluetooth = { init() { const button = document.getElementById("btnToolsBluetooth"); if (button) { const label = document.getElementById("toolsBluetoothLabel"); if (label) label.textContent = t("title"); else button.textContent = t("title"); button.onclick = open; } } };

@@ -14,6 +14,8 @@ const FALLBACK_STRINGS = {
   recommended: "recommended",
   experimental: "experimental",
   apply: "Apply",
+  change: "Change",
+  pending: "Apply to switch to {name}",
   checking: "Checking",
   active: "In use",
   waiting: "Starts when parked",
@@ -119,6 +121,11 @@ function elapsedText(startedAt) {
   return `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 }
 
+// "CD210 = WMI V12 (기본 모델)" → "CD210 · WMI V12" for the headline.
+function shortModelName(name) {
+  return String(name || "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s*=\s*/g, " · ").trim() || String(name || "");
+}
+
 function render(status = lastStatus) {
   const card = document.getElementById("internalModelCard");
   if (!card || !status?.ok) return;
@@ -129,8 +136,16 @@ function render(status = lastStatus) {
   card.dataset.state = state === "active" ? "compiled" : state;
   card.classList.toggle("is-running", ["downloading", "verifying", "validating", "compiling"].includes(state));
   document.getElementById("internalModelTitle").textContent = t("title");
-  document.getElementById("internalModelState").textContent = state === "stock" ? t("stock") : `${requested.name} · ${t(state)}`;
+  // The model's name is the card's headline; the state reads beneath it ("기본 모델", "준비됨").
+  const nameNode = document.getElementById("internalModelName");
+  const chosen = userChoice && userChoice !== status.requested ? modelById(status, userChoice) : null;
+  if (nameNode) nameNode.textContent = shortModelName(requested.name);
+  document.getElementById("internalModelState").textContent = chosen
+    ? t("pending", { name: shortModelName(chosen.name) })
+    : (state === "stock" ? t("stock") : t(state));
   document.getElementById("internalModelDetail").textContent = t(detailKey, { name: requested.name });
+  const changeLabel = document.getElementById("internalModelChangeLabel");
+  if (changeLabel) changeLabel.textContent = t("change");
 
   const select = document.getElementById("internalModelSelect");
   if (userChoice === status.requested || !modelById(status, userChoice)) userChoice = null;

@@ -244,9 +244,9 @@
             <form id="settingInlineSearch" class="setting-inline-search" role="search">
               <div class="setting-inline-search__field">
                 <svg class="setting-inline-search__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79L19 20.49 20.49 19zM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14"/>
+                  <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m20 20-4.7-4.7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
                 </svg>
-                <input id="settingInlineSearchInput" type="search" placeholder="예: 감속, TF" autocomplete="off" spellcheck="false" enterkeyhint="search" aria-label="설정 찾기" />
+                <input id="settingInlineSearchInput" type="search" placeholder="설정 이름이나 키 검색" autocomplete="off" spellcheck="false" enterkeyhint="search" aria-label="설정 찾기" />
                 <button id="settingInlineSearchClear" type="button" aria-label="검색어 지우기" hidden>×</button>
               </div>
               <output id="settingInlineSearchStatus" class="setting-inline-search__status" aria-live="polite"></output>
@@ -323,16 +323,22 @@
         <section id="internalModelCard" class="egpu-model-card internal-model-card" hidden aria-live="polite">
           <div class="egpu-model-card__icon internal-model-card__icon" aria-hidden="true">AI</div>
           <div class="egpu-model-card__body">
-            <div class="egpu-model-card__heading">
-              <strong id="internalModelTitle">Driving model</strong>
-              <span id="internalModelState" class="egpu-model-card__state">Checking</span>
+            <div class="internal-model-card__top">
+              <div class="internal-model-card__main">
+                <strong id="internalModelTitle" class="internal-model-card__kick">Driving model</strong>
+                <div id="internalModelName" class="internal-model-card__name"></div>
+                <span id="internalModelState" class="egpu-model-card__state internal-model-card__meta">Checking</span>
+              </div>
+              <label class="internal-model-card__change">
+                <span id="internalModelChangeLabel">Change</span>
+                <select id="internalModelSelect" class="internal-model-card__select" aria-label="Driving model"></select>
+              </label>
             </div>
             <p id="internalModelDetail" class="egpu-model-card__detail"></p>
             <div id="internalModelProgress" class="egpu-model-card__progress" hidden>
               <div class="egpu-model-card__track"><span id="internalModelProgressBar"></span></div>
             </div>
             <div class="egpu-model-card__footer internal-model-card__footer">
-              <select id="internalModelSelect" class="internal-model-card__select" aria-label="Driving model"></select>
               <button id="btnInternalModelApply" class="btn egpu-model-card__action" type="button" disabled>Apply</button>
             </div>
             <span id="internalModelAmount" class="egpu-model-card__amount"></span>
@@ -348,24 +354,27 @@
           <h3 id="gitCommandsTitle" class="tools-section__title">Update</h3>
           <div class="tools-card tools-list">
             <button id="btnGitPull" class="btn git-pull-btn tools-row tools-row--lead" type="button">
-              <span id="btnGitPullLabel" class="tools-row__label">git pull</span>
-              <span id="gitPullBadge" class="git-pull-btn__badge" hidden aria-label="pending commits">0</span>
+              <span class="tools-row__main">
+                <span class="tools-row__head"><span id="btnGitPullLabel" class="tools-row__label">git pull</span> <span id="gitPullBadge" class="git-pull-btn__badge" hidden aria-label="pending commits">0</span></span>
+                <small id="btnGitPullSub" class="tools-row__sub"></small>
+              </span>
+              <span id="btnGitPullAction" class="tools-row__pill">Get</span>
             </button>
             <button id="btnGitSync" class="btn tools-row" type="button">git sync</button>
             <button id="btnGitLog" class="btn tools-row" type="button">git log</button>
-            <button id="btnGitBranch" class="btn tools-row" type="button">change branch</button>
+            <button id="btnGitBranch" class="btn tools-row" type="button"><span id="btnGitBranchLabel">change branch</span><span id="toolsBranchValue" class="tools-row__value"></span></button>
           </div>
         </section>
 
         <section class="tools-section" data-tools-section="shortcuts" aria-labelledby="toolsShortcutsTitle">
           <h3 id="toolsShortcutsTitle" class="tools-section__title">Shortcuts</h3>
           <div id="toolsPrimaryActions" class="tools-primary-actions tools-tiles" role="group" aria-label="Tools shortcuts">
-            <button id="btnToolsCarSelect" class="btn" type="button">Car Select</button>
-            <button id="btnToolsLanguage" class="btn" type="button" aria-haspopup="dialog">Language</button>
-            <button id="btnToolsWebSettings" class="btn" type="button">Web Settings</button>
-            <button id="btnDeviceInfo" class="btn" type="button">Info</button>
-            <button id="btnToolsBluetooth" class="btn" type="button" aria-haspopup="dialog">Bluetooth</button>
-            <a id="toolsNavigation" class="btn" href="/navigation">Nav Map / 지도 검색</a>
+            <button id="btnToolsCarSelect" class="btn" type="button"><span id="toolsCarSelectLabel" class="tools-tile__name">Car Select</span><small id="toolsCarSelectSub" class="tools-tile__sub"></small></button>
+            <button id="btnToolsLanguage" class="btn" type="button" aria-haspopup="dialog"><span id="toolsLanguageLabel" class="tools-tile__name">Language</span><small id="toolsLanguageSub" class="tools-tile__sub"></small></button>
+            <button id="btnToolsWebSettings" class="btn" type="button"><span id="toolsWebSettingsLabel" class="tools-tile__name">Web Settings</span><small id="toolsWebSettingsSub" class="tools-tile__sub"></small></button>
+            <button id="btnDeviceInfo" class="btn" type="button"><span id="toolsDeviceInfoLabel" class="tools-tile__name">Info</span><small id="toolsDeviceInfoSub" class="tools-tile__sub"></small></button>
+            <button id="btnToolsBluetooth" class="btn" type="button" aria-haspopup="dialog"><span id="toolsBluetoothLabel" class="tools-tile__name">Bluetooth</span><small id="toolsBluetoothSub" class="tools-tile__sub"></small></button>
+            <a id="toolsNavigation" class="btn" href="/navigation"><span id="toolsNavigationLabel" class="tools-tile__name">Nav Map / 지도 검색</span><small id="toolsNavigationSub" class="tools-tile__sub"></small></a>
           </div>
         </section>
 
@@ -392,6 +401,25 @@
           </div>
         </section>
 
+        <section class="tools-section" data-tools-section="command" aria-labelledby="toolsCommandTitle">
+          <h3 id="toolsCommandTitle" class="tools-section__title">Command</h3>
+          <div class="tools-card tools-command-card">
+            <form id="sysCmdForm" class="tools-console-form tools-command">
+              <span class="tools-command__field"><span class="tools-console-prompt" aria-hidden="true">$</span>
+              <input id="sysCmdInput" type="text" class="input-text" placeholder="" autocomplete="off" autocapitalize="off" spellcheck="false" /></span>
+              <button id="btnSysCmdRun" class="btn btn--filled tools-command__run" type="submit">Run</button>
+              <button id="btnSysCmdInfo" class="tools-console-iconBtn" type="button" aria-expanded="false" aria-controls="sysCmdHelpPanel" aria-label="Allowed commands">
+                <svg class="tools-console-iconBtn__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path fill="currentColor" d="M11 17h2v-6h-2zm0-8h2V7h-2zm1 13C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10m0-18a8 8 0 1 0 0 16 8 8 0 0 0 0-16"/>
+                </svg>
+              </button>
+            </form>
+            <div id="sysCmdHelpPanel" class="tools-console-help" hidden>
+              <span id="sysCmdHelp">Allowed: git pull/status/branch/log, df, free, uptime</span>
+            </div>
+          </div>
+        </section>
+
         <section class="tools-section tools-section--danger" data-tools-section="danger" aria-labelledby="toolsDangerTitle">
           <h3 id="toolsDangerTitle" class="tools-section__title">Can't be undone</h3>
           <div class="tools-card tools-list">
@@ -412,18 +440,7 @@
             <span id="sysCmdTitle">System Command</span>
             <span id="outputTitle">Output</span>
           </div>
-          <form id="sysCmdForm" class="tools-console-form">
-            <span class="tools-console-prompt" aria-hidden="true">&gt;_</span>
-            <input id="sysCmdInput" type="text" class="input-text" placeholder="" />
-            <button id="btnSysCmdInfo" class="tools-console-iconBtn" type="button" aria-expanded="false" aria-controls="sysCmdHelpPanel" aria-label="Allowed commands">
-              <svg class="tools-console-iconBtn__svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path fill="currentColor" d="M11 17h2v-6h-2zm0-8h2V7h-2zm1 13C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10m0-18a8 8 0 1 0 0 16 8 8 0 0 0 0-16"/>
-              </svg>
-            </button>
-          </form>
-          <div id="sysCmdHelpPanel" class="tools-console-help" hidden>
-            <span id="sysCmdHelp">Allowed: git pull/status/branch/log, df, free, uptime</span>
-          </div>
+
           <pre id="toolsOut" class="tools-console-log">-</pre>
         </div>
       </div>

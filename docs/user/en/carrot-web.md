@@ -174,7 +174,7 @@ September 2026 (the history kept inside the model).
     the best comma models (distillation) and fills the cases they all miss with human driving data. 32-frame history.
     `Vega` came out on 7 November and `Vega 2` on 22 November. The files download from StarPilot's public Hugging
     Face storage; their checksums are pinned, so if the source changes the comma does not use it and the card says why.
-- To change it, park with the ignition off, pick a model and press **Apply**. With the default settings it cannot be
+- To change it, park with the ignition off, tap **Change** on the card, pick a model, then press the **Apply** button that appears. The card shows the model in use in large type with its state beneath it (`Stock model`, `Ready`, ...). With the default settings it cannot be
   changed while driving.
 - **Switching while driving (test, off by default):** with `Switch Driving Model While Driving (test)`
   (`InternalModelLiveSwitch`, Settings → System → Driving Model) on, a model can be picked while driving, and a model
@@ -308,7 +308,7 @@ After deleting logs or videos, Carrot Web cannot replay or upload them for analy
 
 ### System command field
 
-The command field at the bottom of Tools accepts only server-allowlisted Git management or inspection commands and diagnostics such as `df`, `free`, and `uptime`. Output appears in the panel below it. Prefer the prepared buttons for routine device operations.
+The `Command` field (just above the actions that can't be undone) accepts only server-allowlisted Git management or inspection commands and diagnostics such as `df`, `free`, and `uptime`. Type a command and press `Run`; the output appears in the notification panel (tap the status line under the title to open it). Prefer the prepared buttons for routine device operations.
 
 ## Logs page
 

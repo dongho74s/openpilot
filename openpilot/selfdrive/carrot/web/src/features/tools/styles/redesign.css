@@ -27,8 +27,8 @@
 #pageTools .tools-head {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 6px 0 18px;
+  gap: 6px;
+  margin: 14px 0 20px;
 }
 
 #pageTools .tools-head__title {
@@ -42,13 +42,43 @@
 
 #pageTools .tools-head #toolsMeta {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 22px;
+  align-items: baseline;
+  gap: 0;
+  min-height: 20px;
+  height: auto;
+  max-height: none;
   margin: 0;
   color: var(--tl-ink2);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+#pageTools .tools-head #toolsMeta .tools-meta__info {
+  display: inline;
+  flex: 0 0 auto;
+  color: var(--tl-ink2);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+#pageTools .tools-head #toolsMeta .tools-meta__info[hidden] {
+  display: none;
+}
+
+#pageTools .tools-head #toolsMeta .tools-meta__status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tl-ink3);
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#pageTools .tools-head #toolsMeta .tools-meta__info:not([hidden]) + .tools-meta__status::before {
+  content: " · ";
+  white-space: pre;
 }
 
 #pageTools .tools-head .tools-progress {
@@ -168,26 +198,99 @@
   opacity: 0.4;
 }
 
-/* model choice: a select and its apply button */
-#pageTools .internal-model-card__select {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: none;
-  height: 44px;
-  padding: 0 38px 0 14px;
-  border: 0;
-  border-radius: 13px;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--tl-ink2) 50%) calc(100% - 20px) 50% / 6px 6px no-repeat,
-    linear-gradient(-45deg, transparent 50%, var(--tl-ink2) 50%) calc(100% - 14px) 50% / 6px 6px no-repeat,
-    var(--tl-fill);
-  color: var(--tl-ink);
-  font-size: 15px;
-  font-weight: 600;
-  -webkit-appearance: none;
-  appearance: none;
+/* model card: kicker, the model's name, its state, and a "바꾸기" pill that opens the model list */
+#pageTools .internal-model-card__top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
+#pageTools .internal-model-card__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#pageTools .internal-model-card__kick {
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+#pageTools .internal-model-card__name {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--tl-ink);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#pageTools .internal-model-card .internal-model-card__meta {
+  margin-top: 3px;
+  color: var(--tl-ink3);
+  font-size: 13px;
+  font-weight: 400;
+  white-space: normal;
+}
+
+#pageTools .internal-model-card__change {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 999px;
+  background: var(--tl-fill);
+  color: var(--tl-ink);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#pageTools .internal-model-card__change .internal-model-card__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+#pageTools .internal-model-card__change:has(.internal-model-card__select:disabled) {
+  opacity: 0.45;
+}
+
+#pageTools .internal-model-card__change:focus-within {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* the long sentence and the apply button only appear when there is something to say or do */
+#pageTools .internal-model-card:is([data-state="stock"], [data-state="compiled"]) #internalModelDetail {
+  display: none;
+}
+
+#pageTools .internal-model-card #btnInternalModelApply:disabled {
+  display: none;
+}
+
+#pageTools .internal-model-card .internal-model-card__footer:not(:has(#btnInternalModelApply:not(:disabled))) {
+  display: none;
+}
+
+#pageTools .internal-model-card #internalModelAmount:empty {
+  display: none;
+}
+
+/* model choice: the apply button */
 #pageTools .internal-model-card #btnInternalModelApply:not(:disabled) {
   background: var(--tl-ink);
   color: var(--tl-card);
@@ -202,7 +305,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 10px 0 2px;
+  margin: 12px 0 0;
   padding: 0;
   border: 0;
   background: none;
@@ -305,7 +408,7 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin: 16px 0 0;
+  margin: 18px 0 0;
   padding: 16px 0 0;
   border: 0;
   border-top: 1px solid var(--tl-line);
@@ -331,6 +434,57 @@
   color: var(--tl-ink2);
   font-size: 14px;
   line-height: 1.5;
+}
+
+#pageTools .tuning-advice__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 7px;
+  color: var(--tl-ink3);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+#pageTools .tuning-advice__foot-note {
+  min-width: 0;
+}
+
+#pageTools .tuning-advice__more-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#pageTools .tuning-advice__more-toggle::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-top: 1.6px solid currentColor;
+  border-right: 1.6px solid currentColor;
+  transform: rotate(45deg);
+}
+
+#pageTools .tuning-advice__more-toggle[aria-expanded="true"]::after {
+  transform: rotate(-45deg);
+}
+
+#pageTools .tuning-advice__more {
+  margin-top: 12px;
+}
+
+#pageTools .tuning-advice__more[hidden] {
+  display: none;
 }
 
 #pageTools .tuning-advice__list {
@@ -451,7 +605,7 @@
 }
 
 #pageTools .tools-section__title {
-  margin: 26px 4px 10px;
+  margin: 28px 4px 10px;
   color: var(--tl-ink2);
   font-size: 13px;
   font-weight: 650;
@@ -537,30 +691,83 @@
   opacity: 0.45;
 }
 
-/* the update row leads its section: a bolder label and the commit count */
+/* the update row leads its section: "새 커밋 3개", the branch and last update beneath, and an ink "받기" pill */
 #pageTools .tools-list > .tools-row--lead.btn {
-  min-height: 62px;
+  min-height: 0;
+  padding: 16px 18px;
 }
 
-#pageTools .tools-row--lead .tools-row__label {
+#pageTools .tools-list > .tools-row--lead.btn::after {
+  display: none;
+}
+
+#pageTools .tools-row__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#pageTools .tools-row--lead .tools-row__head {
+  color: var(--tl-ink);
   font-size: 17px;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: -0.025em;
+}
+
+#pageTools .tools-row__sub {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#pageTools .tools-row__sub:empty {
+  display: none;
+}
+
+#pageTools .tools-row__pill {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 999px;
+  background: var(--tl-ink);
+  color: var(--tl-card);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+#pageTools .tools-row__value {
+  margin-left: auto;
+  color: var(--tl-ink2);
+  font-weight: 500;
+}
+
+#pageTools .tools-list > .tools-row.btn:has(.tools-row__value:not(:empty))::after {
+  margin-left: 10px;
 }
 
 #pageTools .git-pull-btn .git-pull-btn__badge,
 #pageTools .git-pull-btn .git-pull-btn__badge[data-state] {
+  display: inline;
   min-width: 0;
   height: auto;
-  margin-left: auto;
+  margin-left: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: none;
   box-shadow: none;
   color: var(--tl-ink3);
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 17px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
@@ -568,8 +775,8 @@
   color: var(--tl-accent);
 }
 
-#pageTools .git-pull-btn .git-pull-btn__badge[data-state="updates"]::before {
-  content: attr(data-prefix) " ";
+#pageTools .git-pull-btn .git-pull-btn__badge:is([data-state="current"], [data-state="waiting"], [hidden]) {
+  display: none;
 }
 
 #pageTools .git-pull-btn .git-pull-btn__badge[data-state="error"] {
@@ -612,23 +819,40 @@
 
 #pageTools .tools-tiles > :is(.btn, a.btn) {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-height: 60px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 72px;
   margin: 0;
-  padding: 0 16px;
+  padding: 15px 16px 14px;
   border: 0;
-  border-radius: 18px;
+  border-radius: var(--tl-radius);
   background: var(--tl-card);
   box-shadow: var(--tl-shadow);
   color: var(--tl-ink);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 650;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   text-align: left;
   text-decoration: none;
   line-height: 1.3;
   transform: none;
+}
+
+#pageTools .tools-tile__sub {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#pageTools .tools-tile__sub:empty {
+  display: none;
 }
 
 #pageTools .tools-tiles > :is(.btn, a.btn):active {
@@ -651,7 +875,7 @@
 #pageTools .tools-grid3 > .btn {
   display: grid;
   place-items: center;
-  min-height: 46px;
+  min-height: 44px;
   margin: 0;
   padding: 0 6px;
   border: 0;
@@ -725,4 +949,82 @@
 
 #pageTools .tools-progress[hidden] {
   display: none;
+}
+
+/* command: a "$" field and an ink "실행" button */
+#pageTools .tools-command-card {
+  padding: 14px;
+}
+
+#pageTools .tools-command.tools-console-form {
+  display: flex !important;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+#pageTools .tools-command__field {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  height: 46px;
+  padding: 0 14px;
+  border-radius: 13px;
+  background: var(--tl-fill);
+}
+
+#pageTools .tools-command .tools-console-prompt {
+  margin-right: 8px;
+  color: var(--tl-ink2);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+#pageTools .tools-command #sysCmdInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--tl-ink);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  outline: none;
+}
+
+#pageTools .tools-command #sysCmdInput::placeholder {
+  color: var(--tl-ink3);
+}
+
+#pageTools .tools-command__run.btn {
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 13px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+#pageTools .tools-command .tools-console-iconBtn {
+  display: none;
+}
+
+#pageTools .tools-command-card .tools-console-help {
+  display: block !important;
+  margin: 10px 2px 0;
+  color: var(--tl-ink3);
+  font-size: 13px;
+}
+
+#pageTools .tools-command-card .tools-console-help[hidden] {
+  display: none !important;
 }

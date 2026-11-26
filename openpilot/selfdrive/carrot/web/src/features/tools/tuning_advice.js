@@ -11,6 +11,8 @@ let busy = false;
 const openDetails = new Set();   // which sections the viewer opened, kept across the 3 s / 15 s refresh
 
 const FALLBACK_STRINGS = {
+  more: "Details",
+  less: "Less",
   title: "Tuning from the last drive",
   state_running: "Analysing {pct}%",
   state_change: "Change suggested",
@@ -381,6 +383,8 @@ function driveWhen(result) {
   return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
+let moreOpen = false;
+
 function render(payload = lastPayload) {
   const card = document.getElementById("tuningAdviceCard");
   const body = document.getElementById("tuningAdviceBody");
@@ -396,8 +400,11 @@ function render(payload = lastPayload) {
   const rec = result?.recommendation;
 
   const heading = el("div", "egpu-model-card__heading");
-  heading.append(el("strong", "", t("title")), el("span", "egpu-model-card__state", t(`state_${state}`, { pct: progress })));
+  const headRight = !payload.running && result?.route ? driveWhen(result) : t(`state_${state}`, { pct: progress });
+  heading.append(el("strong", "", t("title")), el("span", "egpu-model-card__state", headRight));
   const nodes = [heading];
+  // Everything past the headline number and the verdict folds under "자세히".
+  const more = [];
 
   if (payload.running) {
     const status = payload.status || {};
@@ -417,8 +424,8 @@ function render(payload = lastPayload) {
 
   const changed = changedNote(result);
   if (result?.route) {
-    nodes.push(el("p", "egpu-model-card__detail", t("drive_line", { when: driveWhen(result), min: Number(m?.lat_minutes ?? 0).toFixed(1), segments: result.segments ?? 0 })));
-    if (changed) nodes.push(el("p", "egpu-model-card__detail tuning-advice__changed", changed));
+    more.push(el("p", "egpu-model-card__detail", t("drive_line", { when: driveWhen(result), min: Number(m?.lat_minutes ?? 0).toFixed(1), segments: result.segments ?? 0 })));
+    if (changed) more.push(el("p", "egpu-model-card__detail tuning-advice__changed", changed));
   }
 
   // plot 6 agreement, always first
@@ -449,12 +456,13 @@ function render(payload = lastPayload) {
         bars.append(bar);
       });
       box.append(main, bars);
-      box.append(el("span", "tuning-advice__match-detail", t("match_note")));
+      more.unshift(el("span", "tuning-advice__match-detail", t("match_note")));
     }
     nodes.push(box);
   }
 
   const text = recommendationText(rec);
+  const review = result?.change_review;
   if (text) {
     const box = el("div", `tuning-advice__rec tuning-advice__rec--${rec.status}`);
     box.append(el("strong", "tuning-advice__rec-headline", text.headline));
@@ -473,10 +481,23 @@ function render(payload = lastPayload) {
       actions.append(button);
       box.append(actions);
     }
+    // the last change in one line, and the switch for the details
+    const foot = el("div", "tuning-advice__foot");
+    foot.append(el("span", "tuning-advice__foot-note", review?.comparable
+      ? t("review_title", { change: formatChange(review.param, review.before, review.after) })
+      : ""));
+    const toggle = el("button", "tuning-advice__more-toggle", moreOpen ? t("less") : t("more"));
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", moreOpen ? "true" : "false");
+    toggle.addEventListener("click", () => {
+      moreOpen = !moreOpen;
+      render();
+    });
+    foot.append(toggle);
+    box.append(foot);
     nodes.push(box);
   }
 
-  const review = result?.change_review;
   if (review) {
     const box = el("div", "tuning-advice__review");
     if (review.comparable) {
@@ -495,7 +516,7 @@ function render(payload = lastPayload) {
     } else {
       box.append(el("p", "egpu-model-card__detail", t("review_not_comparable", { names: (review.changed || []).join(", ") })));
     }
-    nodes.push(box);
+    more.push(box);
   }
 
   const lines = metricLines(m);
@@ -504,7 +525,7 @@ function render(payload = lastPayload) {
     const list = el("ul", "tuning-advice__list");
     lines.forEach((line) => list.append(el("li", "", line)));
     details.append(list);
-    nodes.push(details);
+    more.push(details);
   }
 
   const rows = rec && ["change", "keep"].includes(rec.status) ? settingRows(result) : [];
@@ -529,7 +550,7 @@ function render(payload = lastPayload) {
       });
       box.append(item);
     }
-    nodes.push(box);
+    more.push(box);
   }
 
   const footer = el("div", "egpu-model-card__footer tuning-advice__footer");
@@ -538,11 +559,18 @@ function render(payload = lastPayload) {
   rerun.disabled = busy || !payload.can_run;
   rerun.addEventListener("click", rerunAnalysis);
   footer.append(rerun);
-  nodes.push(footer);
+  more.push(footer);
 
   const noteValues = { error_note: { error: payload.status?.error || "" }, stale_note: { when: driveWhen(result) } };
   const notes = statusNotes(payload, state).map((key) => t(key, noteValues[key] || {}));
-  notes.forEach((note) => nodes.push(el("span", "egpu-model-card__amount", note)));
+  notes.forEach((note) => more.push(el("span", "egpu-model-card__amount", note)));
+
+  if (more.length) {
+    const wrap = el("div", "tuning-advice__more");
+    wrap.hidden = Boolean(text) && !moreOpen;
+    wrap.append(...more);
+    nodes.push(wrap);
+  }
 
   body.replaceChildren(...nodes);
 }

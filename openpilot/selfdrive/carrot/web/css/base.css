@@ -127,7 +127,7 @@ body:has(.page-transitioning) {
   max-height: calc(var(--nav-bar-height) + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(to bottom, transparent, var(--md-surface) 62%);
   border-top: 0;
-  padding: 6px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 6px 16px calc(8px + env(safe-area-inset-bottom, 0px));
   justify-content: space-around;
   gap: 0;
   isolation: isolate;
@@ -140,10 +140,10 @@ body:has(.page-transitioning) {
   position: absolute;
   z-index: -1;
   top: 6px;
-  left: 14px;
-  right: 14px;
+  left: 16px;
+  right: 16px;
   bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-  border-radius: 22px;
+  border-radius: 24px;
   background: var(--c-bar);
   -webkit-backdrop-filter: blur(24px) saturate(1.5);
   backdrop-filter: blur(24px) saturate(1.5);
@@ -160,7 +160,7 @@ body:has(.page-transitioning) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   background: transparent;
   border: none;
   border-radius: 18px;

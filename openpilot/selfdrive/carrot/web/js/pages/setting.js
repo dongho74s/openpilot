@@ -893,6 +893,7 @@ function syncSettingListToolbar(itemsBox) {
   const changed = itemsBox.querySelector(".setting-filter__count--changed");
   if (all) all.textContent = String(itemsBox.querySelectorAll(".setting.setting--row").length);
   if (changed) changed.textContent = String(itemsBox.querySelectorAll(".setting.setting--row.is-changed").length);
+  if (itemsBox.id === "items") syncSettingItemsSubtitle(itemsBox);
 }
 
 function appendSettingListFilter(itemsBox) {
@@ -966,7 +967,7 @@ function closeSettingSheet(options = {}) {
   if (options.returnFocus !== false && state.row?.isConnected) state.row.focus({ preventScroll: true });
 }
 
-const SETTING_RULER_PX = 10;
+const SETTING_RULER_PX = 11;
 
 function trimSettingRulerNumber(value) {
   return String(Number(Number(value).toFixed(6)));
@@ -978,7 +979,7 @@ function renderSettingSheetRuler(state, value) {
   const ruler = state.ruler;
   if (!ruler || ruler.hidden) return;
   const item = state.item;
-  const step = Math.abs(Number(state.getStep?.()) || 0) || 1;
+  const step = settingSheetRulerStep(state);
   const min = Number(item.min);
   const max = Number(item.max);
   const current = Number(value);
@@ -1018,6 +1019,12 @@ function renderSettingSheetRuler(state, value) {
     }
   }
   ticks.replaceChildren(fragment);
+}
+
+// The ruler ticks at the setting's own unit (5 for a value stepped in fives), so a drag lands on real values.
+function settingSheetRulerStep(state) {
+  const unit = Math.abs(Number(state.item?.unit) || 0);
+  return unit > 0 ? unit : (Math.abs(Number(state.getStep?.()) || 0) || 1);
 }
 
 function syncSettingSheet(row, value) {
@@ -1115,13 +1122,39 @@ function openSettingSheet(options) {
   acts.appendChild(detail);
 
   const tools = sheet.querySelector(".setting-sheet__tools");
-  const unitHome = unitBtn?.parentNode || null;
-  if (unitBtn && controlKind === "stepper") {
+  const unitHome = null;
+  if (unitBtn && controlKind === "stepper" && Array.isArray(UNIT_CYCLE) && UNIT_CYCLE.length > 1) {
+    // How much one − / + press moves: 1, 5 or 10 (plus the current choice if it is another one).
     const label = document.createElement("span");
     label.className = "setting-sheet__tools-label";
     label.textContent = getUIText("setting_sheet_step", "Step");
-    unitBtn.classList.add("setting-sheet__unit");
-    tools.append(label, unitBtn);
+    const chips = document.createElement("div");
+    chips.className = "setting-sheet__steps";
+    chips.setAttribute("role", "radiogroup");
+    chips.setAttribute("aria-label", label.textContent);
+    const current = getSettingUnitValue(item.name);
+    const values = [1, 5, 10].filter((v) => UNIT_CYCLE.includes(v));
+    if (!values.includes(current) && UNIT_CYCLE.includes(current)) values.push(current);
+    values.sort((a, b) => a - b);
+    const buttons = values.map((value) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "setting-sheet__step";
+      chip.setAttribute("role", "radio");
+      chip.textContent = String(value);
+      chip.onclick = () => {
+        const index = UNIT_CYCLE.indexOf(value);
+        if (index < 0) return;
+        UNIT_INDEX[item.name] = index;
+        saveSettingUnitIndex(item.name, index);
+        setSettingUnitButtonLabel(unitBtn, item.name);
+        buttons.forEach((other) => other.setAttribute("aria-checked", other === chip ? "true" : "false"));
+      };
+      chip.setAttribute("aria-checked", value === current ? "true" : "false");
+      return chip;
+    });
+    chips.append(...buttons);
+    tools.append(label, chips);
   }
   if (!tools.children.length) tools.remove();
 
@@ -1181,11 +1214,7 @@ function openSettingSheet(options) {
     restore() {
       if (home && row.isConnected) home.insertBefore(ctrl, homeNext && homeNext.parentNode === home ? homeNext : null);
       else ctrl.remove();
-      if (unitBtn) {
-        unitBtn.classList.remove("setting-sheet__unit");
-        if (unitHome) unitHome.appendChild(unitBtn);
-        else unitBtn.remove();
-      }
+      void unitHome;
     },
   };
   const valueNode = ctrl.querySelector(".val");
@@ -1227,7 +1256,7 @@ function bindSettingSheetRuler(state, valueNode, commitValue) {
   });
   ruler.addEventListener("pointermove", (event) => {
     if (!drag || event.pointerId !== drag.id) return;
-    const step = Math.abs(Number(state.getStep?.()) || 0) || 1;
+    const step = settingSheetRulerStep(state);
     const steps = Math.round((drag.x - event.clientX) / SETTING_RULER_PX);
     let next = drag.start + steps * step;
     if (Number.isFinite(min)) next = Math.max(min, next);
@@ -1319,7 +1348,7 @@ function decorateSettingFavoritesButton(button) {
     button.appendChild(meta);
   }
   meta.textContent = names.length
-    ? getUIText("setting_group_count", "{count} settings", { count: names.length })
+    ? getUIText("setting_favorites_edit", "Edit")
     : getUIText("setting_favorites_add_hint", "Long press a setting to add it");
   let strip = button.querySelector(".setting-fav-strip");
   if (!names.length) {
@@ -1397,6 +1426,8 @@ function decorateSettingGroupList(box = document.getElementById("groupList")) {
   });
   divider?.classList.toggle("has-changes", dividerHasChanges);
 
+  syncSettingHomeSubtitle(allNames.size);
+
   // One card above the groups: how many settings differ from their defaults, and a switch to show only those
   // (the same switch as "Changed" above each list, kept while the page stays open).
   const names = [...allNames];
@@ -1413,7 +1444,8 @@ function decorateSettingGroupList(box = document.getElementById("groupList")) {
     card.className = "setting-changed-card";
     card.innerHTML = '<span class="setting-changed-card__n"></span>'
       + '<span class="setting-changed-card__t"><span class="setting-changed-card__title"></span>'
-      + '<small class="setting-changed-card__hint"></small></span><span class="setting-changed-card__state"></span>';
+      + '<small class="setting-changed-card__hint"></small></span><span class="setting-changed-card__state"></span>'
+      + '<span class="setting-changed-card__chev" aria-hidden="true"></span>';
     card.onclick = () => {
       settingChangedOnly = !settingChangedOnly;
       decorateSettingGroupList(box);
@@ -1432,6 +1464,52 @@ function decorateSettingGroupList(box = document.getElementById("groupList")) {
     : "";
   card.setAttribute("aria-pressed", settingChangedOnly ? "true" : "false");
   box.classList.toggle("is-changed-only", settingChangedOnly);
+}
+
+// "트래버스 · 설정 224개" under the carrotpilot / device tabs.
+function syncSettingHomeSubtitle(total) {
+  const tabBar = document.getElementById("settingTabBar");
+  if (!tabBar) return;
+  let sub = document.getElementById("settingHomeSub");
+  if (!sub) {
+    sub = document.createElement("p");
+    sub.id = "settingHomeSub";
+    sub.className = "setting-home-sub";
+    tabBar.insertAdjacentElement("afterend", sub);
+  }
+  const car = typeof currentCarLastKnownLabel === "string" ? currentCarLastKnownLabel.trim() : "";
+  sub.textContent = car
+    ? getUIText("setting_home_sub", "{car} · {count} settings", { car, count: total })
+    : getUIText("setting_home_sub_nocar", "{count} settings", { count: total });
+  sub.hidden = !total;
+}
+
+// "38개 중 17개 바꿈" under a group's title; the count is in the accent.
+function syncSettingItemsSubtitle(itemsBox) {
+  const header = document.querySelector("#settingScreenItems > .row-between");
+  if (!header) return;
+  let sub = document.getElementById("settingItemsSub");
+  if (!sub) {
+    sub = document.createElement("p");
+    sub.id = "settingItemsSub";
+    sub.className = "setting-items-sub";
+    header.insertAdjacentElement("afterend", sub);
+  }
+  const box = itemsBox?.querySelectorAll ? itemsBox : document.getElementById("items");
+  const total = box ? box.querySelectorAll(".setting.setting--row").length : 0;
+  const changed = box ? box.querySelectorAll(".setting.setting--row.is-changed").length : 0;
+  sub.replaceChildren();
+  sub.hidden = !total;
+  if (!total) return;
+  if (!changed) {
+    sub.textContent = getUIText("setting_items_all_default", "{total} · all at default", { total });
+    return;
+  }
+  const template = getUIText("setting_items_summary", "{changed} of {total} changed", { total });
+  const [before, after = ""] = template.split("{changed}");
+  const count = document.createElement("b");
+  count.textContent = getUIText("setting_items_count", "{count}", { count: changed });
+  sub.append(before, count, after);
 }
 
 let settingGroupDecorRaf = 0;
@@ -1623,8 +1701,9 @@ function settingChevronSvg(direction = "left") {
 function setSettingItemsTitle(label) {
   if (!itemsTitle) return;
   const safeLabel = escapeHtml(label || "");
+  const backLabel = escapeHtml(UI_STRINGS[LANG]?.setting || getUIText("setting", "Setting"));
   itemsTitle.innerHTML = `
-    <span class="setting-title-backIcon" aria-hidden="true">${settingChevronSvg("left")}</span>
+    <span class="setting-title-back"><span class="setting-title-backIcon" aria-hidden="true">${settingChevronSvg("left")}</span><span class="setting-title-backLabel">${backLabel}</span></span>
     <span class="setting-title-text">${safeLabel}</span>
   `;
 }
@@ -3153,6 +3232,7 @@ async function renderItems(group, options = {}) {
       description: detailName,
     });
     itemsBox.dataset.renderedGroup = group;
+    if (itemsBox.id === "items") syncSettingItemsSubtitle(itemsBox);
     itemsBox.dataset.renderedDetail = detailName;
     requestAnimationFrame(resetSettingItemsViewport);
     return;
@@ -3167,6 +3247,7 @@ async function renderItems(group, options = {}) {
       ),
     });
     itemsBox.dataset.renderedGroup = group;
+    if (itemsBox.id === "items") syncSettingItemsSubtitle(itemsBox);
     requestAnimationFrame(resetSettingItemsViewport);
     return;
   }
@@ -3180,6 +3261,7 @@ async function renderItems(group, options = {}) {
       description: getUIText("setting_inline_search_hint", "Search names, descriptions and groups · Up to 20 results"),
     });
     itemsBox.dataset.renderedGroup = group;
+    if (itemsBox.id === "items") syncSettingItemsSubtitle(itemsBox);
     requestAnimationFrame(resetSettingItemsViewport);
     return;
   }
@@ -3792,6 +3874,7 @@ async function renderItems(group, options = {}) {
 
   itemsBox.dataset.renderedGroup = group;
   if (detailMode) itemsBox.dataset.renderedDetail = detailName;
+  if (itemsBox.id === "items") syncSettingItemsSubtitle(itemsBox);
   scheduleSettingOverflowSync(itemsBox);
   window.CarrotSettingsExtensions?.sync?.({ group, detailMode, detailName, root: itemsBox });
   // Legacy panels are migrated into CarrotSettingsExtensions in later phases.
