@@ -95,11 +95,12 @@ The Settings page is divided into `Device` and `carrotpilot` tabs.
 
 - Select a group, then an item, to change its value.
 - Search by setting name or description.
-- One line under each item shows its range and default, such as `Range 1~4 · Default 3`.
-- Long descriptions show two lines; tap the description or `More` to expand it. `Expand descriptions` at the top expands or collapses them all (remembered in this browser).
-- An item that differs from its default gets an orange bar on the left and an orange value, and only such items show the `Default` button.
-- `Changed only` at the top leaves just the items that differ from their defaults. A reload shows everything again.
-- On a wide screen (1200 px or more) items sit side by side in two columns.
+- The list shows each item's name and current value only. A value that differs from its default is orange, with the default in small type beneath it (`Default 160`).
+- On/off items switch right in the list.
+- Tap any other row to open the value sheet from the bottom: large `−`/`+` (hold to repeat), tap the number to type one, the range bar (the white tick is the default), `Reset to default`, `Step`, and the description. Choice items list their options. Tap outside or press `Esc` to close.
+- `History and guide` in the sheet opens the screen with popular values, change history and the full guide.
+- `All / Changed` above the list shows only the items that differ from their defaults. A reload goes back to `All`.
+- On a wide screen (1100 px or more) items sit side by side in two columns.
 - Long-press a setting to add or remove it from Favorites.
 - Profiles save a group of values and allow selected values to be applied later.
 - A setting detail page can show popular values, recent change history, and a verified Wiki guide.

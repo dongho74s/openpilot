@@ -1,23 +1,25 @@
 /* Material roles, interaction states, focus and elevation. */
 :root {
-  --md-surface: #090c10;
-  --md-surface-cont: #11161d;
-  --md-surface-cont-l: #151b24;
-  --md-surface-cont-h: #1b222c;
-  --md-surface-cont-hh: #262f3b;
-  --md-surface-bright: #5e6879;
+  /* Second design (user request 2026-11-26 "redo the design"): calmer graphite surfaces, a real secondary text
+     tone instead of near-white everywhere, quieter borders, a stronger carrot accent. */
+  --md-surface: #0a0c0f;
+  --md-surface-cont: #13161b;
+  --md-surface-cont-l: #171a20;
+  --md-surface-cont-h: #1c2027;
+  --md-surface-cont-hh: #262b34;
+  --md-surface-bright: #5b6370;
 
-  --md-on-surface: #ffffff;
-  --md-on-surface-var: #eef2f8;
-  --md-outline: #cbd2de;
-  --md-outline-var: #7c8594;
-  --md-stroke-soft: #788191;
-  --md-stroke-strong: #aeb7c8;
+  --md-on-surface: #f2f4f7;
+  --md-on-surface-var: #a7afbc;
+  --md-outline: #c2c9d4;
+  --md-outline-var: #66707e;
+  --md-stroke-soft: #6b7482;
+  --md-stroke-strong: #a3acba;
 
-  --md-primary: #ffb06d;
-  --md-on-primary: #3a1800;
-  --md-action-filled: #9f5a2c;
-  --md-on-action-filled: #fff3ea;
+  --md-primary: #ff9248;
+  --md-on-primary: #1f0d00;
+  --md-action-filled: #a8521e;
+  --md-on-action-filled: #fff4ec;
   --md-primary-state-soft: color-mix(in srgb, var(--md-primary) 14%, transparent);
   --md-primary-state: color-mix(in srgb, var(--md-primary) 18%, var(--md-surface-cont-h));
   --md-primary-state-strong: color-mix(in srgb, var(--md-primary) 22%, var(--md-surface-cont-hh));
@@ -65,17 +67,17 @@
 
 @media (prefers-contrast: more) {
   :root {
-    --md-surface: #05070a;
-    --md-surface-cont: #0d1117;
-    --md-surface-cont-h: #171d26;
-    --md-surface-cont-hh: #232b36;
-    --md-surface-bright: #667185;
+    --md-surface: #000000;
+    --md-surface-cont: #0d0f13;
+    --md-surface-cont-h: #171a20;
+    --md-surface-cont-hh: #232831;
+    --md-surface-bright: #6b7482;
     --md-on-surface: #ffffff;
-    --md-on-surface-var: #f7f9ff;
+    --md-on-surface-var: #d3d9e2;
     --md-outline: #e4e9f3;
     --md-outline-var: #9aa4b6;
     --md-stroke-soft: #959fb2;
     --md-stroke-strong: #d2d9e8;
-    --md-primary: #ffc087;
+    --md-primary: #ffad75;
   }
 }

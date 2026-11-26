@@ -1,0 +1,733 @@
+/* Settings list as a spec sheet (user request 2026-11-26: "redo it; it must read at a glance; ugly, looks like AI
+   slop; mind the UX"). Rows are lines of text, not boxes: the title on the left, the value on the right. Unchanged
+   values are quiet, a changed value is the one accent on the screen with its default beneath it. A row opens the
+   value sheet below (large stepper or the full list of choices, the range with its default, reset, description).
+   Loaded last, so these rules win over the older row styles; the detail screen keeps the older look. */
+
+.page--setting,
+.setting-sheet-backdrop {
+  --sheet-line: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
+  --sheet-line-strong: color-mix(in srgb, var(--md-on-surface) 14%, transparent);
+  --sheet-press: color-mix(in srgb, var(--md-on-surface) 5%, transparent);
+  --sheet-quiet: var(--md-on-surface-var);
+  --sheet-accent: var(--md-primary);
+  --sheet-accent-soft: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  --sheet-raised: color-mix(in srgb, var(--md-on-surface) 7%, var(--md-surface-cont));
+}
+
+/* ── Sections: a label and a run of rows, no card ── */
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-section-block {
+  gap: 0;
+  margin: 0 0 28px;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-group-card__title {
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--sheet-line-strong);
+  color: var(--sheet-quiet);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-section-block > .setting-group-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ── Row ── */
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row,
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-group-card__body > .setting.setting--row {
+  min-height: 54px;
+  margin: 0 -10px;
+  padding: 11px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--sheet-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row:active {
+  background: var(--sheet-press);
+}
+
+@media (hover: hover) {
+  .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row:hover {
+    background: var(--sheet-press);
+  }
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .settingTop,
+.page--setting.setting-layout-split :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .settingTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 32px;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .setting-title-row {
+  gap: 6px;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .title.setting-marquee {
+  overflow: hidden;
+  white-space: normal;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .title .setting-marquee__content {
+  display: -webkit-box;
+  min-width: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  animation: none;
+  transform: none;
+  will-change: auto;
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-row-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  max-width: 46vw;
+  text-align: right;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-row-value__text {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--sheet-quiet);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-row-value__default {
+  display: none;
+  color: var(--sheet-quiet);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: .8;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row.is-changed .setting-row-value__text {
+  color: var(--sheet-accent);
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row.is-changed .setting-row-value__default {
+  display: block;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .setting-actions,
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .setting-row-ctrl-holder {
+  display: none;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .ctrl--toggle {
+  justify-self: end;
+  width: auto;
+}
+
+/* ── Filter above the list: all / changed ── */
+.page--setting .setting-filter {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 0 20px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--md-surface-cont);
+}
+
+.page--setting .setting-filter__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sheet-quiet);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.page--setting .setting-filter__option[aria-checked="true"] {
+  background: var(--md-surface-cont-hh);
+  color: var(--md-on-surface);
+}
+
+.page--setting .setting-filter__count {
+  color: var(--sheet-quiet);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.page--setting .setting-filter__option[aria-checked="true"] .setting-filter__count--changed {
+  color: var(--sheet-accent);
+}
+
+.page--setting .setting-filter__option:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.page--setting .setting-items--changed-only .setting:not(.is-changed),
+.page--setting .setting-items--changed-only .setting-section-block:not(:has(.setting.is-changed)) {
+  display: none;
+}
+
+.page--setting .setting-items--changed-only:not(:has(.setting.is-changed))::after {
+  content: attr(data-changed-empty);
+  display: block;
+  padding: 32px 0;
+  color: var(--sheet-quiet);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ── Wide screens: rows in two columns ── */
+@media (min-width: 1100px) {
+  .page--setting #settingScreenItems .setting-section-block > .setting-group-card > .setting-group-card__body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 40px;
+  }
+
+  .page--setting #settingScreenItems .setting-section-block > .setting-group-card > .setting-group-card__body > .setting.setting--row {
+    margin: 0 -10px;
+  }
+}
+
+/* ── Group list: the same lines, no cards ── */
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) {
+  gap: 0;
+}
+
+.page--setting #carrotTabContent #groupList > .setting-inline-search-slot {
+  margin-bottom: 16px;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn {
+  box-sizing: border-box;
+  width: calc(100% + 20px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  margin: 0 -10px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px solid var(--sheet-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-top: 1.5px solid var(--sheet-quiet);
+  border-right: 1.5px solid var(--sheet-quiet);
+  transform: rotate(45deg);
+  opacity: .7;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:active {
+  background: var(--sheet-press);
+}
+
+@media (hover: hover) {
+  .page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:hover {
+    background: var(--sheet-press);
+  }
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn.active {
+  background: var(--sheet-press);
+  color: var(--sheet-accent);
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider {
+  justify-content: flex-start;
+  margin: 28px 0 0;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--sheet-line-strong);
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider > span {
+  display: none;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider > strong {
+  color: var(--sheet-quiet);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+/* ── Value sheet ── */
+.setting-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0);
+  transition: background-color .2s ease;
+}
+
+.setting-sheet-backdrop.is-open {
+  background: rgba(0, 0, 0, .56);
+}
+
+.setting-sheet {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 560px;
+  max-height: min(88dvh, 720px);
+  overflow-y: auto;
+  padding: 8px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  border-radius: 18px 18px 0 0;
+  background: var(--md-surface-cont);
+  color: var(--md-on-surface);
+  font-family: var(--font-sans);
+  transform: translateY(100%);
+  transition: transform .22s cubic-bezier(.2, 0, 0, 1);
+  overscroll-behavior: contain;
+}
+
+.setting-sheet-backdrop.is-open .setting-sheet {
+  transform: translateY(0);
+}
+
+.setting-sheet:focus {
+  outline: none;
+}
+
+.setting-sheet__grip {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 12px;
+  border-radius: 2px;
+  background: var(--sheet-line-strong);
+}
+
+.setting-sheet__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.setting-sheet__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.setting-sheet__key {
+  margin-top: 4px;
+  color: var(--sheet-quiet);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.setting-sheet__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--sheet-raised);
+  color: var(--md-on-surface);
+  cursor: pointer;
+}
+
+/* stepper: − value + */
+.setting-sheet__control--stepper .ctrl {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.setting-sheet__control--stepper .setting-value-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: var(--sheet-raised);
+  color: var(--md-on-surface);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.setting-sheet__control--stepper .setting-value-arrow:active,
+.setting-sheet__control--stepper .setting-value-arrow.is-holding {
+  background: var(--md-surface-cont-hh);
+}
+
+.setting-sheet__control--stepper .val {
+  min-width: 0;
+  min-height: 64px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--md-on-surface);
+  font-family: var(--font-sans);
+  font-size: 40px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  text-align: center;
+  cursor: text;
+}
+
+.setting-sheet.is-changed .setting-sheet__control--stepper .val {
+  color: var(--sheet-accent);
+}
+
+/* choices */
+.setting-sheet__control--segmented .ctrl,
+.setting-sheet__control--toggle .ctrl {
+  display: block;
+  width: 100%;
+}
+
+.setting-sheet__control--segmented .val,
+.setting-sheet__control--toggle .val {
+  display: none;
+}
+
+.setting-sheet__control--segmented .setting-segments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.setting-sheet__control--segmented .setting-segment {
+  min-height: 52px;
+  padding: 0 12px;
+  border: 1px solid var(--sheet-line-strong);
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--md-on-surface);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.setting-sheet__control--segmented .setting-segment.is-active {
+  border-color: var(--md-on-surface);
+  background: var(--md-on-surface);
+  color: var(--md-surface);
+}
+
+.setting-sheet.is-changed .setting-sheet__control--segmented .setting-segment.is-active {
+  border-color: var(--sheet-accent);
+  background: var(--sheet-accent);
+  color: var(--md-on-primary);
+}
+
+.setting-sheet__control--list .setting-segments {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--sheet-line);
+}
+
+.setting-sheet__control--list .setting-segment,
+.setting-sheet__control--list .setting-segment.is-active,
+.setting-sheet.is-changed .setting-sheet__control--list .setting-segment.is-active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px solid var(--sheet-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.setting-sheet__control--list .setting-segment.is-active {
+  font-weight: 700;
+}
+
+.setting-sheet__control--list .setting-segment.is-active::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 12px;
+  margin: -3px 6px 0 12px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.setting-sheet.is-changed .setting-sheet__control--list .setting-segment.is-active {
+  color: var(--sheet-accent);
+}
+
+.setting-sheet__control--toggle {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* range with the default marked */
+.setting-sheet__scale {
+  --value-pos: 0;
+  --default-pos: 0;
+  margin: 18px 0 0;
+}
+
+.setting-sheet__track {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--sheet-line-strong);
+}
+
+.setting-sheet__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--value-pos) * 100%);
+  border-radius: 2px;
+  background: var(--sheet-quiet);
+}
+
+.setting-sheet.is-changed .setting-sheet__fill {
+  background: var(--sheet-accent);
+}
+
+.setting-sheet__tick {
+  position: absolute;
+  top: -5px;
+  left: calc(var(--default-pos) * 100%);
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--md-on-surface);
+}
+
+.setting-sheet__scale-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--sheet-quiet);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-sheet__def {
+  color: var(--md-on-surface);
+}
+
+.setting-sheet__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.setting-sheet__reset,
+.setting-sheet__unit.setting-unit-cycle {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--sheet-line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.setting-sheet__reset[hidden] {
+  display: none;
+}
+
+.setting-sheet__descr {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--sheet-line);
+  color: var(--sheet-quiet);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.setting-sheet__detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setting-sheet__detail::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.setting-sheet :is(button, input):focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+@media (min-width: 720px) {
+  .setting-sheet-backdrop {
+    align-items: center;
+  }
+
+  .setting-sheet {
+    border-radius: 18px;
+    padding-bottom: 20px;
+    transform: translateY(16px);
+    opacity: 0;
+    transition: transform .2s cubic-bezier(.2, 0, 0, 1), opacity .2s ease;
+  }
+
+  .setting-sheet-backdrop.is-open .setting-sheet {
+    opacity: 1;
+  }
+
+  .setting-sheet__grip {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setting-sheet-backdrop,
+  .setting-sheet {
+    transition: none;
+  }
+}
+
+/* ── Page chrome: the device / carrotpilot switch and the menu button, neutral instead of solid orange ── */
+.page--setting #settingTabBar.setting-tabbar {
+  padding: 3px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--md-surface-cont);
+  box-shadow: none;
+}
+
+.page--setting #settingTabBar .setting-tab {
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--sheet-quiet);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.page--setting #settingTabBar .setting-tab.is-active {
+  background: var(--md-surface-cont-hh);
+  color: var(--md-on-surface);
+}
+
+.page--setting #btnSettingSearch.fab {
+  border: 1px solid var(--sheet-line-strong);
+  background: var(--md-surface-cont-hh);
+  color: var(--md-on-surface);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+}
+
+/* a real minus sign in the sheet (the shared control writes a hyphen) */
+.setting-sheet__control--stepper .setting-value-arrow--prev {
+  font-size: 0;
+}
+
+.setting-sheet__control--stepper .setting-value-arrow--prev::before {
+  content: "\2212";
+  font-size: 28px;
+}
+
+.setting-sheet__unit.setting-unit-cycle::before {
+  content: attr(data-label) " ";
+  color: var(--sheet-quiet);
+  font-weight: 500;
+}

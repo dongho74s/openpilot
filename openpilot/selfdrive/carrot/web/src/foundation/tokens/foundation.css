@@ -35,7 +35,8 @@
   --z-toast: 200;
   --z-overlay: 220;
 
-  --font-sans: "Roboto", system-ui, -apple-system, sans-serif;
+  --font-sans: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Noto Sans KR", "Roboto", system-ui, sans-serif;
   --font-mono: ui-monospace, "Roboto Mono", SFMono-Regular, Menlo, monospace;
   --fs-headline: 24px;
   --fs-title-lg: 20px;

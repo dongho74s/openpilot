@@ -214,7 +214,7 @@ body:has(.page-transitioning) {
 .topbar .nav-btn.active {
   color: var(--md-primary);
   font-weight: 700;
-  background: var(--md-primary-state-soft);
+  background: transparent;  /* the accent text alone marks the tab (2026-11-26 redesign) */
 }
 
 .topbar .nav-btn.recording,

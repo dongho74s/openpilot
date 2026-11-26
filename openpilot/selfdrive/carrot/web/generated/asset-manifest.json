@@ -83,7 +83,7 @@
       "kind": "bundle",
       "source": "src/entries/design_tokens.css",
       "path": "css/generated/design-tokens.css",
-      "hash": "8c3deb22d669b914f2a46648c8a44d8c91f82b1fac7c27c4c0ffe06e56cf8c2b"
+      "hash": "c333feb9c62c463c31b23a323562ce066c2bba1d36171880fb26e1d5fb9eaec4"
     },
     {
       "id": "design-system.styles",
@@ -111,7 +111,7 @@
       "kind": "bundle",
       "source": "src/entries/settings.css",
       "path": "css/generated/settings.css",
-      "hash": "a6808a57d778eab157308db2e5ccfaf866c24097fd36a9753b88cc2383d1dd96"
+      "hash": "e44d6ea36b6929e6547802ba0b44a6cf965e054b3da5db1f042bd6baec1b230f"
     },
     {
       "id": "tools.styles",

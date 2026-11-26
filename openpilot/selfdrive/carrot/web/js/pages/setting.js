@@ -873,51 +873,11 @@ function formatSettingRangeMeta(p) {
     + ` · ${getUIText("setting_default_short", "Default")} ${formatSettingDisplayValue(p, p?.default)}`;
 }
 
-// Collapsed descriptions (user request 2026-11-26): long descriptions show two lines until tapped. The "show all"
-// preference is per browser; a tap flips one item relative to it.
-const SETTING_DESCR_ALL_KEY = "carrot.settingDescrAll.v1";
-const settingDescrToggled = new Set();
-
-function isSettingDescrShowAll() {
-  try {
-    return localStorage.getItem(SETTING_DESCR_ALL_KEY) === "1";
-  } catch (_) {
-    return false;
-  }
-}
-
-function setSettingDescrShowAll(value) {
-  try {
-    localStorage.setItem(SETTING_DESCR_ALL_KEY, value ? "1" : "0");
-  } catch (_) {
-    // private mode: the choice lasts for this page only
-  }
-  settingDescrToggled.clear();
-}
-
-function isSettingDescrExpanded(name) {
-  return isSettingDescrShowAll() !== settingDescrToggled.has(name);
-}
-
-function applySettingDescrState(row) {
-  const name = row?.dataset?.settingName || "";
-  const descr = row?.querySelector(".descr--collapsible");
-  if (!descr) return;
-  const expanded = isSettingDescrExpanded(name);
-  descr.classList.toggle("is-collapsed", !expanded);
-  const more = row.querySelector(".setting-descr-more");
-  if (more) {
-    more.textContent = expanded ? getUIText("setting_descr_less", "Less") : getUIText("setting_descr_more", "More");
-    more.setAttribute("aria-expanded", expanded ? "true" : "false");
-  }
-}
-
-function toggleSettingDescr(row) {
-  const name = row?.dataset?.settingName || "";
-  if (settingDescrToggled.has(name)) settingDescrToggled.delete(name);
-  else settingDescrToggled.add(name);
-  applySettingDescrState(row);
-}
+// Settings list, third pass (user request 2026-11-26: "it still doesn't read at a glance", "ugly, looks like AI slop,
+// mind the UX"). A list row is a line of a spec sheet: the title on the left, the current value on the right, and
+// for a changed value its default under it. Nothing else: no description, key, range or per-row buttons. Tapping a
+// row opens the value sheet, which holds the row's own control (moved in while open), the range with its default,
+// the reset, the description and a link to the detail screen. Switches stay in the row.
 
 // Kept until the page reloads (not stored): a filter left on from an earlier visit would look like missing settings.
 let settingChangedOnly = false;
@@ -926,42 +886,244 @@ function isSettingChangedOnly() {
   return settingChangedOnly;
 }
 
-function appendSettingDescrToolbar(itemsBox) {
+function syncSettingListToolbar(itemsBox) {
+  if (!itemsBox?.querySelector) return;
+  const all = itemsBox.querySelector(".setting-filter__count--all");
+  const changed = itemsBox.querySelector(".setting-filter__count--changed");
+  if (all) all.textContent = String(itemsBox.querySelectorAll(".setting.setting--row").length);
+  if (changed) changed.textContent = String(itemsBox.querySelectorAll(".setting.setting--row.is-changed").length);
+}
+
+function appendSettingListFilter(itemsBox) {
   const bar = document.createElement("div");
-  bar.className = "setting-list-toolbar";
-  // "Changed only" hides rows still at their default (user request 2026-11-26: see the whole picture at a glance).
-  const changed = document.createElement("button");
-  changed.type = "button";
-  changed.className = "setting-changed-only-toggle";
-  itemsBox.dataset.changedEmpty = getUIText("setting_changed_none", "Nothing here differs from the default");
-  const applyChanged = (on) => {
-    itemsBox.classList.toggle("setting-items--changed-only", on);
-    changed.classList.toggle("is-active", on);
-    changed.setAttribute("aria-pressed", on ? "true" : "false");
-    changed.textContent = getUIText("setting_changed_only", "Changed only");
-  };
-  applyChanged(isSettingChangedOnly());
-  changed.onclick = (event) => {
-    event.stopPropagation();
+  bar.className = "setting-filter";
+  bar.setAttribute("role", "radiogroup");
+  bar.setAttribute("aria-label", getUIText("setting_list_view", "List view"));
+  itemsBox.dataset.settingList = "1";
+  itemsBox.dataset.changedEmpty = getUIText("setting_changed_none", "Everything here is at its default");
+  const options = [
+    { changedOnly: false, label: getUIText("setting_filter_all", "All"), countClass: "setting-filter__count--all" },
+    { changedOnly: true, label: getUIText("setting_filter_changed", "Changed"), countClass: "setting-filter__count--changed" },
+  ];
+  const buttons = options.map((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "setting-filter__option";
+    button.setAttribute("role", "radio");
+    const label = document.createElement("span");
+    label.textContent = option.label;
+    const count = document.createElement("span");
+    count.className = `setting-filter__count ${option.countClass}`;
+    button.append(label, count);
+    button.onclick = (event) => {
+      event.stopPropagation();
+      settingChangedOnly = option.changedOnly;
+      apply();
+    };
+    bar.appendChild(button);
+    return { button, option };
+  });
+  function apply() {
+    itemsBox.classList.toggle("setting-items--changed-only", settingChangedOnly);
+    buttons.forEach(({ button, option }) => {
+      const checked = option.changedOnly === settingChangedOnly;
+      button.setAttribute("aria-checked", checked ? "true" : "false");
+      button.tabIndex = checked ? 0 : -1;
+    });
+  }
+  bar.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
     settingChangedOnly = !settingChangedOnly;
-    applyChanged(settingChangedOnly);
-  };
-  bar.appendChild(changed);
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "setting-descr-all-toggle";
-  const label = () => (isSettingDescrShowAll()
-    ? getUIText("setting_descr_collapse_all", "Collapse descriptions")
-    : getUIText("setting_descr_expand_all", "Expand descriptions"));
-  button.textContent = label();
-  button.onclick = (event) => {
-    event.stopPropagation();
-    setSettingDescrShowAll(!isSettingDescrShowAll());
-    button.textContent = label();
-    itemsBox.querySelectorAll(".setting").forEach(applySettingDescrState);
-  };
-  bar.appendChild(button);
+    apply();
+    buttons.find(({ option }) => option.changedOnly === settingChangedOnly)?.button.focus();
+  });
+  apply();
   itemsBox.appendChild(bar);
+}
+
+function formatSettingRowValue(item, value) {
+  if (!item) return String(value ?? "");
+  if (String(item.name) === "SoundLanguageSetting" || getDeclaredSettingOptionLabel(item.name, value) !== null) {
+    return getSettingOptionLabel(item.name, value);
+  }
+  return formatSettingDisplayValue(item, value);
+}
+
+let settingSheetState = null;
+let settingSheetPopstateBound = false;
+
+function closeSettingSheet(options = {}) {
+  const state = settingSheetState;
+  if (!state) return;
+  settingSheetState = null;
+  state.restore();
+  document.removeEventListener("keydown", state.onKey, true);
+  state.backdrop.classList.remove("is-open");
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  window.setTimeout(() => state.backdrop.remove(), reduced ? 0 : 200);
+  if (options.returnFocus !== false && state.row?.isConnected) state.row.focus({ preventScroll: true });
+}
+
+function syncSettingSheet(row, value) {
+  const state = settingSheetState;
+  if (!state || state.row !== row) return;
+  const item = state.item;
+  const changed = row.classList.contains("is-changed");
+  state.sheet.classList.toggle("is-changed", changed);
+  if (state.reset) state.reset.hidden = !changed;
+  const scale = state.sheet.querySelector(".setting-sheet__scale");
+  if (!scale || scale.hidden) return;
+  const min = Number(item.min);
+  const max = Number(item.max);
+  const span = max - min;
+  const position = (raw) => (span > 0 ? Math.min(1, Math.max(0, (Number(raw) - min) / span)) : 0);
+  scale.style.setProperty("--value-pos", String(position(value)));
+  scale.style.setProperty("--default-pos", String(position(item.default)));
+}
+
+function openSettingSheet(options) {
+  closeSettingSheet({ returnFocus: false });
+  const { row, item, title, descr, ctrl, unitBtn, controlKind, onReset, onDetail } = options;
+  if (!settingSheetPopstateBound) {
+    settingSheetPopstateBound = true;
+    window.addEventListener("popstate", () => closeSettingSheet({ returnFocus: false }));
+  }
+  const backdrop = document.createElement("div");
+  backdrop.className = "setting-sheet-backdrop";
+  const sheet = document.createElement("section");
+  sheet.className = "setting-sheet";
+  sheet.tabIndex = -1;
+  sheet.setAttribute("role", "dialog");
+  sheet.setAttribute("aria-modal", "true");
+  sheet.setAttribute("aria-labelledby", "settingSheetTitle");
+  sheet.innerHTML = `
+    <div class="setting-sheet__grip" aria-hidden="true"></div>
+    <header class="setting-sheet__head">
+      <div class="setting-sheet__heading">
+        <h2 class="setting-sheet__title" id="settingSheetTitle"></h2>
+        <div class="setting-sheet__key"></div>
+      </div>
+      <button type="button" class="setting-sheet__close">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </header>
+    <div class="setting-sheet__control"></div>
+    <div class="setting-sheet__scale" hidden>
+      <div class="setting-sheet__track"><span class="setting-sheet__fill"></span><span class="setting-sheet__tick"></span></div>
+      <div class="setting-sheet__scale-labels">
+        <span class="setting-sheet__min"></span><span class="setting-sheet__def"></span><span class="setting-sheet__max"></span>
+      </div>
+    </div>
+    <div class="setting-sheet__tools"></div>
+    <p class="setting-sheet__descr"></p>
+    <button type="button" class="setting-sheet__detail"></button>
+  `;
+  sheet.querySelector(".setting-sheet__title").textContent = title;
+  sheet.querySelector(".setting-sheet__key").textContent = item.name;
+  const close = sheet.querySelector(".setting-sheet__close");
+  close.setAttribute("aria-label", getUIText("setting_sheet_close", "Close"));
+  close.onclick = () => closeSettingSheet();
+  const descrNode = sheet.querySelector(".setting-sheet__descr");
+  if (descr) descrNode.textContent = descr;
+  else descrNode.remove();
+  const detail = sheet.querySelector(".setting-sheet__detail");
+  detail.textContent = getUIText("setting_sheet_detail", "History and guide");
+  detail.onclick = () => {
+    closeSettingSheet({ returnFocus: false });
+    onDetail();
+  };
+
+  // The row's own control moves in while the sheet is open, so its wiring (hold-to-repeat, choices, switch) and
+  // syncSettingControlState keep working unchanged.
+  const control = sheet.querySelector(".setting-sheet__control");
+  control.classList.add(`setting-sheet__control--${controlKind}`);
+  const labels = [...ctrl.querySelectorAll(".setting-segment")].map((button) => button.textContent.trim());
+  if (labels.length > 4 || labels.some((label) => label.length > 3)) control.classList.add("setting-sheet__control--list");
+  const home = ctrl.parentNode;
+  const homeNext = ctrl.nextSibling;
+  control.appendChild(ctrl);
+
+  const tools = sheet.querySelector(".setting-sheet__tools");
+  let reset = null;
+  if (item.default !== undefined && item.default !== null) {
+    reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "setting-sheet__reset";
+    reset.textContent = getUIText("setting_sheet_reset", "Reset to default ({value})", {
+      value: formatSettingRowValue(item, item.default),
+    });
+    reset.onclick = () => onReset();
+    tools.appendChild(reset);
+  }
+  const unitHome = unitBtn?.parentNode || null;
+  if (unitBtn && controlKind === "stepper") {
+    unitBtn.classList.add("setting-sheet__unit");
+    unitBtn.dataset.label = getUIText("setting_sheet_step", "Step");
+    tools.appendChild(unitBtn);
+  }
+  if (!tools.children.length) tools.remove();
+
+  if (controlKind === "stepper") {
+    const scale = sheet.querySelector(".setting-sheet__scale");
+    scale.hidden = false;
+    sheet.querySelector(".setting-sheet__min").textContent = formatSettingDisplayValue(item, item.min);
+    sheet.querySelector(".setting-sheet__max").textContent = formatSettingDisplayValue(item, item.max);
+    sheet.querySelector(".setting-sheet__def").textContent =
+      `${getUIText("setting_default_short", "Default")} ${formatSettingDisplayValue(item, item.default)}`;
+  }
+
+  backdrop.appendChild(sheet);
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) closeSettingSheet();
+  });
+  const onKey = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSettingSheet();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...sheet.querySelectorAll("button, input, [tabindex]:not([tabindex='-1'])")]
+      .filter((node) => !node.disabled && !node.hidden && node.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(backdrop);
+
+  settingSheetState = {
+    row,
+    item,
+    sheet,
+    backdrop,
+    reset,
+    onKey,
+    restore() {
+      if (home && row.isConnected) home.insertBefore(ctrl, homeNext && homeNext.parentNode === home ? homeNext : null);
+      else ctrl.remove();
+      if (unitBtn) {
+        unitBtn.classList.remove("setting-sheet__unit");
+        if (unitHome) unitHome.appendChild(unitBtn);
+        else unitBtn.remove();
+      }
+    },
+  };
+  const current = ctrl.querySelector(".val")?.dataset.rawValue ?? item.default;
+  syncSettingSheet(row, current);
+  void backdrop.offsetWidth;
+  backdrop.classList.add("is-open");
+  sheet.focus({ preventScroll: true });
 }
 
 // Rows whose value differs from the declared default get .is-changed (highlighted value, reset button shown).
@@ -975,6 +1137,7 @@ function markSettingChanged(row, value) {
     ? Math.abs(numeric - fallback) > 1e-9
     : String(value) !== String(item.default);
   row.classList.toggle("is-changed", changed);
+  syncSettingListToolbar(row.closest?.("[data-setting-list]"));
 }
 
 function formatSettingPopularValue(p, raw) {
@@ -1230,20 +1393,26 @@ function syncSettingControlState(row, value) {
   if (!row) return;
   markSettingChanged(row, value);
   const text = String(value);
-  const valueButton = row.querySelector(".val");
+  const rowValue = row.querySelector(".setting-row-value__text");
+  if (rowValue) rowValue.textContent = formatSettingRowValue(findSettingItemByName(row.dataset.settingName || "")?.item, value);
+  // While the value sheet is open the row's control lives there.
+  const sheetRoot = settingSheetState?.row === row ? settingSheetState.sheet : null;
+  const pick = (selector) => row.querySelector(selector) || sheetRoot?.querySelector(selector) || null;
+  const pickAll = (selector) => [...row.querySelectorAll(selector), ...(sheetRoot ? sheetRoot.querySelectorAll(selector) : [])];
+  const valueButton = pick(".val");
   if (valueButton) {
     const displayText = formatSettingDisplayValue({ name: row.dataset.settingName || "" }, value);
     valueButton.textContent = displayText;
     valueButton.dataset.rawValue = text;
   }
 
-  const toggle = row.querySelector(".c-switch__input");
+  const toggle = pick(".c-switch__input");
   if (toggle) toggle.checked = Number(value) === 1;
 
-  const slider = row.querySelector(".setting-slider__input");
+  const slider = pick(".setting-slider__input");
   if (slider) slider.value = text;
 
-  const segments = row.querySelectorAll(".setting-segment");
+  const segments = pickAll(".setting-segment");
   segments.forEach((button) => {
     button.classList.toggle("is-active", String(button.dataset.value) === text);
     button.setAttribute("aria-pressed", String(button.dataset.value) === text ? "true" : "false");
@@ -1251,7 +1420,7 @@ function syncSettingControlState(row, value) {
   if (segments.length) {
     // Selection moved, so the keyboard entry point has to move with it.
     // create() returns the already-mounted controller and re-syncs it.
-    const group = row.querySelector(".setting-segments");
+    const group = pick(".setting-segments");
     if (group) {
       window.CarrotUI?.segmentedControl?.create(group, {
         itemSelector: ".setting-segment",
@@ -1260,7 +1429,7 @@ function syncSettingControlState(row, value) {
     }
   }
 
-  const select = row.querySelector(".setting-select");
+  const select = pick(".setting-select");
   if (select) {
     select.value = text;
     if (select.tagName === "BUTTON") {
@@ -1268,6 +1437,7 @@ function syncSettingControlState(row, value) {
       select.textContent = getSettingOptionLabel(row.dataset.settingName || "", value);
     }
   }
+  syncSettingSheet(row, value);
 }
 
 let settingGroupTransitionLock = false;
@@ -2668,6 +2838,7 @@ async function renderItems(group, options = {}) {
   // each keystroke flash like a full refresh.
   itemsBox.innerHTML = "";
   itemsBox.classList.remove("setting-items--changed-only");
+  delete itemsBox.dataset.settingList;
   delete itemsBox.dataset.renderedGroup;
   delete itemsBox.dataset.renderedDetail;
   itemsBox.dataset.renderedSearchQuery = group === SETTING_INLINE_SEARCH_GROUP ? settingInlineSearchQuery : "";
@@ -2697,7 +2868,7 @@ async function renderItems(group, options = {}) {
   }
 
   if (profile && !detailMode) appendSettingProfileHeader(profile, itemsBox);
-  if (!detailMode && list.length > 1) appendSettingDescrToolbar(itemsBox);
+  if (!detailMode && list.length > 1) appendSettingListFilter(itemsBox);
 
   if (!list.length && group === SETTING_INLINE_SEARCH_GROUP) {
     settingViewRuntime.renderEmptyState(itemsBox, {
@@ -2751,6 +2922,7 @@ async function renderItems(group, options = {}) {
 
     const el = document.createElement("div");
     el.className = animateItems ? "setting ui-stagger-item" : "setting";
+    if (!detailMode) el.classList.add("setting--row");
     if (animateItems) el.style.setProperty("--i", String(index));
     el.dataset.settingName = name;
     el.dataset.settingGroup = originGroup;
@@ -2770,7 +2942,8 @@ async function renderItems(group, options = {}) {
     // badge next to its title — declared in data, so no code change is needed
     // to mark a parameter risky.
     const riskBadge = carrotSettingsRuntime.risk.renderBadge(p, { escape: escapeHtml, text: getUIText });
-    left.innerHTML = `
+    const defaultText = formatSettingDisplayValue(p, p.default);
+    left.innerHTML = detailMode ? `
       <div class="setting-title-row">
         ${settingMarqueeHtml(title, "title")}
         ${riskBadge}
@@ -2778,20 +2951,29 @@ async function renderItems(group, options = {}) {
       </div>
       ${settingMarqueeHtml(name, "name")}
       ${rangeMetaHtml}
+    ` : `
+      <div class="setting-title-row">
+        ${settingMarqueeHtml(title, "title")}
+        ${riskBadge}
+        ${renderSettingFavoriteMark(name)}
+      </div>
     `;
 
     const controlConfig = getSettingControlConfig(p);
-    top.classList.toggle("settingTop--choices", controlConfig.kind === "segmented" && Boolean(p.options));
     const compactNumeric = controlConfig.kind === "slider";
+    let controlKind = compactNumeric ? "stepper" : controlConfig.kind;
+    // In the list every choice is picked in the value sheet, where the options can be listed in full.
+    if (!detailMode && controlKind === "select") controlKind = "segmented";
+    top.classList.toggle("settingTop--choices", controlKind === "segmented" && Boolean(p.options));
     // The markup comes from the shared component; this file keeps the wiring.
     const control = window.CarrotUI.settingRow.createControl({
       document,
-      kind: compactNumeric ? "stepper" : controlConfig.kind,
+      kind: controlKind,
       label: title || name,
       valueLabel: getUIText("setting_value_edit", "Edit value"),
       previousLabel: getUIText("setting_value_previous", "Previous value"),
       nextLabel: getUIText("setting_value_next", "Next value"),
-      optionValues: controlConfig.kind === "segmented" ? getSettingOptionValues(name, controlConfig) : [],
+      optionValues: controlKind === "segmented" ? getSettingOptionValues(name, controlConfig) : [],
       optionLabel: (optionValue) => getSettingOptionLabel(name, optionValue),
       min: controlConfig.min,
       max: controlConfig.max,
@@ -2815,31 +2997,28 @@ async function renderItems(group, options = {}) {
     const popularHtml = renderSettingPopularChipHtml(p, popularEntry);
 
     top.appendChild(left);
-    top.appendChild(ctrl);
+    if (detailMode || controlKind === "toggle") {
+      top.appendChild(ctrl);
+    } else {
+      const rowValue = document.createElement("div");
+      rowValue.className = "setting-row-value";
+      rowValue.innerHTML = `<span class="setting-row-value__text"></span>
+        <span class="setting-row-value__default">${escapeHtml(getUIText("setting_default_short", "Default"))}
+          ${escapeHtml(formatSettingRowValue(p, p.default))}</span>`;
+      top.appendChild(rowValue);
+      const holder = document.createElement("div");
+      holder.className = "setting-row-ctrl-holder";
+      holder.hidden = true;
+      holder.appendChild(ctrl);
+      el.appendChild(holder);
+    }
 
     const d = document.createElement("div");
-    d.className = "descr";
+    d.className = detailMode ? "descr" : "descr setting-row-descr";
     d.textContent = descr;
 
-    el.appendChild(top);
-    el.appendChild(d);
-    if (!detailMode && (descr.length > 70 || descr.includes("\n"))) {
-      d.classList.add("descr--collapsible");
-      d.onclick = (event) => {
-        if (window.getSelection && String(window.getSelection())) return;  // let a text selection be
-        event.stopPropagation();
-        toggleSettingDescr(el);
-      };
-      const more = document.createElement("button");
-      more.type = "button";
-      more.className = "setting-descr-more";
-      more.onclick = (event) => {
-        event.stopPropagation();
-        toggleSettingDescr(el);
-      };
-      el.appendChild(more);
-      applySettingDescrState(el);
-    }
+    el.insertBefore(top, el.firstChild);
+    if (detailMode) el.appendChild(d);
 
     const popularTopValues = Array.isArray(popularEntry?.top_values) ? popularEntry.top_values : [];
     let contextPanel = null;
@@ -2919,7 +3098,7 @@ async function renderItems(group, options = {}) {
     defaultBtn.className = "setting-default-reset setting-reset-default";
     defaultBtn.textContent = getUIText("setting_reset_default", "Default");
     defaultBtn.setAttribute("aria-label", getUIText("setting_reset_default_aria", "Reset to default"));
-    defaultBtn.onclick = async (event) => {
+    const resetToDefault = async (event) => {
       event.stopPropagation();
       const normalizedDefault = normalizeSettingValue(p.default);
       const target = normalizedDefault === null ? p.default : normalizedDefault;
@@ -2942,9 +3121,13 @@ async function renderItems(group, options = {}) {
       await commitSettingValue(target);
       showAppToast(getUIText("setting_reset_default_done", "Restored to default"));
     };
+    defaultBtn.onclick = resetToDefault;
     actions.appendChild(defaultBtn);
-    el.classList.add("setting--has-actions");
-    el.appendChild(actions);
+    if (detailMode) {
+      // The list keeps rows to one line; unit steps, popular values and the reset button live on the detail screen.
+      el.classList.add("setting--has-actions");
+      el.appendChild(actions);
+    }
 
     currentItemContainer.appendChild(el);
     if (contextPanel) {
@@ -3259,12 +3442,38 @@ async function renderItems(group, options = {}) {
     }
 
     if (!detailMode) {
-      el.onclick = (event) => {
-        if (el.dataset.settingSuppressClick === "1") return;
-        if (isSettingValueControlHit(event, el)) return;
-        if (isSettingInlineControlTarget(event.target)) return;
+      const openDetail = () => {
         selectSettingDetail(group === SETTING_INLINE_SEARCH_GROUP ? group : originGroup, name).catch(() => {});
       };
+      const openSheet = () => openSettingSheet({
+        row: el,
+        item: p,
+        title: title || name,
+        descr,
+        ctrl,
+        unitBtn,
+        controlKind,
+        onReset: async () => {
+          const normalizedDefault = normalizeSettingValue(p.default);
+          await commitSettingValue(normalizedDefault === null ? p.default : normalizedDefault);
+        },
+        onDetail: openDetail,
+      });
+      el.tabIndex = 0;
+      if (controlKind !== "toggle") {
+        el.setAttribute("role", "button");
+        el.setAttribute("aria-haspopup", "dialog");
+      }
+      el.onclick = (event) => {
+        if (el.dataset.settingSuppressClick === "1") return;
+        if (isSettingInlineControlTarget(event.target)) return;
+        openSheet();
+      };
+      el.addEventListener("keydown", (event) => {
+        if (event.target !== el || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        openSheet();
+      });
     }
   });
 
