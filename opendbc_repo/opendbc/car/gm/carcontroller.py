@@ -84,6 +84,9 @@ STOP_SETTLE_COMMANDS = 12  # 25 Hz commands (0.48 s) the eased brake is kept aft
 STOP_SETTLE_MAX_TIME = 100
 STOP_SETTLE_TIME_PER_COMMAND = 4
 STOP_SETTLE_MAX_PITCH = 0.03  # rad (about a 3 % grade): on a steeper road the hold comes at standstill as before
+# After the settle time the brake rises to the hold by STOP_BRAKE_RISE per command, or faster when the hold is far above
+# the kept brake (the Malibus' CP.stopAccel hold, 200): the whole gap within this many 25 Hz commands (0.48 s)
+STOP_SETTLE_RISE_COMMANDS = 12
 
 
 class CarController(CarControllerBase):
@@ -95,9 +98,13 @@ class CarController(CarControllerBase):
     self.apply_brake = 0
     self.last_sent_brake = 0  # friction brake in the last 0x315 sent (the stopping brake rises from it)
     # Engine camera-ACC / SDGM cars under openpilot long (user report 2026-11-26, Traverse): the end of a stop stepped
-    # the brake up (41 -> 52, entering stopping) and down (52 -> 40, in the instant the car stopped). EVs (the Bolts:
-    # their stop hold follows the stock camera's, which their ECM needs) and CC-only cars keep their stops.
-    self.smooth_stop = CP.openpilotLongitudinalControl and CP.carFingerprint in (CAMERA_ACC_CAR | SDGM_CAR) and \
+    # the brake up (41 -> 52, entering stopping) and down (52 -> 40, in the instant the car stopped). The Malibus are
+    # engine cars too (user request 2026-11-26: the ASCM harness with a SASCM, and the gateway Malibu); their hold is
+    # CP.stopAccel's -2.0 (brake 200), above STOP_SMOOTH_MAX_BRAKE, so their settle never starts and the hold comes at
+    # standstill as before. EVs (the Bolts: their stop hold follows the stock camera's, which their ECM needs) and
+    # CC-only cars keep their stops.
+    self.smooth_stop = CP.openpilotLongitudinalControl and \
+      CP.carFingerprint in (CAMERA_ACC_CAR | SDGM_CAR | MALIBU_CLUSTER_CAR) and \
       CP.carFingerprint not in EV_CAR and CP.carFingerprint not in CC_ONLY_CAR
     self.stop_ease_pct = 0  # StopBrakeEase, read every 0.5 s
     self.stop_ease_speed = 4. / 3.6  # StopBrakeEaseSpeed, m/s
@@ -111,6 +118,8 @@ class CarController(CarControllerBase):
     self.stop_settle_brake = None  # the brake kept just after standstill (STOP_SETTLE_COMMANDS), None when not settling
     self.stop_settle_left = 0
     self.stop_settle_commands = STOP_SETTLE_COMMANDS  # StopBrakeSettleTime, read every 0.5 s
+    self.stop_settle_rise = STOP_BRAKE_RISE
+    self.stop_request_brake = None  # the stopping request's own brake in this command, below the hold floor
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -229,9 +238,11 @@ class CarController(CarControllerBase):
     """Keep the eased brake until the car has really stopped (StopBrakeEase on): at the first standstill of a stop that
     was rolling and eased (not given up for a creep / downhill / a too long stop), the brake stays at what was sent (at
     least STOP_EASE_MIN_BRAKE) for StopBrakeSettleTime (default STOP_SETTLE_COMMANDS; 0 starts the rise at once), then
-    rises by STOP_BRAKE_RISE per command to the hold. Checked every command: a hold above STOP_SMOOTH_MAX_BRAKE, a road
-    steeper than STOP_SETTLE_MAX_PITCH, soft hold and wheels turning again (standstill lost) end it at once (Codex
-    review 2026-11-26 R1, R2); a stop settles once."""
+    rises to the hold by STOP_BRAKE_RISE per command, or by the gap over STOP_SETTLE_RISE_COMMANDS when that is more.
+    Checked every command: a stopping request above STOP_SMOOTH_MAX_BRAKE (the request, not CP.stopAccel's hold floor,
+    which is 200 on the Malibus), a road steeper than STOP_SETTLE_MAX_PITCH, soft hold and wheels turning again
+    (standstill lost) end it at once (Codex review 2026-11-26 R1, R2); a stop settles once. Wheels turning again in a
+    stop that has stood still get at least the standstill hold (-100 * CP.stopAccel), not the lower stopping brake."""
     if not (self.smooth_stop and CC.longActive and stopping):
       self.stop_rolling = self.stop_standstill_seen = False
       self.stop_settle_brake = None
@@ -240,23 +251,31 @@ class CarController(CarControllerBase):
       self.stop_settle_brake = None
       return
     if not CS.out.standstill:
+      if self.stop_standstill_seen:
+        # Rolling again in a stop that already stood still (user report 2026-11-26, Malibu ASCM 00000050: the car let
+        # go of the mode 0xD hold 1.2 s after standstill and rolled to 0.37 m/s, and the brake sent fell from the
+        # hold, 200, to the stopping brake, 73, because standstill was lost): at least the hold until it stands again.
+        self.apply_brake = int(max(self.apply_brake, min(-100 * self.CP.stopAccel, self.params.MAX_BRAKE)))
       self.stop_rolling = True
       self.stop_settle_brake = None  # never kept while the wheels turn: the hold (or the stopping brake) at once
       return
     pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
-    if self.apply_brake > STOP_SMOOTH_MAX_BRAKE or abs(pitch) > STOP_SETTLE_MAX_PITCH:
-      self.stop_settle_brake = None  # a strong hold or a steep road: the hold now, also in the middle of a settle
+    request = self.apply_brake if self.stop_request_brake is None else self.stop_request_brake
+    if request > STOP_SMOOTH_MAX_BRAKE or abs(pitch) > STOP_SETTLE_MAX_PITCH:
+      self.stop_settle_brake = None  # a strong stop request or a steep road: the hold now, also mid-settle
     elif not self.stop_standstill_seen and self.stop_rolling and self.stop_ease_pct > 0 and self.stop_ease_applied and \
          not self.stop_ease_given_up and self.last_sent_brake < self.apply_brake:
       self.stop_settle_brake = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
       self.stop_settle_left = self.stop_settle_commands
+      gap = self.apply_brake - self.stop_settle_brake
+      self.stop_settle_rise = max(STOP_BRAKE_RISE, gap / STOP_SETTLE_RISE_COMMANDS)
     self.stop_standstill_seen = True
     if self.stop_settle_brake is None:
       return
     if self.stop_settle_left > 0:
       self.stop_settle_left -= 1
     else:
-      self.stop_settle_brake += STOP_BRAKE_RISE
+      self.stop_settle_brake += self.stop_settle_rise
     if self.stop_settle_brake >= self.apply_brake:
       self.stop_settle_brake = None  # at the hold
       return
@@ -403,6 +422,7 @@ class CarController(CarControllerBase):
         interceptor_gas_cmd = 0
         press_regen_paddle = False
         gas_brake_hysteresis_active = False
+        self.stop_request_brake = None
         if not CC.longActive:
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
@@ -418,6 +438,14 @@ class CarController(CarControllerBase):
             stop_brake = int(round(np.interp(brake_accel if self.long_pitch else actuators.accel,
                                              self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
             self.apply_brake = int(min(max(self.apply_brake, stop_brake), self.params.MAX_BRAKE))
+            self.stop_request_brake = stop_brake
+            pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
+            if not CS.out.standstill and CS.out.vEgo > 0. and not self.stop_standstill_seen and \
+               stop_brake <= STOP_SMOOTH_MAX_BRAKE < self.apply_brake and abs(pitch) <= STOP_SETTLE_MAX_PITCH:
+              # A hold floor far above the request (the Malibus' CP.stopAccel 200) waits for standstill: in the last
+              # 0.1 m/s the request (and its easing) brakes, as on the cars whose floor is near it (user request
+              # 2026-11-26; Malibu 00000050 stepped 73 -> 200 at 0.09 m/s, before standstill)
+              self.apply_brake = stop_brake
           press_regen_paddle = False
         else:
           # Normal operation

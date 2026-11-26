@@ -131,7 +131,7 @@ The description above concerns upstream control. The final CANFD request overrid
 <a id="stop-brake-ease"></a>
 ### `StopBrakeEase` · Ease the brake off before the stop, `StopBrakeEaseSpeed` · Ease start speed, `StopBrakeSettleTime` · Settle time after the stop
 
-Only on Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so on, camera ACC / SDGM openpilot longitudinal control). EVs (the Bolts) and other cars are unaffected (user request 2026-11-26).
+Only on Chevrolet engine cars (camera ACC / SDGM such as the Traverse, Trailblazer, Equinox and Silverado, and the Malibu ASCM harness with a SASCM and the gateway Malibu, under openpilot longitudinal control). EVs (the Bolts) and other cars are unaffected (user request 2026-11-26; the Malibus added the same day).
 
 - `StopBrakeEase`: default `30`, range `0 to 60` (%), step `5`. `0` = off.
 - `StopBrakeEaseSpeed`: default `4`, range `1 to 10` (km/h), step `1`.
@@ -141,7 +141,9 @@ Like a driver letting off a little just before the car stops: while stopping, on
 
 The wheel speed reads 0 below about 0.75 km/h, so the car still rolls 0.4 to 0.5 s after standstill is detected. The eased brake is therefore kept for `StopBrakeSettleTime` (default 0.48 s) after standstill and then rises by 3 per command (0.04 s) back to the stop hold (usually within 0.7 to 0.8 s at the default, about 1.2 to 1.3 s at 1 s). Raise it if a last jolt remains, lower it if the car seems to drift after stopping. The settle time applies from the next stop (user request 2026-11-26). Before, the hold came at the moment of standstill, braked the last few centimetres harder and the car rocked back with a thump when it really stopped (user report 2026-11-26, seen on the comma accelerometer).
 
-- **The hold at once:** wheels turning again in that time, soft hold, a road steeper than about 3 %, or a stop hold stronger than -0.8 m/s². A stop is settled like this only once.
+- **The hold at once:** wheels turning again in that time, soft hold, a road steeper than about 3 %, or a stop request stronger than -0.8 m/s². A stop is settled like this only once.
+- **Rolling again after standing:** if the wheels turn again in a stop that has stood still, at least the stop hold is applied until the car stands again (all these cars). Before, losing standstill dropped the brake to the weaker stopping brake (user report 2026-11-26, Malibu: 1.2 s after standing the car let go of the hold and rolled at 0.37 m/s while the brake fell from 200 to 73).
+- **Malibu:** its stop hold is 200 (about -2.0 m/s²), so the car is stopped by the stopping request until it really stands (before, 200 came below 0.1 m/s), and after `StopBrakeSettleTime` the brake rises to 200 over about 0.5 s. On a road steeper than 3 % the hold comes at once as before.
 
 - **Not eased:** a stopping brake stronger than -0.8 m/s², rolling back.
 - **Ends:** if the car is not decelerating for more than 0.32 s (counted so that noise cannot reset it; a downhill or the creep, for example) or easing has lasted 5 s in that stop, easing ends for that stop and the brake is joined back up to the stopping brake. Once the car has stood still, the stop is not eased again until it ends. The next stop eases again. An unreadable stored value turns easing off.

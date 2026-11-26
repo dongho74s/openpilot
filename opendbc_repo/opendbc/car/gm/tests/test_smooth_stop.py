@@ -22,14 +22,17 @@ def test_engine_cars_smooth_the_stop_and_evs_do_not(runtime, monkeypatch, car):
   assert not controller(runtime, monkeypatch, bolt_cp(runtime, CAR.CHEVROLET_BOLT_ACC_PEDAL, True, False)).smooth_stop
 
 
-def test_ascm_and_gateway_long_cars_keep_their_stops(runtime, monkeypatch):
-  """Codex review 2026-11-26: only camera ACC / SDGM engine cars (the Malibu / Acadia gateway long and the Malibu ASCM
-  with a SASCM are not in scope)."""
+def test_the_malibus_smooth_the_stop_and_the_acadia_does_not(runtime, monkeypatch):
+  """User request 2026-11-26: the Malibus are engine cars too (the ASCM harness with a SASCM, the gateway Malibu); the
+  Acadia's gateway long stays out of scope (Codex review 2026-11-26)."""
   from opendbc.car.gm.tests.test_malibu_ascm import malibu_cp
-  for cp in (build_cp(runtime, CAR.CHEVROLET_MALIBU, True), build_cp(runtime, CAR.GMC_ACADIA, True),
-             malibu_cp(runtime, True)):
-    if cp.openpilotLongitudinalControl:
-      assert not controller(runtime, monkeypatch, cp).smooth_stop, cp.carFingerprint
+  ascm = malibu_cp(runtime, True)
+  assert ascm.openpilotLongitudinalControl and controller(runtime, monkeypatch, ascm).smooth_stop
+  gateway = build_cp(runtime, CAR.CHEVROLET_MALIBU, True)
+  assert not gateway.openpilotLongitudinalControl or controller(runtime, monkeypatch, gateway).smooth_stop
+  acadia = build_cp(runtime, CAR.GMC_ACADIA, True)
+  assert not acadia.openpilotLongitudinalControl or not controller(runtime, monkeypatch, acadia).smooth_stop
+  assert not controller(runtime, monkeypatch, malibu_cp(runtime, False)).smooth_stop  # stock ACC: not our long
 
 
 def test_the_brake_does_not_drop_in_the_instant_the_car_stops(runtime, monkeypatch):
@@ -178,6 +181,61 @@ def test_a_creep_release_called_off_during_the_settle_gets_the_hold_back_at_once
 
   monkeypatch.setattr(d.c.auto_resume, "update", creep_release_once)
   assert brakes(d.run(-0.5, 0.12, state="stopping", v=0.0)) == [0, 50, 50]  # released once, then the hold at once
+
+
+def malibu_drive(runtime, monkeypatch, **params):
+  from opendbc.car.gm.tests.test_malibu_ascm import malibu_cp
+  cp = malibu_cp(runtime, True)
+  assert int(-100 * cp.stopAccel) == 200  # CP.stopAccel's -2.0 hold
+  return Drive(runtime, monkeypatch, cp, **params)
+
+
+def test_the_malibu_settles_to_its_strong_hold_within_a_second(runtime, monkeypatch):
+  """User request 2026-11-26: the Malibu's hold (200) is far above the eased brake, so after the settle time it rises by
+  the gap over STOP_SETTLE_RISE_COMMANDS, not 3 per command (that would take 2 s)."""
+  from opendbc.car.gm.carcontroller import STOP_SETTLE_COMMANDS, STOP_SETTLE_RISE_COMMANDS
+  d = malibu_drive(runtime, monkeypatch, **EASE)
+  into_a_stop(d)
+  seq = eased_to_the_stop(d)
+  assert seq == sorted(seq, reverse=True) and seq[-1] < 50
+  stopped = brakes(d.run(-0.5, 1.6, state="stopping", v=0.0))
+  assert stopped[:STOP_SETTLE_COMMANDS] == [seq[-1]] * STOP_SETTLE_COMMANDS
+  rise = stopped[STOP_SETTLE_COMMANDS:stopped.index(200)]
+  assert rise == sorted(rise) and len(rise) <= STOP_SETTLE_RISE_COMMANDS
+  assert set(stopped[stopped.index(200):]) == {200} and stopped.index(200) * 0.04 <= 1.0
+  assert d.brake_modes[-1] == 0xd  # the full-stop hold
+
+
+def test_the_malibu_without_easing_gets_its_hold_at_standstill(runtime, monkeypatch):
+  d = malibu_drive(runtime, monkeypatch, StopBrakeEase=0)
+  into_a_stop(d)
+  d.run(-0.5, 0.4, state="stopping", v=0.3)
+  assert set(brakes(d.run(-0.5, 0.3, state="stopping", v=0.0))) == {200}
+
+
+def test_a_strong_stop_request_on_the_malibu_gets_the_hold_at_once(runtime, monkeypatch):
+  d = malibu_drive(runtime, monkeypatch, **EASE)
+  into_a_stop(d)
+  eased_to_the_stop(d)
+  assert max(brakes(d.run(-0.5, 0.12, state="stopping", v=0.0))) < 200  # settling
+  assert brakes(d.run(-1.0, 0.04, state="stopping", v=0.0)) == [200]  # request 100 > STOP_SMOOTH_MAX_BRAKE: the hold
+
+
+@pytest.mark.parametrize("ease", [30, 0])
+def test_a_malibu_rolling_again_after_standstill_gets_the_hold_at_once(runtime, monkeypatch, ease):
+  """User report 2026-11-26 (Malibu ASCM 00000050): 1.2 s into the hold the car let go and rolled to 0.37 m/s; the brake
+  sent fell from the hold (200) to the stopping brake (73) because standstill was lost. Now the hold stays."""
+  d = malibu_drive(runtime, monkeypatch, StopBrakeEase=ease, StopBrakeEaseSpeed=4)
+  into_a_stop(d, accel=-0.81)
+  for v in (1.0, 0.6, 0.2):
+    d.run(-0.81, 0.2, state="stopping", v=v, a=-0.4)
+  d.run(-0.81, 1.6, state="stopping", v=0.0)  # stood, settled, holding
+  rolling = brakes(d.run(-0.81, 0.4, state="stopping", v=0.35, a=1.0))
+  assert set(rolling) == {200}  # was 73
+  assert d.brake_modes[-1] == 0xa  # not the full-stop mode while the wheels turn
+  assert set(brakes(d.run(-0.81, 0.6, state="stopping", v=0.0))) == {200}  # stood again: the hold, no second settle
+  away = brakes(d.run(0.5, 0.2, state="starting", v=0.3))  # LongControl leaves stopping: no hold forced
+  assert away[-1] == 0
 
 
 def test_wheels_turning_again_get_the_hold_at_once_and_a_stop_settles_once(runtime, monkeypatch):
