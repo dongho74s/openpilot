@@ -613,7 +613,9 @@ def run(*, feedback=FEEDBACK_PATH, status=STATUS_PATH, duration=None, bluetooth_
           extended_feedback = False
           model_navigation.clear('model_disconnected')
           model_route_cache.update(model_navigation)
-          quick_usb = not bluetooth_only and time.monotonic() < usb_quick_until
+          # only a failing cable attempt: a Bluetooth fallback keeps its own fast-retry rule and backoff
+          # (Codex review 2026-11-26 P2)
+          quick_usb = transport_name == 'usb' and not bluetooth_only and time.monotonic() < usb_quick_until
           if not quick_usb:
             failures += 1
           if fast_retry:

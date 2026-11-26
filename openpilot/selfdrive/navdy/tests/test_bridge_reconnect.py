@@ -434,3 +434,10 @@ def test_a_briefly_absent_hud_keeps_its_trust(monkeypatch):
   with pytest.raises(ConnectionError):
     link.connect()
   assert t._trusted['serial'] == 'NAVDY01'
+
+
+def test_a_failing_bluetooth_fallback_keeps_its_backoff_inside_the_quick_window(monkeypatch, tmp_path):
+  """Codex review 2026-11-26 P2: the quarter-second retry is for the cable only."""
+  state = run_usb_bridge(monkeypatch, tmp_path, drop_at=103., down_for=6., peer='54:ED:A3:00:48:23', duration=12.)
+  assert len([t for t in state.bt_attempts if t < 103. + bridge.USB_QUICK_WINDOW]) <= 2
+  assert bridge.USB_QUICK_RETRY not in state.delays[1:]
