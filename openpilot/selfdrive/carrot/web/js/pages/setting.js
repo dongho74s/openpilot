@@ -868,11 +868,113 @@ function formatSettingRangeMeta(p) {
   if (p?.options && getDeclaredSettingOptionLabel(p.name, p.default) !== null) {
     return `${getUIText("default_value", "Default")}: ${formatSettingDisplayValue(p, p.default)}`;
   }
-  return [
-    `min=${formatSettingDisplayValue(p, p?.min)}`,
-    `max=${formatSettingDisplayValue(p, p?.max)}`,
-    `default=${formatSettingDisplayValue(p, p?.default)}`,
-  ].join(", ");
+  // One short line (user request 2026-11-26: "the values should be visible at a glance"), was min=…, max=…, default=…
+  return `${getUIText("setting_range", "Range")} ${formatSettingDisplayValue(p, p?.min)}~${formatSettingDisplayValue(p, p?.max)}`
+    + ` · ${getUIText("setting_default_short", "Default")} ${formatSettingDisplayValue(p, p?.default)}`;
+}
+
+// Collapsed descriptions (user request 2026-11-26): long descriptions show two lines until tapped. The "show all"
+// preference is per browser; a tap flips one item relative to it.
+const SETTING_DESCR_ALL_KEY = "carrot.settingDescrAll.v1";
+const settingDescrToggled = new Set();
+
+function isSettingDescrShowAll() {
+  try {
+    return localStorage.getItem(SETTING_DESCR_ALL_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function setSettingDescrShowAll(value) {
+  try {
+    localStorage.setItem(SETTING_DESCR_ALL_KEY, value ? "1" : "0");
+  } catch (_) {
+    // private mode: the choice lasts for this page only
+  }
+  settingDescrToggled.clear();
+}
+
+function isSettingDescrExpanded(name) {
+  return isSettingDescrShowAll() !== settingDescrToggled.has(name);
+}
+
+function applySettingDescrState(row) {
+  const name = row?.dataset?.settingName || "";
+  const descr = row?.querySelector(".descr--collapsible");
+  if (!descr) return;
+  const expanded = isSettingDescrExpanded(name);
+  descr.classList.toggle("is-collapsed", !expanded);
+  const more = row.querySelector(".setting-descr-more");
+  if (more) {
+    more.textContent = expanded ? getUIText("setting_descr_less", "Less") : getUIText("setting_descr_more", "More");
+    more.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+}
+
+function toggleSettingDescr(row) {
+  const name = row?.dataset?.settingName || "";
+  if (settingDescrToggled.has(name)) settingDescrToggled.delete(name);
+  else settingDescrToggled.add(name);
+  applySettingDescrState(row);
+}
+
+// Kept until the page reloads (not stored): a filter left on from an earlier visit would look like missing settings.
+let settingChangedOnly = false;
+
+function isSettingChangedOnly() {
+  return settingChangedOnly;
+}
+
+function appendSettingDescrToolbar(itemsBox) {
+  const bar = document.createElement("div");
+  bar.className = "setting-list-toolbar";
+  // "Changed only" hides rows still at their default (user request 2026-11-26: see the whole picture at a glance).
+  const changed = document.createElement("button");
+  changed.type = "button";
+  changed.className = "setting-changed-only-toggle";
+  itemsBox.dataset.changedEmpty = getUIText("setting_changed_none", "Nothing here differs from the default");
+  const applyChanged = (on) => {
+    itemsBox.classList.toggle("setting-items--changed-only", on);
+    changed.classList.toggle("is-active", on);
+    changed.setAttribute("aria-pressed", on ? "true" : "false");
+    changed.textContent = getUIText("setting_changed_only", "Changed only");
+  };
+  applyChanged(isSettingChangedOnly());
+  changed.onclick = (event) => {
+    event.stopPropagation();
+    settingChangedOnly = !settingChangedOnly;
+    applyChanged(settingChangedOnly);
+  };
+  bar.appendChild(changed);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "setting-descr-all-toggle";
+  const label = () => (isSettingDescrShowAll()
+    ? getUIText("setting_descr_collapse_all", "Collapse descriptions")
+    : getUIText("setting_descr_expand_all", "Expand descriptions"));
+  button.textContent = label();
+  button.onclick = (event) => {
+    event.stopPropagation();
+    setSettingDescrShowAll(!isSettingDescrShowAll());
+    button.textContent = label();
+    itemsBox.querySelectorAll(".setting").forEach(applySettingDescrState);
+  };
+  bar.appendChild(button);
+  itemsBox.appendChild(bar);
+}
+
+// Rows whose value differs from the declared default get .is-changed (highlighted value, reset button shown).
+function markSettingChanged(row, value) {
+  const name = row?.dataset?.settingName || "";
+  const item = findSettingItemByName(name)?.item;
+  if (!row || !item || item.default === undefined || item.default === null) return;
+  const numeric = Number(value);
+  const fallback = Number(item.default);
+  const changed = Number.isFinite(numeric) && Number.isFinite(fallback)
+    ? Math.abs(numeric - fallback) > 1e-9
+    : String(value) !== String(item.default);
+  row.classList.toggle("is-changed", changed);
 }
 
 function formatSettingPopularValue(p, raw) {
@@ -1126,6 +1228,7 @@ function getSettingOptionLabel(name, value) {
 
 function syncSettingControlState(row, value) {
   if (!row) return;
+  markSettingChanged(row, value);
   const text = String(value);
   const valueButton = row.querySelector(".val");
   if (valueButton) {
@@ -2564,6 +2667,7 @@ async function renderItems(group, options = {}) {
   // here on every debounced keystroke, and emptying the list up front made
   // each keystroke flash like a full refresh.
   itemsBox.innerHTML = "";
+  itemsBox.classList.remove("setting-items--changed-only");
   delete itemsBox.dataset.renderedGroup;
   delete itemsBox.dataset.renderedDetail;
   itemsBox.dataset.renderedSearchQuery = group === SETTING_INLINE_SEARCH_GROUP ? settingInlineSearchQuery : "";
@@ -2593,6 +2697,7 @@ async function renderItems(group, options = {}) {
   }
 
   if (profile && !detailMode) appendSettingProfileHeader(profile, itemsBox);
+  if (!detailMode && list.length > 1) appendSettingDescrToolbar(itemsBox);
 
   if (!list.length && group === SETTING_INLINE_SEARCH_GROUP) {
     settingViewRuntime.renderEmptyState(itemsBox, {
@@ -2641,7 +2746,7 @@ async function renderItems(group, options = {}) {
     const descr = formatItemText(p, "descr", "edescr", "");
     const rangeMeta = formatSettingRangeMeta(p);
     const rangeMetaHtml = rangeMeta
-      ? `<div class="muted mt-sm">${escapeHtml(rangeMeta)}</div>`
+      ? `<div class="muted setting-range-meta">${escapeHtml(rangeMeta)}</div>`
       : "";
 
     const el = document.createElement("div");
@@ -2718,6 +2823,23 @@ async function renderItems(group, options = {}) {
 
     el.appendChild(top);
     el.appendChild(d);
+    if (!detailMode && (descr.length > 70 || descr.includes("\n"))) {
+      d.classList.add("descr--collapsible");
+      d.onclick = (event) => {
+        if (window.getSelection && String(window.getSelection())) return;  // let a text selection be
+        event.stopPropagation();
+        toggleSettingDescr(el);
+      };
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "setting-descr-more";
+      more.onclick = (event) => {
+        event.stopPropagation();
+        toggleSettingDescr(el);
+      };
+      el.appendChild(more);
+      applySettingDescrState(el);
+    }
 
     const popularTopValues = Array.isArray(popularEntry?.top_values) ? popularEntry.top_values : [];
     let contextPanel = null;
@@ -2794,7 +2916,7 @@ async function renderItems(group, options = {}) {
     }
     const defaultBtn = document.createElement("button");
     defaultBtn.type = "button";
-    defaultBtn.className = "setting-default-reset";
+    defaultBtn.className = "setting-default-reset setting-reset-default";
     defaultBtn.textContent = getUIText("setting_reset_default", "Default");
     defaultBtn.setAttribute("aria-label", getUIText("setting_reset_default_aria", "Reset to default"));
     defaultBtn.onclick = async (event) => {

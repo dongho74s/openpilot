@@ -451,3 +451,91 @@
   overflow-wrap: anywhere;
   line-height: 1.4;
 }
+
+/* At a glance (user request 2026-11-26: "the descriptions are so long the values don't fit on one screen").
+   Long descriptions show two lines until tapped; the range is one short muted line; a value that differs from
+   its default is highlighted and only then offers its reset button. */
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-range-meta {
+  margin-top: 2px;
+  font-size: var(--fs-label-sm, 12px);
+  opacity: .78;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .descr--collapsible {
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .descr--collapsible.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-descr-more {
+  display: inline-block;
+  margin: 2px 0 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--md-primary, var(--setting-fab-accent));
+  font-size: var(--fs-label-md, 13px);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.is-changed {
+  box-shadow: inset 3px 0 0 var(--setting-fab-accent);
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.is-changed .val {
+  color: var(--setting-fab-accent);
+  font-weight: 700;
+}
+
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting:not(.is-changed) .setting-reset-default {
+  display: none;
+}
+
+.page--setting .setting-list-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 4px 2px;
+}
+
+.page--setting .setting-changed-only-toggle.is-active {
+  border-color: var(--setting-fab-accent);
+  background: color-mix(in srgb, var(--setting-fab-accent) 18%, transparent);
+  color: var(--setting-fab-accent);
+}
+
+.page--setting .setting-items--changed-only .setting:not(.is-changed) {
+  display: none;
+}
+
+.page--setting .setting-items--changed-only .setting-section-block:not(:has(.setting.is-changed)) {
+  display: none;
+}
+
+.page--setting :is(.setting-changed-only-toggle, .setting-descr-all-toggle) {
+  border: 1px solid color-mix(in srgb, var(--md-outline-var) 50%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--md-on-surface-var);
+  font-size: var(--fs-label-md, 13px);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.setting-items--changed-only:not(:has(.setting.is-changed))::after {
+  content: attr(data-changed-empty);
+  display: block;
+  padding: 18px 4px;
+  text-align: center;
+  color: var(--md-on-surface-var);
+  font-size: 13px;
+}
