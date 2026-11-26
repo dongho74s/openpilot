@@ -120,7 +120,7 @@
 @media (min-aspect-ratio: 13/10),
        (horizontal-viewport-segments: 2),
        (vertical-viewport-segments: 2),
-       (min-width: 900px) and (min-height: 650px) {
+       (min-width: 640px) and (min-height: 650px) {
   .intro-col { width: min(100%, var(--intro-col-width-wide)); }
 }
 

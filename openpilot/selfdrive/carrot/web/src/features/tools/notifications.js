@@ -91,8 +91,10 @@ import { getToolCommandPreview, renderToolsMeta } from "./runtime.js";
   }
 
   function getMode() {
+    // Below 1000 px there is no room for the log column beside the tools, rail or not.
+    if (global.matchMedia?.("(max-width: 999px)")?.matches) return MODE.PORTRAIT;
     if (global.CarrotLayout?.isWide?.()) return MODE.LANDSCAPE;
-    return global.matchMedia?.("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px)")?.matches ? MODE.PORTRAIT : MODE.LANDSCAPE;
+    return global.matchMedia?.("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px)")?.matches ? MODE.PORTRAIT : MODE.LANDSCAPE;
   }
 
   function syncHostMode(out, mode = getMode()) {

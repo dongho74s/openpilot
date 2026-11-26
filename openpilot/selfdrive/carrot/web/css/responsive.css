@@ -66,7 +66,7 @@
 
 /* Wide layout: left nav rail. Tracks viewport.js LAYOUT_WIDE_QUERY:
    landscape-ish viewports, fold/viewport segments, and large fold/tablet panels. */
-@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px) {
+@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px) {
   :root {
     --nav-bar-height: 0px;
     --nav-rail-width: 92px;
@@ -168,4 +168,11 @@
     transform-origin: right bottom;
   }
 
+}
+
+/* A narrower rail where width is precious (an unfolded Fold, a phone held sideways); only used in the wide layout. */
+@media (max-width: 999px) {
+  :root {
+    --nav-rail-width: 76px;
+  }
 }

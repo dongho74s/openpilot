@@ -21,7 +21,7 @@ Carrot Web is a local device-management interface. Do not expose it directly to 
 
 ## Pages at a glance
 
-A wide display (a tablet, or a phone held sideways: 900 px or wider, or 1.3 times wider than tall) shows the left rail and two panes; anything narrower (a portrait phone, an unfolded Fold) shows the floating bottom bar and one column.
+A wide display (a PC, a tablet, an unfolded Fold, a phone held sideways) shows the left rail, and Settings shows the groups on the left and the items on the right. A portrait phone shows the floating bottom bar and one column. Below 1000 px (an unfolded Fold) the rail is narrower, the Tools notifications pull down from the top and Logs stacks each route card. On very wide screens the settings items and the Tools cards keep a readable width.
 
 | Page | Main purpose |
 |---|---|

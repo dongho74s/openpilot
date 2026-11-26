@@ -2,7 +2,7 @@
    Split out of the former device.css; rule order is unchanged. */
 
 
-@media (min-width: 769px) and (min-aspect-ratio: 13/10), (min-width: 769px) and (horizontal-viewport-segments: 2), (min-width: 769px) and (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px) {
+@media (min-width: 769px) and (min-aspect-ratio: 13/10), (min-width: 769px) and (horizontal-viewport-segments: 2), (min-width: 769px) and (vertical-viewport-segments: 2), (min-width: 769px) and (min-height: 650px) {
   .setting-search-panel {
     --setting-search-form-width: clamp(360px, 34vw, 540px);
     --setting-search-results-width: min(64vw, 820px);
@@ -13,7 +13,7 @@
   }
 }
 
-@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page--setting .settingTop {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -52,7 +52,7 @@
    Narrow layout (aspect-ratio < 13/10) covers portrait phones AND near-square
    foldables ??the complement of the wide (>= 13/10) split block below, so the
    two stay mutually exclusive and exhaustive (no square-aspect gap). */
-@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page--setting :is(#settingScreenItems, #settingInlineSearchResults) {
     padding-top: 0;
   }
@@ -150,7 +150,7 @@
 /* Wide layout ??two-column split (group list | detail). Complement of the
    narrow single-column block above; only engages at aspect-ratio >= 13/10 so
    near-square foldables don't get the cramped split. */
-@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px) {
+@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px) {
   .page.page--setting {
     --setting-landscape-left-width: clamp(208px, 28vw, 260px);
     --setting-landscape-gap: 12px;
@@ -383,7 +383,7 @@
   }
 }
 
-@media (max-width: 760px) and (min-aspect-ratio: 13/10), (max-width: 760px) and (horizontal-viewport-segments: 2), (max-width: 760px) and (vertical-viewport-segments: 2), (min-width: 900px) and (max-width: 760px) and (min-height: 650px) {
+@media (max-width: 760px) and (min-aspect-ratio: 13/10), (max-width: 760px) and (horizontal-viewport-segments: 2), (max-width: 760px) and (vertical-viewport-segments: 2), (min-width: 640px) and (max-width: 760px) and (min-height: 650px) {
   .page.page--setting {
     --setting-landscape-left-width: clamp(184px, 27vw, 220px);
   }

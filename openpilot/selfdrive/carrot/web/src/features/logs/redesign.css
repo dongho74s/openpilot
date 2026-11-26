@@ -52,3 +52,33 @@
   border-top: 0;
   background: transparent;
 }
+
+/* segments: soft rows on the shared fill instead of outlined boxes; pill buttons in the selection column */
+#pageLogs .dashcam-segment-tile {
+  border: 0;
+  border-radius: 12px;
+  background: var(--c-fill);
+  box-shadow: none;
+}
+
+@media (hover: hover) {
+  #pageLogs .dashcam-segment-tile:hover {
+    background: var(--c-fill-press);
+  }
+}
+
+#pageLogs .dashcam-segment-thumb {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#pageLogs .dashcam-selection-row .smallBtn {
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  font-weight: 650;
+}
+
+#pageLogs .dashcam-selection-count {
+  color: var(--md-on-surface-var);
+}

@@ -1258,7 +1258,7 @@
 
 /* Phones: the favourites strip runs to the screen edge (the screens clip at the edge, not at the gutter), and the
    settings menu is a small round button at the top right instead of a large floating one over the tiles. */
-@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page.page--setting:not(.setting-layout-split) > .page-fab-layer--setting {
     top: 12px;
     right: max(var(--page-gutter-inline, 20px), env(safe-area-inset-right, 0px));
@@ -1266,23 +1266,23 @@
   }
 }
 
-.page--setting:not(.setting-layout-split) .page-fab-layer--setting .setting-fab-menu {
+.page--setting .page-fab-layer--setting .setting-fab-menu {
   --fab-size: 40px;
   transform-origin: right top;
 }
 
-.page--setting:not(.setting-layout-split) .page-fab-layer--setting .setting-fab-actions {
+.page--setting .page-fab-layer--setting .setting-fab-actions {
   top: calc(var(--fab-size) + 10px);
   bottom: auto;
   transform: translateY(-8px) scale(0.96);
   transform-origin: right top;
 }
 
-.page--setting:not(.setting-layout-split) .page-fab-layer--setting .setting-fab-menu.is-open .setting-fab-actions {
+.page--setting .page-fab-layer--setting .setting-fab-menu.is-open .setting-fab-actions {
   transform: translateY(0) scale(1);
 }
 
-.page--setting:not(.setting-layout-split) #btnSettingSearch.fab {
+.page--setting #btnSettingSearch.fab {
   --fab-size: 40px;
   width: var(--fab-size);
   height: var(--fab-size);
@@ -1292,7 +1292,7 @@
   box-shadow: var(--c-card-shadow), inset 0 0 0 1px var(--set-line);
 }
 
-.page--setting:not(.setting-layout-split) #btnSettingSearch.fab svg {
+.page--setting #btnSettingSearch.fab svg {
   width: 18px;
   height: 18px;
 }
@@ -1736,4 +1736,92 @@
   font-size: 15px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* Split layout at any width: a group column wide enough for the title, search, counts and favourites (it was
+   208–260 px, which clipped them on an unfolded Fold), and a compact header so it all fits in one column. */
+.page.page--setting {
+  --setting-landscape-left-width: clamp(272px, 34vw, 360px);
+}
+
+.page--setting.setting-layout-split #settingTabBar.setting-tabbar {
+  gap: 14px;
+  margin-top: 4px;
+  padding-right: 0;
+}
+
+.page--setting.setting-layout-split #settingTabBar .setting-tab {
+  font-size: 22px;
+}
+
+.page--setting.setting-layout-split .setting-home-sub {
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.page--setting.setting-layout-split #carrotTabContent #groupList > .setting-inline-search-slot {
+  margin-top: 14px;
+}
+
+.page--setting.setting-layout-split .setting-changed-card {
+  gap: 12px;
+}
+
+.page--setting.setting-layout-split .setting-changed-card__title {
+  font-size: 15px;
+}
+
+.page--setting.setting-layout-split .setting-changed-card__hint {
+  font-size: 12px;
+}
+
+/* the group list is beside the items, so the items need no "‹ 설정" row */
+.page--setting.setting-layout-split :is(#settingScreenItems, #settingInlineSearchResults) #itemsTitle .setting-title-back {
+  display: none;
+}
+
+.page--setting.setting-layout-split :is(#settingScreenItems, #settingInlineSearchResults) #itemsTitle .setting-title-text {
+  font-size: 26px;
+}
+
+.page--setting.setting-layout-split #settingScreenItems .setting-items-sub {
+  margin-top: 4px;
+}
+
+/* split layout: the menu button sits at the top right of the page, not over the group list */
+.page.page--setting.setting-layout-split > .page-fab-layer--setting {
+  top: 14px;
+  right: 20px;
+  bottom: auto;
+  left: auto;
+  width: auto;
+}
+
+.page.page--setting.setting-layout-split > .page-fab-layer--setting .setting-fab-menu {
+  position: relative;
+}
+
+.page--setting.setting-layout-split #itemsTitle .setting-title-text {
+  padding-right: 52px;
+}
+
+/* the device tab has no changed-count line, and its groups are one-line rows in the split column too */
+.page--setting.setting-tab-device .setting-items-sub {
+  display: none;
+}
+
+.page--setting.setting-layout-split :is(#carrotTabContent #groupList, #deviceGroupList)#deviceGroupList > .groupBtn.btn {
+  justify-content: space-between;
+  min-height: 50px;
+}
+
+.page--setting.setting-layout-split #deviceGroupList {
+  margin-top: 14px;
+}
+
+/* Big screens: the items keep a readable width instead of stretching name and value 1500 px apart */
+.page--setting.setting-layout-split :is(#settingScreenItems, #settingInlineSearchResults) > * {
+  max-width: 1080px;
 }

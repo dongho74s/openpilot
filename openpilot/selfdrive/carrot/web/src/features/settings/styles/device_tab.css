@@ -197,7 +197,7 @@
   overflow: hidden;
 }
 
-@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page--setting #deviceItems .device-setting--ssh .settingTop {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -425,7 +425,7 @@
    As a normal absolute child of the page it simply sits at the page's
    bottom-right and stays put. The page already excludes the nav bar + safe
    area from its height, so the offset here is just the small visual gap. */
-@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page.page--setting > .page-fab-layer--setting {
     position: absolute;
     top: auto;

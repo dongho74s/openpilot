@@ -901,7 +901,7 @@
 
 /* ── Notification dock and log ──
    Phones pull it down over the page; wide screens keep it beside the tools. Both use the page's own surfaces. */
-@media not all and (min-aspect-ratio: 13/10) {
+@media (max-width: 999px), (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
   #pageTools.page--tools > .tools-console-dock {
     background: color-mix(in srgb, var(--md-surface) 94%, transparent);
     border-top: 0;
@@ -1031,4 +1031,11 @@
 
 #pageTools .tools-head #toolsMeta .tools-meta__info:not([hidden]) ~ .tools-meta__status.is-idle:not(.has-unread) {
   display: none;
+}
+
+/* Big screens: the tools column keeps a readable width; the log stays at the right */
+@media (min-width: 1000px) {
+  #pageTools .tools-scroll-stack > * {
+    max-width: 880px;
+  }
 }

@@ -66,18 +66,17 @@ test("real rotation still changes the layout, including while typing", () => {
 });
 
 test("large portrait panels retain their wide layout when the keyboard opens", () => {
-  const view = createViewport(1000, 1200);
-  view.resize(1000, 1200, 500);
+  const view = createViewport(700, 800);
+  view.resize(700, 800, 500);
   assert.equal(view.window.CarrotLayout.isWide(), true);
   assert.equal(view.window.CarrotLayout.orientation(), "portrait");
 });
 
-// An unfolded Galaxy Fold (about 750 x 740 CSS px in the browser) is too narrow for the rail + two panes: it uses the
-// single-column layout with the bottom bar (user report 2026-11-27: the split cut the settings column off).
-test("an unfolded foldable uses the single-column square layout, not the split", () => {
+// An unfolded Galaxy Fold (about 750 x 740 CSS px in the browser) keeps the rail and the two-pane settings
+// (user request 2026-11-27: groups on the left, settings on the right).
+test("an unfolded foldable keeps the wide rail + split layout", () => {
   const view = createViewport(750, 740);
-  assert.equal(view.window.CarrotLayout.isWide(), false);
-  assert.equal(view.window.CarrotLayout.mode(), "square");
+  assert.equal(view.window.CarrotLayout.isWide(), true);
 });
 
 test("secure-context overlay keyboard retains its existing inset handling", () => {
