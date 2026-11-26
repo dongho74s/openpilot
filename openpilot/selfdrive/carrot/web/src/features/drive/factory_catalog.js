@@ -19,6 +19,11 @@ import {
   installDriveInsightsContentGlobal,
 } from "./contents/drive_insights/content.js";
 import { installDriveInsightsRuntimeFacade } from "./contents/drive_insights/runtime.js";
+import {
+  TRAVERSE_LIVE_CONTENT_ID,
+  createTraverseLiveContentFactory,
+  installTraverseLiveContentGlobal,
+} from "./contents/traverse_live/content.js";
 import { TEMPORARY_TELEMETRY_SURFACES } from "../telemetry/temporary_surface_flags.js";
 
 export const NAVIGATION_CONTENT_ID = "navigation";
@@ -26,6 +31,7 @@ export const DRIVE_CONTENT_FACTORY_IDS = Object.freeze([
   VISION_CONTENT_ID,
   NAVIGATION_CONTENT_ID,
   DRIVE_INSIGHTS_CONTENT_ID,
+  TRAVERSE_LIVE_CONTENT_ID,
 ]);
 
 function createTemporarilyDisabledDriveInsights(target) {
@@ -52,6 +58,7 @@ export function createDriveContentFactories(target = globalThis, options = {}) {
   });
   const driveInsightsOptions = { ...(options.driveInsights || {}), target };
   const driveInsights = createDriveInsightsContentFactory(driveInsightsOptions);
+  const traverseLive = createTraverseLiveContentFactory({ ...(options.traverseLive || {}), target });
   return Object.freeze({
     [VISION_CONTENT_ID](context = {}) {
       const content = vision.factory(context);
@@ -74,6 +81,10 @@ export function createDriveContentFactories(target = globalThis, options = {}) {
       if (driveInsightsOptions.runtime) target.DriveInsightsRuntime = runtime;
       const content = driveInsights(context);
       return content ? installDriveInsightsContentGlobal(target, content) : null;
+    },
+    [TRAVERSE_LIVE_CONTENT_ID](context = {}) {
+      const content = traverseLive(context);
+      return content ? installTraverseLiveContentGlobal(target, content) : null;
     },
   });
 }

@@ -43,7 +43,7 @@ See [Carrot Web](https://github.com/ajouatom/openpilot/wiki/Guide-Carrot-Web) fo
 
 ### Web layout defaults
 
-On a fresh install, `Tools > Web Settings > Layout` starts with **Area 1 full screen** in both orientations: Area 1 is **Carrot Vision** and Area 2 is **Carrot Navi**. **Default** restores both orientations to Area 1 full screen with Carrot Vision in Area 1 and Carrot Navi in Area 2. See [Carrot Web layout](carrot-web.md#layout) for the per-screen details.
+On a fresh install, `Tools > Web Settings > Layout` starts with **Area 1 full screen** in both orientations: Area 1 is **Carrot Vision** and Area 2 is **Carrot Navi**. **Default** restores both orientations to Area 1 full screen with Carrot Vision in Area 1 and Carrot Navi in Area 2. Each area can hold **Carrot Vision**, **Carrot Navi**, **Drive Insights**, or **Traverse Live** (the phone app's drive view, live only). See [Carrot Web layout](carrot-web.md#layout) for the per-screen details.
 
 ## Using the Settings screen
 

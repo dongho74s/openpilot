@@ -18,6 +18,7 @@ import {
   finalizeDriveVisionFacade,
   installDriveVisionLeafFacades,
 } from "../features/drive/contents/vision/index.js";
+import { installTraverseLiveLauncher } from "../features/drive/contents/traverse_live/content.js";
 
 const target = globalThis;
 const catalog = validateDriveContentCatalog(contentCatalogSource);
@@ -40,6 +41,7 @@ installDriveLayoutSpecFacade(layoutSpec, target);
 // evaluate. Runtime/content factories are finalized once those scripts finish.
 installDriveVisionLeafFacades(target);
 installCarrotNaviModuleGlobals(target);
+installTraverseLiveLauncher(target);
 
 let finalized = false;
 let workspaceRuntime = null;

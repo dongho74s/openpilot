@@ -55,6 +55,16 @@ The web video and HUD are reference displays. Always prioritize the vehicle's ac
 
 With `ShowPathEnd` on, the lead car gets a rounded box and distance badges (radar and vision) like the C3 screen; they are hidden while neither engaged nor steering. The old web following-distance bar and its 25 m label are not part of the C3 `new ui` 1 screen and are no longer drawn. See [following-gap settings](cruise-gap.md#following-gap) for the gap itself.
 
+### Traverse Live
+
+On the Drive start screen, `Traverse Live` (under `Carrot Vision`) replaces Carrot Vision with the drive view of the Traverse Live phone app: road, lanes, nearby cars, pedestrians, brake lights, turn signals and blind spots.
+
+- The viewing device (phone or PC) draws it; the comma only streams data on `/ws/viz`, about 205 KiB/s per viewer.
+- With the car off it shows `Connected to the comma · The drive view appears when the car is on`.
+- `Close` (top right) disconnects and returns to the Carrot Vision start screen. Leaving the Drive tab also disconnects.
+- **Traverse Live** can also be chosen as the area 1 or area 2 content in `Tools > Web Settings > Layout`; start it with that area's `Traverse Live` button.
+- The renderer (three.js) and vehicle models (about 1.3 MB) are downloaded from the comma once, on first start; no internet is needed.
+
 ### AR display and diagnostics
 
 - Enabling **Show AR** in `Tools > Web Settings` overlays Carrot Navi driving guidance on the Carrot Vision video and requests additional real-time pose and position data only while it is enabled.

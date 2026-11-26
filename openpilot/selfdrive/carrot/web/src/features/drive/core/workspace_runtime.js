@@ -100,6 +100,24 @@ function runtimeEnvironment(options) {
   };
 }
 
+/* A temporary swap of one content for another: `to` takes the slot of `from`;
+ * if `to` already sat in the other slot, `from` moves there (contents are singletons). */
+export function replaceLayoutContents(layout, replacement, isKnown = () => true) {
+  let primaryId = layout?.area1Content;
+  let secondaryId = layout?.area2Content;
+  const swap = replacement;
+  if (swap && isKnown(swap.to)) {
+    if (primaryId === swap.from) {
+      primaryId = swap.to;
+      if (secondaryId === swap.to) secondaryId = swap.from;
+    } else if (secondaryId === swap.from) {
+      secondaryId = swap.to;
+      if (primaryId === swap.to) primaryId = swap.from;
+    }
+  }
+  return { primaryId, secondaryId };
+}
+
 export function createDriveWorkspaceRuntime(options = {}) {
   const { target, documentRoot, MutationObserver } = runtimeEnvironment(options);
   const elements = options.elements || ensureDriveWorkspaceHosts(documentRoot);
@@ -197,14 +215,19 @@ export function createDriveWorkspaceRuntime(options = {}) {
   });
   if (!shell) return null;
 
+  // A temporary, unsaved swap (e.g. Traverse Live started from the vision start
+  // screen takes Carrot Vision's slot). The saved layout is untouched.
+  let contentReplacement = null;
+
+  function replacedContents(layout) {
+    return replaceLayoutContents(layout, contentReplacement, (id) => Boolean(registry?.get?.(id)));
+  }
+
   function applyLayout(layout = readLayout()) {
     if (!layout || destroyed) return false;
     // Content creation/mount is the only fallible part of a normalized layout.
     // Complete it first so an invalid factory cannot leave geometry half-applied.
-    const contentsChanged = shell.setContents({
-      primaryId: layout.area1Content,
-      secondaryId: layout.area2Content,
-    }, { source: options.source || "live" });
+    const contentsChanged = shell.setContents(replacedContents(layout), { source: options.source || "live" });
     const orientationChanged = shell.setOrientation(layout.orientation);
     const ratioChanged = shell.setRatio(layout.ratio, { orientation: layout.orientation });
     const layoutChanged = shell.setLayout({
@@ -351,6 +374,23 @@ export function createDriveWorkspaceRuntime(options = {}) {
     return shell.snapshot();
   }
 
+  function replaceContent(fromId, toId) {
+    if (destroyed) return false;
+    const from = String(fromId || "");
+    const to = String(toId || "");
+    if (!from || !to || from === to || !registry?.get?.(to)) return false;
+    contentReplacement = Object.freeze({ from, to });
+    sync();
+    return true;
+  }
+
+  function restoreContent() {
+    if (destroyed || !contentReplacement) return false;
+    contentReplacement = null;
+    sync();
+    return true;
+  }
+
   function contentForSlot(slot) {
     return shell.contentIdForSlot(slot);
   }
@@ -440,6 +480,9 @@ export function createDriveWorkspaceRuntime(options = {}) {
     readLayout,
     applyLayout,
     setReplayPresentation,
+    replaceContent,
+    restoreContent,
+    contentReplacement: () => contentReplacement,
     presentationActive,
     sync,
     status,

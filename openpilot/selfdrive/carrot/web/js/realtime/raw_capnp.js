@@ -59,6 +59,18 @@ carrotRawCapnpGlobal.CarrotRawCapnp = (() => {
         stockAeb: { kind: "bool", offset: 77 },
         stockFcw: { kind: "bool", offset: 78 },
         espDisabled: { kind: "bool", offset: 79 },
+        // Traverse fork (d93d3665): carState.stockLaneMarkings @105 = pointer slot 11 (verified with pycapnp bytes).
+        // left/right: -1 unknown, 0 dashed, 1 solid (Int16 default -1, stored XOR -1). Traverse Live reads it.
+        stockLaneMarkings: {
+          kind: "struct",
+          offset: 11,
+          schema: { fields: {
+            supported: { kind: "bool", offset: 0 },
+            left: { kind: "int16", offset: 1, xorDefault: -1 },
+            right: { kind: "int16", offset: 2, xorDefault: -1 },
+            sampleMonoTime: { kind: "uint64", offset: 1 },
+          } },
+        },
         leftBlindspot: { kind: "bool", offset: 352 },
         rightBlindspot: { kind: "bool", offset: 353 },
         steerFaultTemporary: { kind: "bool", offset: 354 },

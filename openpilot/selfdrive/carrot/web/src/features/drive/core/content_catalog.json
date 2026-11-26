@@ -25,6 +25,13 @@
       "supportedSlots": ["primary", "secondary"],
       "supportedSources": ["live", "replay"],
       "singleton": true
+    },
+    {
+      "id": "traverse_live",
+      "labelKey": "web_drive_layout_content_traverse_live",
+      "supportedSlots": ["primary", "secondary"],
+      "supportedSources": ["live"],
+      "singleton": true
     }
   ]
 }
