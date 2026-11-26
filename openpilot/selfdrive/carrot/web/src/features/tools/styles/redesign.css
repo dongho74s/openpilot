@@ -1,33 +1,76 @@
-/* Tools page in the settings list's language (user request 2026-11-26: "make the other tabs look good too,
-   especially the model choice and the drive evaluation at the top of Tools"). Sections are a title over a rule, not
-   glowing cards; no gradient icon tiles or pill states; one accent, used only where something needs attention.
-   Loaded last, so these rules win over the older card styles. */
+/* Tools in the 2026-11-27 design (the mockup the user approved). A title, then cards: the driving model, the last
+   drive's evaluation, then sections of plain rows (update, device), tiles (shortcuts), a button grid (settings
+   backup) and, last and apart, the actions that can't be undone in red. One accent, used only for new commits and
+   values that need attention. Loaded last, so these rules win over the older card and button styles. */
 
 #pageTools {
-  --tl-line: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
-  --tl-line-strong: color-mix(in srgb, var(--md-on-surface) 14%, transparent);
-  --tl-quiet: var(--md-on-surface-var);
-  --tl-tile: var(--md-surface-cont);
-  --tl-tile-press: color-mix(in srgb, var(--md-on-surface) 6%, var(--md-surface-cont));
+  --tl-card: var(--md-surface-cont);
+  --tl-fill: var(--c-fill);
+  --tl-fill-press: var(--c-fill-press);
+  --tl-line: var(--c-line);
+  --tl-ink: var(--md-on-surface);
+  --tl-ink2: var(--md-on-surface-var);
+  --tl-ink3: var(--c-ink3);
   --tl-accent: var(--md-primary);
+  --tl-danger: var(--c-danger);
+  --tl-shadow: var(--c-card-shadow);
+  --tl-radius: var(--c-radius-card);
+  --tools-console-bg: var(--md-surface);
+  --tools-console-surface: var(--md-surface-cont);
+  --tools-console-current: var(--md-on-surface);
+  --tools-console-history: var(--md-on-surface-var);
+  --tools-console-divider: var(--c-line);
+  word-break: keep-all;
 }
 
-/* ── Model / eGPU / drive evaluation: flat sections ── */
+/* ── Title and status line ── */
+#pageTools .tools-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 18px;
+}
+
+#pageTools .tools-head__title {
+  margin: 0;
+  color: var(--tl-ink);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+#pageTools .tools-head #toolsMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  margin: 0;
+  color: var(--tl-ink2);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+#pageTools .tools-head .tools-progress {
+  margin-top: 6px;
+}
+
+/* ── Cards: model, eGPU, drive evaluation ── */
 #pageTools .egpu-model-card {
   display: block;
-  margin: 0 0 28px;
-  padding: 14px 0 0;
+  margin: 0 0 12px;
+  padding: 18px;
   border: 0;
-  border-top: 1px solid var(--tl-line-strong);
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
+  border-radius: var(--tl-radius);
+  background: var(--tl-card);
+  box-shadow: var(--tl-shadow);
 }
 
 #pageTools .egpu-model-card[hidden] {
   display: none;
 }
 
+#pageTools .egpu-model-card::before,
 #pageTools .egpu-model-card::after,
 #pageTools .egpu-model-card__icon {
   display: none;
@@ -36,7 +79,7 @@
 #pageTools .egpu-model-card__body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -49,9 +92,10 @@
 }
 
 #pageTools .egpu-model-card__heading strong {
-  color: var(--md-on-surface);
-  font-size: 17px;
-  font-weight: 700;
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 #pageTools .egpu-model-card__state,
@@ -60,14 +104,14 @@
   border: 0;
   border-radius: 0;
   background: none;
-  color: var(--tl-quiet);
+  color: var(--tl-ink3);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 #pageTools .egpu-model-card[data-state="error"] .egpu-model-card__state {
-  color: var(--md-error);
+  color: var(--tl-danger);
 }
 
 #pageTools .egpu-model-card[data-state="running"] .egpu-model-card__state,
@@ -77,69 +121,67 @@
 
 #pageTools .egpu-model-card__detail {
   margin: 0;
-  color: var(--tl-quiet);
-  font-size: 14px;
-  line-height: 1.5;
+  color: var(--tl-ink);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.4;
 }
 
 #pageTools .egpu-model-card__amount {
-  color: var(--tl-quiet);
-  font-size: 12px;
+  color: var(--tl-ink3);
+  font-size: 13px;
 }
 
 #pageTools .egpu-model-card__track {
   height: 4px;
   border-radius: 2px;
-  background: var(--tl-line-strong);
+  background: var(--tl-fill);
 }
 
 #pageTools .egpu-model-card__track span {
   border-radius: 2px;
-  background: var(--tl-accent);
+  background: var(--tl-ink);
 }
 
 #pageTools .egpu-model-card__footer {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 #pageTools .egpu-model-card__action.btn {
   min-height: 44px;
   padding: 0 18px;
-  border: 1px solid var(--tl-line-strong);
-  border-radius: 10px;
-  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  background: var(--tl-fill);
   box-shadow: none;
-  color: var(--md-on-surface);
+  color: var(--tl-ink);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 650;
   white-space: nowrap;
 }
 
 #pageTools .egpu-model-card__action.btn:disabled {
-  opacity: .45;
+  opacity: 0.4;
 }
 
-/* model choice: one wide select and its apply button */
-#pageTools .internal-model-card__footer {
-  margin-top: 6px;
-}
-
+/* model choice: a select and its apply button */
 #pageTools .internal-model-card__select {
   flex: 1 1 auto;
   min-width: 0;
   max-width: none;
-  height: 46px;
+  height: 44px;
   padding: 0 38px 0 14px;
-  border: 1px solid var(--tl-line-strong);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 13px;
   background:
-    linear-gradient(45deg, transparent 50%, var(--tl-quiet) 50%) calc(100% - 20px) 50% / 6px 6px no-repeat,
-    linear-gradient(-45deg, transparent 50%, var(--tl-quiet) 50%) calc(100% - 14px) 50% / 6px 6px no-repeat,
-    var(--tl-tile);
-  color: var(--md-on-surface);
+    linear-gradient(45deg, transparent 50%, var(--tl-ink2) 50%) calc(100% - 20px) 50% / 6px 6px no-repeat,
+    linear-gradient(-45deg, transparent 50%, var(--tl-ink2) 50%) calc(100% - 14px) 50% / 6px 6px no-repeat,
+    var(--tl-fill);
+  color: var(--tl-ink);
   font-size: 15px;
   font-weight: 600;
   -webkit-appearance: none;
@@ -147,87 +189,160 @@
 }
 
 #pageTools .internal-model-card #btnInternalModelApply:not(:disabled) {
-  border-color: var(--md-on-surface);
-  background: var(--md-on-surface);
-  color: var(--md-surface);
-}
-
-#pageTools .internal-model-card .egpu-model-card__amount {
-  margin-top: 2px;
+  background: var(--tl-ink);
+  color: var(--tl-card);
 }
 
 /* drive evaluation */
 #pageTools .tuning-advice__changed {
-  color: var(--tl-quiet);
+  color: var(--tl-ink3);
 }
 
 #pageTools .tuning-advice__match {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   margin: 10px 0 2px;
   padding: 0;
   border: 0;
   background: none;
 }
 
+#pageTools .tuning-advice__match--split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 136px;
+  align-items: end;
+  gap: 8px 18px;
+}
+
+#pageTools .tuning-advice__match-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 #pageTools .tuning-advice__match-label {
-  color: var(--tl-quiet);
+  color: var(--tl-ink2);
   font-size: 13px;
   opacity: 1;
 }
 
 #pageTools .tuning-advice__match-value {
-  color: var(--md-on-surface);
-  font-size: 28px;
+  color: var(--tl-ink);
+  font-size: 48px;
   font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 0.95;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -.01em;
-  line-height: 1.25;
+}
+
+#pageTools .tuning-advice__match-unit {
+  margin-left: 2px;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+#pageTools .tuning-advice__match-bars {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+#pageTools .tuning-advice__match-bar-head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--tl-ink2);
+  font-size: 12px;
+}
+
+#pageTools .tuning-advice__match-bar-head b {
+  color: var(--tl-ink);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+#pageTools .tuning-advice__match-track {
+  height: 4px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--tl-fill);
+}
+
+#pageTools .tuning-advice__match-track i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--tl-ink);
 }
 
 #pageTools .tuning-advice__match-detail {
-  color: var(--tl-quiet);
-  font-size: 13px;
+  grid-column: 1 / -1;
+  color: var(--tl-ink3);
+  font-size: 12px;
   line-height: 1.5;
   opacity: 1;
+}
+
+/* the drive line above the number reads as a caption */
+#pageTools .tuning-advice-card .egpu-model-card__body > .egpu-model-card__detail {
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+#pageTools .tuning-advice-card :is(.tuning-advice__rec, .tuning-advice__review) .egpu-model-card__detail {
+  color: var(--tl-ink2);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 #pageTools .tuning-advice__rec,
 #pageTools .tuning-advice__review {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 10px 0 0;
-  padding: 2px 0 2px 14px;
+  gap: 5px;
+  margin: 16px 0 0;
+  padding: 16px 0 0;
   border: 0;
-  border-left: 3px solid var(--tl-line-strong);
+  border-top: 1px solid var(--tl-line);
   border-radius: 0;
   background: none;
 }
 
-#pageTools .tuning-advice__rec--change {
-  border-left-color: var(--tl-accent);
-}
-
 #pageTools .tuning-advice__rec-headline,
 #pageTools .tuning-advice__review > strong {
-  color: var(--md-on-surface);
+  color: var(--tl-ink);
   font-size: 16px;
   font-weight: 700;
+  letter-spacing: -0.025em;
   line-height: 1.4;
 }
 
+#pageTools .tuning-advice__rec--change .tuning-advice__rec-headline {
+  color: var(--tl-accent);
+}
+
+#pageTools :is(.tuning-advice__rec, .tuning-advice__review) p {
+  margin: 0;
+  color: var(--tl-ink2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 #pageTools .tuning-advice__list {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   padding: 0;
   list-style: none;
 }
 
 #pageTools .tuning-advice__list li {
-  padding: 7px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--tl-line);
-  color: var(--md-on-surface);
+  color: var(--tl-ink);
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
@@ -245,10 +360,11 @@
   align-items: center;
   gap: 8px;
   min-height: 40px;
-  color: var(--md-on-surface);
-  font-size: 15px;
+  color: var(--tl-ink2);
+  font-size: 14px;
   font-weight: 600;
   list-style: none;
+  cursor: pointer;
 }
 
 #pageTools .tuning-advice__details summary::-webkit-details-marker {
@@ -259,10 +375,10 @@
   content: "";
   width: 6px;
   height: 6px;
-  border-top: 1.5px solid var(--tl-quiet);
-  border-right: 1.5px solid var(--tl-quiet);
+  border-top: 1.6px solid currentColor;
+  border-right: 1.6px solid currentColor;
   transform: rotate(45deg);
-  transition: transform .15s ease;
+  transition: transform 0.15s ease;
 }
 
 #pageTools .tuning-advice__details[open] summary::before {
@@ -270,14 +386,14 @@
 }
 
 #pageTools .tuning-advice__table {
-  margin-top: 14px;
+  margin-top: 12px;
   padding: 0;
   border: 0;
   background: none;
 }
 
 #pageTools .tuning-advice__table-title {
-  color: var(--md-on-surface);
+  color: var(--tl-ink);
   font-size: 15px;
   font-weight: 700;
 }
@@ -285,7 +401,7 @@
 #pageTools .tuning-advice__table-hint {
   display: block;
   margin: 2px 0 6px;
-  color: var(--tl-quiet);
+  color: var(--tl-ink3);
   font-size: 12px;
 }
 
@@ -308,9 +424,9 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--tl-quiet);
+  color: var(--tl-ink3);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 #pageTools .tuning-advice__badge.is-change {
@@ -322,107 +438,291 @@
 }
 
 #pageTools .tuning-advice__row-reason {
-  color: var(--tl-quiet);
+  color: var(--tl-ink2);
 }
 
 #pageTools .tuning-advice__footer {
   margin-top: 14px;
 }
 
-/* ── Shortcuts and the collapsible groups: plain tiles ── */
-#pageTools .tools-primary-actions {
-  gap: 8px;
-  margin-bottom: 28px;
+/* ── Sections ── */
+#pageTools .tools-section {
+  margin: 0;
 }
 
-#pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn) {
+#pageTools .tools-section__title {
+  margin: 26px 4px 10px;
+  color: var(--tl-ink2);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+#pageTools .tools-section__note {
+  margin: 8px 6px 0;
+  color: var(--tl-ink3);
+  font-size: 13px;
+}
+
+#pageTools .tools-card {
+  border-radius: var(--tl-radius);
+  background: var(--tl-card);
+  box-shadow: var(--tl-shadow);
+  overflow: hidden;
+}
+
+/* rows */
+#pageTools .tools-list > .tools-row.btn {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  min-height: 50px;
-  padding: 0 14px;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  margin: 0;
+  padding: 0 18px;
   border: 0;
-  border-radius: 12px;
-  background: var(--tl-tile);
+  border-radius: 0;
+  background-color: transparent;
   box-shadow: none;
-  color: var(--md-on-surface);
-  font-size: 15px;
-  font-weight: 500;
+  color: var(--tl-ink);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
   text-align: left;
   text-decoration: none;
   line-height: 1.3;
-}
-
-#pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn):active {
-  background: var(--tl-tile-press);
   transform: none;
 }
 
+#pageTools .tools-list > .tools-row.btn + .tools-row.btn {
+  background-image: linear-gradient(var(--tl-line), var(--tl-line));
+  background-position: 18px 0;
+  background-size: calc(100% - 36px) 1px;
+  background-repeat: no-repeat;
+}
+
+#pageTools .tools-list > .tools-row.btn:not(.btn--danger):not(.tools-row--switch)::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 0 auto;
+  border-top: 1.7px solid var(--tl-ink3);
+  border-right: 1.7px solid var(--tl-ink3);
+  transform: rotate(45deg);
+}
+
+#pageTools .tools-list > .tools-row.btn:active {
+  background-color: var(--tl-fill);
+}
+
 @media (hover: hover) {
-  #pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn):hover {
-    background: var(--tl-tile-press);
+  #pageTools .tools-list > .tools-row.btn:hover {
+    background-color: color-mix(in srgb, var(--tl-ink) 3%, transparent);
   }
 }
 
-#pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn):focus-visible {
+#pageTools .tools-list > .tools-row.btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+#pageTools .tools-list > .tools-row.btn--danger {
+  color: var(--tl-danger);
+}
+
+#pageTools .tools-list > .tools-row.btn:disabled {
+  opacity: 0.45;
+}
+
+/* the update row leads its section: a bolder label and the commit count */
+#pageTools .tools-list > .tools-row--lead.btn {
+  min-height: 62px;
+}
+
+#pageTools .tools-row--lead .tools-row__label {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+#pageTools .git-pull-btn .git-pull-btn__badge,
+#pageTools .git-pull-btn .git-pull-btn__badge[data-state] {
+  min-width: 0;
+  height: auto;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--tl-ink3);
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+#pageTools .git-pull-btn .git-pull-btn__badge[data-state="updates"] {
+  color: var(--tl-accent);
+}
+
+#pageTools .git-pull-btn .git-pull-btn__badge[data-state="updates"]::before {
+  content: attr(data-prefix) " ";
+}
+
+#pageTools .git-pull-btn .git-pull-btn__badge[data-state="error"] {
+  color: var(--tl-danger);
+}
+
+/* the recording row ends in a switch drawn from its state */
+#pageTools .tools-list > .tools-row--switch.btn::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 50px;
+  height: 30px;
+  margin-left: auto;
+  border-radius: 15px;
+  background:
+    radial-gradient(circle 12px at 15px 15px, var(--c-knob-off) 11.5px, transparent 12.5px),
+    var(--tl-fill);
+  transition: background 0.18s ease;
+}
+
+#pageTools .tools-list > .tools-row--switch.btn[data-state="on"]::after {
+  background:
+    radial-gradient(circle 12px at 35px 15px, var(--tl-card) 11.5px, transparent 12.5px),
+    var(--tl-ink);
+}
+
+#pageTools .tools-list > .tools-row--switch.btn.active,
+#pageTools .tools-list > .tools-row--switch.btn[data-state="on"] {
+  color: var(--tl-ink);
+  background-color: transparent;
+}
+
+/* shortcuts: tiles */
+#pageTools .tools-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+#pageTools .tools-tiles > :is(.btn, a.btn) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 60px;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--tl-card);
+  box-shadow: var(--tl-shadow);
+  color: var(--tl-ink);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-align: left;
+  text-decoration: none;
+  line-height: 1.3;
+  transform: none;
+}
+
+#pageTools .tools-tiles > :is(.btn, a.btn):active {
+  background: var(--tl-fill);
+}
+
+#pageTools .tools-tiles > :is(.btn, a.btn):focus-visible {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
-#pageTools .tools-group__bodyInner > .btn--danger {
-  color: var(--md-error);
+/* settings backup: a grid of six buttons in one card */
+#pageTools .tools-grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
 }
 
-#pageTools .git-pull-btn {
-  justify-content: space-between;
-}
-
-#pageTools .git-pull-btn__badge {
+#pageTools .tools-grid3 > .btn {
+  display: grid;
+  place-items: center;
+  min-height: 46px;
+  margin: 0;
+  padding: 0 6px;
   border: 0;
-  background: none;
-  color: var(--tl-accent);
-  font-weight: 700;
-}
-
-#pageTools .divider {
-  display: none;
-}
-
-#pageTools .section.tools-group {
-  margin: 0 0 20px;
-  padding-top: 6px;
-  border-top: 1px solid var(--tl-line-strong);
-}
-
-#pageTools .tools-group__toggle {
-  min-height: 44px;
-  padding: 0;
-}
-
-#pageTools .tools-group__title,
-#pageTools .tools-group__title.section-title {
-  color: var(--md-on-surface);
-  font-size: 17px;
-  font-weight: 700;
-}
-
-#pageTools .tools-group__chevron {
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid var(--tl-quiet);
-  border-bottom: 1.5px solid var(--tl-quiet);
-  opacity: 1;
-}
-
-#pageTools #toolsMeta {
-  color: var(--tl-quiet);
-  font-size: 13px;
-}
-
-/* activity log beside (wide) or below the tools */
-#pageTools .tools-console-log {
-  border-color: var(--tl-line-strong);
-  border-radius: 14px;
-  background: var(--md-surface-cont);
+  border-radius: 13px;
+  background: var(--tl-fill);
   box-shadow: none;
+  color: var(--tl-ink);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  transform: none;
+}
+
+#pageTools .tools-grid3 > .btn:active {
+  background: var(--tl-fill-press);
+}
+
+@media (min-width: 720px) {
+  #pageTools .tools-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ── Notification dock and log ──
+   Phones pull it down over the page; wide screens keep it beside the tools. Both use the page's own surfaces. */
+@media not all and (min-aspect-ratio: 13/10) {
+  #pageTools.page--tools > .tools-console-dock {
+    background: color-mix(in srgb, var(--md-surface) 94%, transparent);
+    border-top: 0;
+    box-shadow: none;
+  }
+
+  #pageTools.page--tools > .tools-console-dock.tools-notifications--portrait::after {
+    background: var(--tl-ink3);
+    box-shadow: none;
+  }
+}
+
+#pageTools .tools-console-log__card + .tools-console-log__card {
+  border-top-color: var(--tl-line);
+}
+
+#pageTools .tools-console-log__card.is-expanded {
+  background: var(--tl-fill);
+}
+
+#pageTools .tools-console-log__clearBtn {
+  border: 0;
+  background: var(--tl-fill);
+  box-shadow: none;
+  color: var(--tl-ink);
+}
+
+#pageTools .tools-console-log__footer {
+  background: linear-gradient(180deg, transparent, var(--md-surface) 62%);
+}
+
+#pageTools .tools-console-shell {
+  border: 0;
+  border-radius: var(--tl-radius);
+  background: var(--tl-card);
+  box-shadow: var(--c-bar-shadow), inset 0 0 0 1px var(--tl-line);
+}
+
+#pageTools .tools-console-log {
+  border-color: var(--tl-line);
+  background: var(--tl-card);
+  box-shadow: none;
+  color: var(--tl-ink);
+}
+
+#pageTools .tools-progress[hidden] {
+  display: none;
 }

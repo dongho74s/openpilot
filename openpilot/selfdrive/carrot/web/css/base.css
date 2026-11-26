@@ -14,6 +14,9 @@ body {
   line-height: 1.5;
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden;
+  word-break: keep-all;  /* Korean wraps between words, not inside them */
+  overflow-wrap: anywhere;
+  -webkit-font-smoothing: antialiased;
 }
 
 body.dialog-open {
@@ -108,7 +111,10 @@ body:has(.page-transitioning) {
   }
 }
 
-/* ── Bottom Navigation Bar (Material 3) ───────────────────── */
+/* ── Bottom navigation: a floating bar (2026-11-27 design) ─────────
+   The fixed strip keeps its old height so every page gutter still fits;
+   the visible bar is a rounded, blurred panel drawn inside it, and the
+   strip itself only fades the page out underneath. */
 .topbar {
   display: flex;
   position: fixed;
@@ -119,43 +125,56 @@ body:has(.page-transitioning) {
   height: calc(var(--nav-bar-height) + env(safe-area-inset-bottom, 0px));
   min-height: calc(var(--nav-bar-height) + env(safe-area-inset-bottom, 0px));
   max-height: calc(var(--nav-bar-height) + env(safe-area-inset-bottom, 0px));
-  background: color-mix(in srgb, var(--md-surface-cont) 94%, #000);
-  border-top: 1px solid var(--md-stroke-soft);
-  padding: 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: linear-gradient(to bottom, transparent, var(--md-surface) 62%);
+  border-top: 0;
+  padding: 6px 14px calc(8px + env(safe-area-inset-bottom, 0px));
   justify-content: space-around;
   gap: 0;
   isolation: isolate;
   backface-visibility: hidden;
-  transform: translateZ(0);
-  will-change: transform;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.topbar::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 6px;
+  left: 14px;
+  right: 14px;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  border-radius: 22px;
+  background: var(--c-bar);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+  box-shadow: var(--c-bar-shadow), inset 0 0 0 1px var(--c-line);
+  pointer-events: none;
 }
 
 .topbar .nav-btn {
   flex: 1 1 0;
   min-width: 0;
-  height: var(--nav-bar-height);
+  height: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0;
+  gap: 3px;
   background: transparent;
   border: none;
-  color: var(--md-outline);
-  font-size: var(--fs-nav);
-  font-weight: 700;
-  padding: 14px 6px 16px;
+  border-radius: 18px;
+  color: var(--c-ink3);
+  font-size: 11px;
+  font-weight: 650;
+  padding: 0 4px;
   cursor: pointer;
   transition: color 0.15s;
   position: relative;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
   outline: none;
   -webkit-tap-highlight-color: transparent;
   backface-visibility: hidden;
-  contain: layout paint;
 }
 
 .topbar .nav-btn:focus,
@@ -169,7 +188,15 @@ body:has(.page-transitioning) {
 }
 
 .topbar .nav-btn .nav-icon {
-  display: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+
+.topbar .nav-btn .nav-icon svg {
+  width: 23px;
+  height: 23px;
 }
 
 .topbar .nav-btn > span:last-child {
@@ -212,25 +239,21 @@ body:has(.page-transitioning) {
 }
 
 .topbar .nav-btn.active {
-  color: var(--md-primary);
+  color: var(--md-on-surface);
   font-weight: 700;
-  background: transparent;  /* the accent text alone marks the tab (2026-11-26 redesign) */
+  background: transparent;  /* ink, not the accent, marks the current tab (2026-11-27 design) */
 }
 
 .topbar .nav-btn.recording,
 .topbar .nav-btn.recording.active {
-  color: #ff8f84;
-}
-
-.topbar .nav-btn.recording.active {
-  background: color-mix(in srgb, #ff6b6b 18%, transparent);
+  color: var(--c-danger);
 }
 
 .topbar .nav-btn.is-working::after {
   content: "";
   position: absolute;
-  top: 7px;
-  right: 11px;
+  top: 4px;
+  right: calc(50% - 22px);
   width: 13px;
   height: 13px;
   border-radius: 999px;
@@ -247,8 +270,8 @@ body:has(.page-transitioning) {
 .topbar .nav-btn.has-git-updates:not(.is-working)::after {
   content: attr(data-git-behind);
   position: absolute;
-  top: 6px;
-  right: 9px;
+  top: 2px;
+  right: calc(50% - 30px);
   min-width: 22px;
   height: 20px;
   padding: 0 6px;
@@ -267,8 +290,8 @@ body:has(.page-transitioning) {
 .topbar .nav-btn.recording::before {
   content: attr(data-record-badge);
   position: absolute;
-  top: 5px;
-  right: 8px;
+  top: 2px;
+  right: calc(50% - 30px);
   min-width: 26px;
   padding: 2px 5px;
   border-radius: 999px;

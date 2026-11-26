@@ -33,6 +33,8 @@ Navigation may appear as a left rail on a wide display or a bottom bar on a port
 
 Some controls or content may be absent depending on device type, driving state, branch, and browser capabilities.
 
+Settings, Tools and Logs follow the phone's (browser's) light or dark setting. Drive and Terminal are always dark. The bottom navigation is a rounded bar floating over the page; the current page is shown in bold.
+
 ## Drive page
 
 The Drive page displays live video and driving state. Its usual layout contains road video and an auxiliary information area. Use `Tools > Web Settings` to adjust split direction, visible areas, and content.
@@ -91,20 +93,26 @@ Recorded replay may stop automatically when real driving begins.
 
 ## Settings page
 
-The Settings page is divided into `Device` and `carrotpilot` tabs.
+The large words `carrotpilot` and `Device` at the top of Settings are its two tabs; the bold, dark one is the current tab.
 
-- Select a group, then an item, to change its value.
-- Search by setting name or description.
-- The list shows each item's name and current value only. A value that differs from its default is orange, with the default in small type beneath it (`Default 160`).
+- The first screen has the search field, the `Changed settings` card, Favorites, and the group tiles, in that order.
+  - Each group tile shows how many settings it holds and how many differ from their defaults (`38 settings · 17 changed`).
+  - The large number on `Changed settings` counts every setting that differs from its default. Tap the card to keep only the groups with changes, and only the changed rows inside them; tap again for everything. A reload goes back to everything.
+  - Favorites show their current values as a row of cards; tap to open the Favorites list.
+- A group's list shows each item's name and current value only. A value that differs from its default is carrot-coloured, with the default in small type beneath it (`Default 160`). A bracket at the end of a title that only repeats the default, such as `(160)`, is left out of the list.
 - On/off items switch right in the list.
-- Tap any other row to open the value sheet from the bottom: large `−`/`+` (hold to repeat), tap the number to type one, the range bar (the white tick is the default), `Reset to default`, `Step`, and the description. Choice items list their options. Tap outside or press `Esc` to close.
-- `History and guide` in the sheet opens the screen with popular values, change history and the full guide.
-- `All / Changed` above the list shows only the items that differ from their defaults. A reload goes back to `All`.
-- On a wide screen (1100 px or more) items sit side by side in two columns.
+- Tap any other row to open the value sheet from the bottom.
+  - Change the value with the `−`/`+` beside the large number (hold to repeat), or tap the number to type one.
+  - You can also drag the ruler under the number. The centre needle is the current value and the small dot is the default; the value is saved when you let go.
+  - `Step` is how much one `−`/`+` press changes; each tap cycles it.
+  - The description, the setting key, `Back to default N` and `History and guide` are in the same sheet. Choice items list their options.
+  - Tap outside or press `Esc` to close.
+- `All / Changed` above the list shows only the items that differ from their defaults.
+- On a wide screen the groups sit on the left and the items on the right; at 1100 px or more the items sit side by side in two columns.
 - Long-press a setting to add or remove it from Favorites.
 - Profiles save a group of values and allow selected values to be applied later.
-- A setting detail page can show popular values, recent change history, and a verified Wiki guide.
-- Risky settings display a warning, and some settings take effect only after reboot.
+- A setting detail page (`History and guide`) can show popular values, recent change history, and a verified Wiki guide.
+- Risky settings carry a caution mark, and some settings take effect only after reboot.
 - Resetting defaults changes many values; make a backup first.
 
 See [Understanding Settings](settings.md) for ranges, units, and a safe tuning order.
@@ -141,7 +149,7 @@ A comma without a key can get **its own key** on this page and register to the M
 
 ## Tools page
 
-Tools contains management actions that can immediately change device or repository state.
+Tools contains management actions that can immediately change device or repository state. From the top: the driving model, the last drive's evaluation, Update, Shortcuts, Device, Settings backup, and the actions that can't be undone. Tap the status line under the title to open the notification (activity) panel.
 Manage `ONNX Lane and BSD Detection` in **Settings → Driving → Steering → ONNX Lane & BSD**, not through a Tools shortcut.
 
 ### Changing the driving model (internal model)
@@ -253,44 +261,50 @@ comma, so changing its SSID/password does not require removing the SD card.
 The existing P-gear summary display remains intentional. See the guide's preview
 notice for physical validation limits of each installation path.
 
-### Quick actions
+### Shortcuts
 
 - `Car Select`: choose the vehicle maker and model.
 - For the 2026 electric Staria, select `Hyundai Staria EV 2026`. Its accelerator and gear decoding differs from `Hyundai Staria 2023`; an existing selection is not migrated automatically. Reboot after selecting it, then check gear/pedal indications and CAN errors while parked.
 - `Language`: change the Carrot Web language.
 - `Web Settings`: configure the Drive layout, video, HUD, AR, and other web-only display options.
 - `Info`: view and copy the device type, branch, commit, identifiers, and network information.
+- `Bluetooth remote`, `Map search`
 
-### Git Commands
+### Update
 
-- `git pull`: fetch and integrate new commits for the current branch.
-- `git sync`: synchronize with the remote branch; local work may be cleaned up.
-- `git reset`: move or reset code changes to a selected reference.
-- `git log`: inspect commits and choose a commit or branch.
-- `change branch`: choose a local or remote branch.
-- `reset repo`: forcibly reset repository remotes and branch state.
+- `Get update` (git pull): fetch and integrate new commits for the current branch. The right side shows how many commits are waiting (`New 3`), or `✓` when up to date.
+- `Sync` (git sync): synchronize with the remote branch; local work may be cleaned up.
+- `Change log` (git log): inspect commits and choose a commit or branch.
+- `Change branch`: choose a local or remote branch.
 
-> [!CAUTION]
-> `git sync`, `git reset`, and `reset repo` can discard local code changes. If you do not understand the action, do not run it. For a support request, read the current branch and commit from `Info` instead.
+### Device
 
-### User / System
-
-- `Reset Calib`: clear camera calibration and start calibration again.
-- `capture tmux`: capture the current tmux log and download it through the browser.
-- `send tmux`: request a server-log upload.
+- `Screen recording`: a switch that starts and stops screen recording; the elapsed time is shown while recording.
+- `Reboot`: reboot the device (asks first).
+- `Save tmux log`: capture the current tmux log and download it through the browser.
+- `Send tmux log`: request a server-log upload.
 
 CAN diagnostics are uploaded automatically only when a currently received `carState` or `radarState` from the present onroad session reports a real CAN error. A timeout left over from the previous drive is not used, and capture is delayed for five seconds after detection so the log includes the immediate aftermath. In an automatic diagnostic log, `CarrotException can_error queued` means the upload was queued; the preceding `current onroad CAN error detected from ...` line identifies the source used for the decision.
-- `install required`: check and install packages used by optional Carrot Web features.
-- `delete all videos`: delete screen recordings.
-- `delete all logs`: delete stored driving logs.
-- `Rebuild All`: rebuild and restart the software.
-- `reboot`: reboot the device.
-
-After deleting logs or videos, Carrot Web cannot replay or upload them for analysis. Complete any support upload first.
 
 ### Settings backup and restore
 
-The page provides file backup/restore, QR backup/restore, setting-value copy, and a full value view. Compare current and backup values before restoring. A backup from another vehicle or an older branch can have different meaning or recommended ranges even when parameter names match.
+`Backup`/`Restore` (file), `QR Backup`/`QR Restore`, `Copy` (setting values) and `View` (all values). Compare current and backup values before restoring. A backup from another vehicle or an older branch can have different meaning or recommended ranges even when parameter names match.
+
+### Can't be undone
+
+The red items sit apart at the bottom. Each one asks again before it runs.
+
+- `Discard local changes (git reset)`: move code back to a selected reference (hard/mixed/soft).
+- `Reset calibration`: clear camera calibration and start calibration again; the device reboots.
+- `Rebuild everything`: rebuild and restart the software.
+- `Delete all videos`: delete screen recordings.
+- `Delete all logs`: delete stored driving logs.
+- `Reset repository` (reset repo): forcibly reset repository remotes and branch state.
+
+> [!CAUTION]
+> `Sync`, `Discard local changes`, and `Reset repository` can discard local code changes. If you do not understand the action, do not run it. For a support request, read the current branch and commit from `Info` instead.
+
+After deleting logs or videos, Carrot Web cannot replay or upload them for analysis. Complete any support upload first.
 
 ### System command field
 

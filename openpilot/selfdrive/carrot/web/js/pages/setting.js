@@ -572,6 +572,7 @@ function renderGroups(options = {}) {
   });
   const restoreSearchFocus = settingInlineSearchView.isFocused();
   settingViewRuntime.renderGroupList(box, plan, { animate: animateGroups });
+  decorateSettingGroupList(box);
   mountSettingInlineSearch();
   if (restoreSearchFocus) settingInlineSearchView.focus();
   scheduleSettingOverflowSync(box);
@@ -965,26 +966,72 @@ function closeSettingSheet(options = {}) {
   if (options.returnFocus !== false && state.row?.isConnected) state.row.focus({ preventScroll: true });
 }
 
+const SETTING_RULER_PX = 10;
+
+function trimSettingRulerNumber(value) {
+  return String(Number(Number(value).toFixed(6)));
+}
+
+// The ruler under a number: ticks one step apart, a longer tick and a label every fifth step, a dot on the default,
+// and the value under the fixed needle in the middle. Only the ticks around the value are drawn.
+function renderSettingSheetRuler(state, value) {
+  const ruler = state.ruler;
+  if (!ruler || ruler.hidden) return;
+  const item = state.item;
+  const step = Math.abs(Number(state.getStep?.()) || 0) || 1;
+  const min = Number(item.min);
+  const max = Number(item.max);
+  const current = Number(value);
+  const ticks = ruler.querySelector(".setting-sheet__ticks");
+  if (!ticks || !Number.isFinite(current)) return;
+  const width = ruler.clientWidth || 360;
+  const half = Math.ceil(width / 2 / SETTING_RULER_PX) + 2;
+  const baseIndex = Math.round(current / step);
+  const offset = ((baseIndex * step - current) / step) * SETTING_RULER_PX;
+  const fragment = document.createDocumentFragment();
+  for (let k = -half; k <= half; k += 1) {
+    const index = baseIndex + k;
+    const at = Number((index * step).toFixed(6));
+    if ((Number.isFinite(min) && at < min - 1e-9) || (Number.isFinite(max) && at > max + 1e-9)) continue;
+    const left = `calc(50% + ${k * SETTING_RULER_PX + offset}px)`;
+    const tick = document.createElement("span");
+    const major = index % 5 === 0;
+    tick.className = major ? "setting-sheet__tick is-major" : "setting-sheet__tick";
+    tick.style.left = left;
+    fragment.appendChild(tick);
+    if (major) {
+      const label = document.createElement("span");
+      label.className = "setting-sheet__tick-label";
+      label.style.left = left;
+      label.textContent = trimSettingRulerNumber(at);
+      fragment.appendChild(label);
+    }
+  }
+  const fallback = Number(item.default);
+  if (Number.isFinite(fallback)) {
+    const left = ((fallback - current) / step) * SETTING_RULER_PX;
+    if (Math.abs(left) < width / 2) {
+      const dot = document.createElement("span");
+      dot.className = "setting-sheet__default-dot";
+      dot.style.left = `calc(50% + ${left}px)`;
+      fragment.appendChild(dot);
+    }
+  }
+  ticks.replaceChildren(fragment);
+}
+
 function syncSettingSheet(row, value) {
   const state = settingSheetState;
   if (!state || state.row !== row) return;
-  const item = state.item;
   const changed = row.classList.contains("is-changed");
   state.sheet.classList.toggle("is-changed", changed);
   if (state.reset) state.reset.hidden = !changed;
-  const scale = state.sheet.querySelector(".setting-sheet__scale");
-  if (!scale || scale.hidden) return;
-  const min = Number(item.min);
-  const max = Number(item.max);
-  const span = max - min;
-  const position = (raw) => (span > 0 ? Math.min(1, Math.max(0, (Number(raw) - min) / span)) : 0);
-  scale.style.setProperty("--value-pos", String(position(value)));
-  scale.style.setProperty("--default-pos", String(position(item.default)));
+  renderSettingSheetRuler(state, value);
 }
 
 function openSettingSheet(options) {
   closeSettingSheet({ returnFocus: false });
-  const { row, item, title, descr, ctrl, unitBtn, controlKind, onReset, onDetail } = options;
+  const { row, item, title, kicker, descr, ctrl, unitBtn, controlKind, onReset, onDetail, getStep, commitValue } = options;
   if (!settingSheetPopstateBound) {
     // Back, another page or another group: the sheet belongs to the list it was opened from.
     settingSheetPopstateBound = true;
@@ -1003,27 +1050,30 @@ function openSettingSheet(options) {
     <div class="setting-sheet__grip" aria-hidden="true"></div>
     <header class="setting-sheet__head">
       <div class="setting-sheet__heading">
+        <div class="setting-sheet__kicker"></div>
         <h2 class="setting-sheet__title" id="settingSheetTitle"></h2>
-        <div class="setting-sheet__key"></div>
       </div>
       <button type="button" class="setting-sheet__close">
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-          <path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
         </svg>
       </button>
     </header>
     <div class="setting-sheet__control"></div>
-    <div class="setting-sheet__scale" hidden>
-      <div class="setting-sheet__track"><span class="setting-sheet__fill"></span><span class="setting-sheet__tick"></span></div>
-      <div class="setting-sheet__scale-labels">
-        <span class="setting-sheet__min"></span><span class="setting-sheet__def"></span><span class="setting-sheet__max"></span>
-      </div>
+    <div class="setting-sheet__meta"></div>
+    <div class="setting-sheet__ruler" hidden aria-hidden="true">
+      <div class="setting-sheet__ticks"></div>
+      <span class="setting-sheet__needle"></span>
     </div>
     <div class="setting-sheet__tools"></div>
     <p class="setting-sheet__descr"></p>
-    <button type="button" class="setting-sheet__detail"></button>
+    <div class="setting-sheet__key"></div>
+    <div class="setting-sheet__acts"></div>
   `;
   sheet.querySelector(".setting-sheet__title").textContent = title;
+  const kickerNode = sheet.querySelector(".setting-sheet__kicker");
+  if (kicker && kicker !== title) kickerNode.textContent = kicker;
+  else kickerNode.remove();
   sheet.querySelector(".setting-sheet__key").textContent = item.name;
   const close = sheet.querySelector(".setting-sheet__close");
   close.setAttribute("aria-label", getUIText("setting_sheet_close", "Close"));
@@ -1031,7 +1081,10 @@ function openSettingSheet(options) {
   const descrNode = sheet.querySelector(".setting-sheet__descr");
   if (descr) descrNode.textContent = descr;
   else descrNode.remove();
-  const detail = sheet.querySelector(".setting-sheet__detail");
+  const acts = sheet.querySelector(".setting-sheet__acts");
+  const detail = document.createElement("button");
+  detail.type = "button";
+  detail.className = "setting-sheet__detail";
   detail.textContent = getUIText("setting_sheet_detail", "History and guide");
   detail.onclick = () => {
     closeSettingSheet({ returnFocus: false });
@@ -1048,7 +1101,6 @@ function openSettingSheet(options) {
   const homeNext = ctrl.nextSibling;
   control.appendChild(ctrl);
 
-  const tools = sheet.querySelector(".setting-sheet__tools");
   let reset = null;
   if (item.default !== undefined && item.default !== null) {
     reset = document.createElement("button");
@@ -1058,23 +1110,36 @@ function openSettingSheet(options) {
       value: formatSettingRowValue(item, item.default),
     });
     reset.onclick = () => onReset();
-    tools.appendChild(reset);
+    acts.appendChild(reset);
   }
+  acts.appendChild(detail);
+
+  const tools = sheet.querySelector(".setting-sheet__tools");
   const unitHome = unitBtn?.parentNode || null;
   if (unitBtn && controlKind === "stepper") {
+    const label = document.createElement("span");
+    label.className = "setting-sheet__tools-label";
+    label.textContent = getUIText("setting_sheet_step", "Step");
     unitBtn.classList.add("setting-sheet__unit");
-    unitBtn.dataset.label = getUIText("setting_sheet_step", "Step");
-    tools.appendChild(unitBtn);
+    tools.append(label, unitBtn);
   }
   if (!tools.children.length) tools.remove();
 
+  const meta = sheet.querySelector(".setting-sheet__meta");
+  const defaultLabel = item.default !== undefined && item.default !== null
+    ? `${getUIText("setting_default_short", "Default")} ${formatSettingRowValue(item, item.default)}`
+    : "";
+  const ruler = sheet.querySelector(".setting-sheet__ruler");
   if (controlKind === "stepper") {
-    const scale = sheet.querySelector(".setting-sheet__scale");
-    scale.hidden = false;
-    sheet.querySelector(".setting-sheet__min").textContent = formatSettingDisplayValue(item, item.min);
-    sheet.querySelector(".setting-sheet__max").textContent = formatSettingDisplayValue(item, item.max);
-    sheet.querySelector(".setting-sheet__def").textContent =
-      `${getUIText("setting_default_short", "Default")} ${formatSettingDisplayValue(item, item.default)}`;
+    const range = Number.isFinite(Number(item.min)) && Number.isFinite(Number(item.max))
+      ? `${formatSettingDisplayValue(item, item.min)}–${formatSettingDisplayValue(item, item.max)}`
+      : "";
+    meta.textContent = [defaultLabel, range].filter(Boolean).join(" · ");
+    ruler.hidden = false;
+  } else if (defaultLabel) {
+    meta.textContent = defaultLabel;
+  } else {
+    meta.remove();
   }
 
   backdrop.appendChild(sheet);
@@ -1111,6 +1176,8 @@ function openSettingSheet(options) {
     backdrop,
     reset,
     onKey,
+    ruler: ruler.hidden ? null : ruler,
+    getStep,
     restore() {
       if (home && row.isConnected) home.insertBefore(ctrl, homeNext && homeNext.parentNode === home ? homeNext : null);
       else ctrl.remove();
@@ -1121,11 +1188,82 @@ function openSettingSheet(options) {
       }
     },
   };
-  const current = ctrl.querySelector(".val")?.dataset.rawValue ?? item.default;
+  const valueNode = ctrl.querySelector(".val");
+  const current = valueNode?.dataset.rawValue ?? item.default;
+  if (!ruler.hidden && typeof commitValue === "function") bindSettingSheetRuler(settingSheetState, valueNode, commitValue);
   syncSettingSheet(row, current);
   void backdrop.offsetWidth;
   backdrop.classList.add("is-open");
   sheet.focus({ preventScroll: true });
+  // The ruler is measured after the sheet is laid out.
+  requestAnimationFrame(() => syncSettingSheet(row, valueNode?.dataset.rawValue ?? item.default));
+}
+
+// Dragging the ruler previews the value under the needle and writes it once, on release.
+function bindSettingSheetRuler(state, valueNode, commitValue) {
+  const { ruler, row, item } = state;
+  let drag = null;
+  const min = Number(item.min);
+  const max = Number(item.max);
+  const finish = async (event, cancelled) => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const { start, preview } = drag;
+    drag = null;
+    ruler.classList.remove("is-dragging");
+    if (cancelled || preview === start) {
+      if (preview !== start) syncSettingControlState(row, start);
+      return;
+    }
+    await commitValue(preview);
+    const committed = valueNode?.dataset.committedValue;
+    if (committed !== undefined && settingValuesDiffer(committed, preview)) syncSettingControlState(row, committed);
+  };
+  ruler.addEventListener("pointerdown", (event) => {
+    const start = Number(valueNode?.dataset.rawValue ?? item.default);
+    if (!Number.isFinite(start)) return;
+    drag = { id: event.pointerId, x: event.clientX, start, preview: start };
+    ruler.setPointerCapture?.(event.pointerId);
+    ruler.classList.add("is-dragging");
+  });
+  ruler.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const step = Math.abs(Number(state.getStep?.()) || 0) || 1;
+    const steps = Math.round((drag.x - event.clientX) / SETTING_RULER_PX);
+    let next = drag.start + steps * step;
+    if (Number.isFinite(min)) next = Math.max(min, next);
+    if (Number.isFinite(max)) next = Math.min(max, next);
+    next = Number(next.toFixed(6));
+    if (next === drag.preview) return;
+    drag.preview = next;
+    syncSettingControlState(row, next);
+  });
+  ruler.addEventListener("pointerup", (event) => { finish(event, false); });
+  ruler.addEventListener("pointercancel", (event) => { finish(event, true); });
+}
+
+// Booleans come back from params as True/False and sit in the catalog as 1/0; compare both as numbers, or a switch
+// left at its default would count as changed.
+function normalizeSettingCompareValue(value) {
+  if (value === true) return 1;
+  if (value === false) return 0;
+  const text = String(value ?? "").trim();
+  const lower = text.toLowerCase();
+  if (lower === "true" || lower === "on" || text === "켜짐") return 1;
+  if (lower === "false" || lower === "off" || text === "꺼짐") return 0;
+  const num = Number(text);
+  return text !== "" && Number.isFinite(num) ? num : text;
+}
+
+function settingValuesDiffer(value, fallback) {
+  const a = normalizeSettingCompareValue(value);
+  const b = normalizeSettingCompareValue(fallback);
+  if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) > 1e-9;
+  return String(a) !== String(b);
+}
+
+function isSettingItemChanged(item, value) {
+  if (!item || item.default === undefined || item.default === null || value === undefined || value === null) return false;
+  return settingValuesDiffer(value, item.default);
 }
 
 // Rows whose value differs from the declared default get .is-changed (highlighted value, reset button shown).
@@ -1133,13 +1271,176 @@ function markSettingChanged(row, value) {
   const name = row?.dataset?.settingName || "";
   const item = findSettingItemByName(name)?.item;
   if (!row || !item || item.default === undefined || item.default === null) return;
-  const numeric = Number(value);
-  const fallback = Number(item.default);
-  const changed = Number.isFinite(numeric) && Number.isFinite(fallback)
-    ? Math.abs(numeric - fallback) > 1e-9
-    : String(value) !== String(item.default);
-  row.classList.toggle("is-changed", changed);
+  row.classList.toggle("is-changed", isSettingItemChanged(item, value));
   syncSettingListToolbar(row.closest?.("[data-setting-list]"));
+}
+
+// Catalog titles carry their default in brackets ("가속도설정 1 : 10km/h(160)"). The list shows "기본 160" under a
+// changed value, so a bracket that is exactly the default is dropped there; anything else in brackets stays.
+function settingListTitle(item, title) {
+  const text = String(title || "");
+  if (!item || item.default === undefined || item.default === null) return text;
+  const cleaned = text.replace(/\s*\(([^()]*)\)/g, (match, inner) => {
+    // "(160)", "(켜짐)" or a number with its unit, "(0cm)", "(30%)"
+    const withUnit = inner.trim().match(/^(-?\d+(?:\.\d+)?)\s*[a-z%/°]*$/i);
+    const value = withUnit ? Number(withUnit[1]) : normalizeSettingCompareValue(inner.trim());
+    return typeof value === "number" && !settingValuesDiffer(value, item.default) ? " " : match;
+  }).replace(/\s{2,}/g, " ").replace(/\s*:\s*$/, "").trim();
+  return cleaned || text;
+}
+
+// Shorter still for the favourites strip: no trailing scale factor ("x0.01", "*0.01deg") or leading marker.
+function settingShortTitle(item, title) {
+  return settingListTitle(item, title)
+    .replace(/\s*[x×*]\s*\d*\.?\d+\s*[a-z%°]*$/i, "")
+    .replace(/^[_*]+/, "")
+    .trim() || String(title || "");
+}
+
+function getSettingGroupChangeSummary(group) {
+  // The rows the group's list shows (detail-only children excluded), so the tile and the list agree.
+  const names = getSettingItemEntriesForGroup(group).map((entry) => entry.item?.name).filter(Boolean);
+  const peek = settingValueRepository.peekValues?.(names);
+  if (!peek?.complete) return { names, total: names.length, changed: null };
+  let changed = 0;
+  names.forEach((name) => {
+    if (isSettingItemChanged(findSettingItemByName(name)?.item, peek.values[name])) changed += 1;
+  });
+  return { names, total: names.length, changed };
+}
+
+function decorateSettingFavoritesButton(button) {
+  const names = getValidSettingFavoriteNames();
+  button.classList.add("groupBtn--strip");
+  let meta = button.querySelector(".setting-group-meta");
+  if (!meta) {
+    meta = document.createElement("span");
+    meta.className = "setting-group-meta";
+    button.appendChild(meta);
+  }
+  meta.textContent = names.length
+    ? getUIText("setting_group_count", "{count} settings", { count: names.length })
+    : getUIText("setting_favorites_add_hint", "Long press a setting to add it");
+  let strip = button.querySelector(".setting-fav-strip");
+  if (!names.length) {
+    strip?.remove();
+    return;
+  }
+  if (!strip) {
+    strip = document.createElement("span");
+    strip.className = "setting-fav-strip";
+    button.appendChild(strip);
+  }
+  const peek = settingValueRepository.peekValues?.(names);
+  const chips = names.slice(0, 12).map((name) => {
+    const item = findSettingItemByName(name)?.item;
+    const value = peek?.values?.[name] ?? item?.default;
+    const chip = document.createElement("span");
+    chip.className = "setting-fav";
+    const label = document.createElement("span");
+    label.className = "setting-fav__k";
+    label.textContent = settingShortTitle(item, formatItemText(item, "title", "etitle", name));
+    const shown = document.createElement("span");
+    shown.className = "setting-fav__v";
+    shown.textContent = item ? formatSettingRowValue(item, value) : String(value ?? "");
+    const note = document.createElement("span");
+    note.className = "setting-fav__d";
+    const changed = isSettingItemChanged(item, value);
+    chip.classList.toggle("is-changed", changed);
+    note.textContent = changed
+      ? `${getUIText("setting_default_short", "Default")} ${formatSettingRowValue(item, item.default)}`
+      : getUIText("setting_group_default", "Default");
+    chip.append(label, shown, note);
+    return chip;
+  });
+  strip.replaceChildren(...chips);
+}
+
+function decorateSettingGroupList(box = document.getElementById("groupList")) {
+  if (!box) return;
+  const allNames = new Set();
+  box.querySelectorAll(".groupBtn[data-group]").forEach((button) => {
+    const group = button.dataset.group;
+    if (isSettingFavoritesGroup(group)) {
+      decorateSettingFavoritesButton(button);
+      return;
+    }
+    if (getSettingProfileByGroup(group)) return;
+    const summary = getSettingGroupChangeSummary(group);
+    summary.names.forEach((name) => allNames.add(name));
+    let meta = button.querySelector(".setting-group-meta");
+    if (!meta) {
+      meta = document.createElement("span");
+      meta.className = "setting-group-meta";
+      button.appendChild(meta);
+    }
+    const count = getUIText("setting_group_count", "{count} settings", { count: summary.total });
+    meta.replaceChildren(document.createTextNode(count));
+    if (summary.changed) {
+      const changed = document.createElement("b");
+      changed.textContent = getUIText("setting_group_changed", "{count} changed", { count: summary.changed });
+      meta.append(" · ", changed);
+    }
+    button.classList.toggle("has-changes", Boolean(summary.changed));
+  });
+  // A category label stays in "changed only" mode only while one of its groups has a change.
+  let divider = null;
+  let dividerHasChanges = false;
+  [...box.children].forEach((child) => {
+    if (child.classList.contains("setting-category-divider")) {
+      divider?.classList.toggle("has-changes", dividerHasChanges);
+      divider = child;
+      dividerHasChanges = false;
+    } else if (child.classList.contains("has-changes")) {
+      dividerHasChanges = true;
+    }
+  });
+  divider?.classList.toggle("has-changes", dividerHasChanges);
+
+  // One card above the groups: how many settings differ from their defaults, and a switch to show only those
+  // (the same switch as "Changed" above each list, kept while the page stays open).
+  const names = [...allNames];
+  const peek = settingValueRepository.peekValues?.(names);
+  let card = box.querySelector(".setting-changed-card");
+  if (!peek?.complete || !names.length) {
+    card?.remove();
+    return;
+  }
+  const total = names.filter((name) => isSettingItemChanged(findSettingItemByName(name)?.item, peek.values[name])).length;
+  if (!card) {
+    card = document.createElement("button");
+    card.type = "button";
+    card.className = "setting-changed-card";
+    card.innerHTML = '<span class="setting-changed-card__n"></span>'
+      + '<span class="setting-changed-card__t"><span class="setting-changed-card__title"></span>'
+      + '<small class="setting-changed-card__hint"></small></span><span class="setting-changed-card__state"></span>';
+    card.onclick = () => {
+      settingChangedOnly = !settingChangedOnly;
+      decorateSettingGroupList(box);
+    };
+    const slot = box.querySelector(".setting-inline-search-slot");
+    if (slot) slot.insertAdjacentElement("afterend", card);
+    else box.prepend(card);
+  }
+  card.querySelector(".setting-changed-card__n").textContent = String(total);
+  card.querySelector(".setting-changed-card__title").textContent = getUIText("setting_changed_card_title", "Changed settings");
+  card.querySelector(".setting-changed-card__hint").textContent = settingChangedOnly
+    ? getUIText("setting_changed_card_on", "Showing only changed ones · tap for all")
+    : getUIText("setting_changed_card_hint", "Tap to show only what you changed");
+  card.querySelector(".setting-changed-card__state").textContent = settingChangedOnly
+    ? getUIText("setting_changed_card_state_on", "On")
+    : "";
+  card.setAttribute("aria-pressed", settingChangedOnly ? "true" : "false");
+  box.classList.toggle("is-changed-only", settingChangedOnly);
+}
+
+let settingGroupDecorRaf = 0;
+function scheduleSettingGroupDecor() {
+  if (settingGroupDecorRaf) return;
+  settingGroupDecorRaf = requestAnimationFrame(() => {
+    settingGroupDecorRaf = 0;
+    decorateSettingGroupList();
+  });
 }
 
 function formatSettingPopularValue(p, raw) {
@@ -2956,7 +3257,7 @@ async function renderItems(group, options = {}) {
       ${rangeMetaHtml}
     ` : `
       <div class="setting-title-row">
-        ${settingMarqueeHtml(title, "title")}
+        ${settingMarqueeHtml(settingListTitle(p, title), "title")}
         ${riskBadge}
         ${renderSettingFavoriteMark(name)}
       </div>
@@ -3250,6 +3551,7 @@ async function renderItems(group, options = {}) {
           cacheSettingValue(name, next, group);
           if (originGroup !== group) cacheSettingValue(name, next, originGroup);
           refreshSettingHistory();
+          if (typeof scheduleSettingGroupDecor === "function") scheduleSettingGroupDecor();
         }
         if (name === "FcwWarningTest") {
           // Read the controller acknowledgement, never leave a timed test ON in the UI.
@@ -3451,11 +3753,19 @@ async function renderItems(group, options = {}) {
       const openSheet = () => openSettingSheet({
         row: el,
         item: p,
-        title: title || name,
+        title: settingListTitle(p, title) || name,
+        kicker: el.closest(".setting-section-block")?.querySelector(".setting-group-card__title")?.textContent?.trim()
+          || getSettingGroupLabel(originGroup),
         descr,
         ctrl,
         unitBtn,
         controlKind,
+        getStep: () => (controlConfig.unit < 1 ? controlConfig.unit : 1) * getSettingUnitValue(name),
+        commitValue: async (raw) => {
+          const next = normalizeSettingValue(raw);
+          if (next === null || String(next) === String(val.dataset.committedValue ?? val.dataset.rawValue)) return;
+          await commitSettingValue(next);
+        },
         onReset: async () => {
           const normalizedDefault = normalizeSettingValue(p.default);
           await commitSettingValue(normalizedDefault === null ? p.default : normalizedDefault);

@@ -193,8 +193,9 @@ function applyRecordFabState(isOn = recordStateIsOn) {
 
   const elapsed = recordElapsedSuffix();
   btnRecordToggle.classList.toggle("active", recordStateIsOn);
-  btnRecordToggle.textContent = `${getUIText("record", "Record")}${elapsed}`;
+  btnRecordToggle.textContent = `${getUIText("tools_record_screen", getUIText("record", "Record"))}${elapsed}`;
   btnRecordToggle.dataset.state = recordStateIsOn ? "on" : "off";
+  btnRecordToggle.setAttribute("aria-pressed", recordStateIsOn ? "true" : "false");
   if (recordStateIsOn) startRecordElapsedTicker();
   else stopRecordElapsedTicker();
   if (typeof btnHome !== "undefined" && btnHome) {

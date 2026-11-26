@@ -123,6 +123,9 @@ const FALLBACK_STRINGS = {
   stale_note: "This result is from the {when} drive; the newest drive is not analysed yet.",
   r_match_pct: "Match",
   r_match_curve_pct: "Curve match",
+  match_curve: "Curves",
+  match_straight: "Straights",
+  match_note: "Debug plot 6: green = requested, yellow = actual lateral accel",
   r_takeovers_per_min: "Takeovers/min",
   r_release_per_min: "Let-go/min",
   r_err: "Tracking error",
@@ -425,8 +428,28 @@ function render(payload = lastPayload) {
     if (m.match_pct === null || m.match_pct === undefined) {
       box.append(el("span", "tuning-advice__match-detail", t("match_none")));
     } else {
-      box.append(el("strong", "tuning-advice__match-value", t("match_value", { pct: Number(m.match_pct).toFixed(1) })));
-      box.append(el("span", "tuning-advice__match-detail", t("match_detail", { curve: pct(m.match_curve_pct), straight: pct(m.match_straight_pct) })));
+      // The headline number, with curves and straights as two small bars beside it.
+      box.classList.add("tuning-advice__match--split");
+      const main = el("div", "tuning-advice__match-main");
+      const value = el("strong", "tuning-advice__match-value", Number(m.match_pct).toFixed(1));
+      value.append(el("small", "tuning-advice__match-unit", "%"));
+      value.setAttribute("aria-label", t("match_value", { pct: Number(m.match_pct).toFixed(1) }));
+      main.append(value, box.querySelector(".tuning-advice__match-label"));
+      const bars = el("div", "tuning-advice__match-bars");
+      [["match_curve", m.match_curve_pct], ["match_straight", m.match_straight_pct]].forEach(([key, raw]) => {
+        const bar = el("div", "tuning-advice__match-bar");
+        const head = el("div", "tuning-advice__match-bar-head");
+        head.append(el("span", "", t(key)), el("b", "", pct(raw)));
+        const track = el("div", "tuning-advice__match-track");
+        const fill = el("i", "");
+        const width = Number.isFinite(Number(raw)) ? Math.max(0, Math.min(100, Number(raw))) : 0;
+        fill.style.width = `${width}%`;
+        track.append(fill);
+        bar.append(head, track);
+        bars.append(bar);
+      });
+      box.append(main, bars);
+      box.append(el("span", "tuning-advice__match-detail", t("match_note")));
     }
     nodes.push(box);
   }

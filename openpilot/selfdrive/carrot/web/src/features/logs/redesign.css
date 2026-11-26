@@ -1,21 +1,50 @@
-/* Logs in the settings list's language (user request 2026-11-26: "make the other tabs look good too"): a neutral
-   switch instead of the solid orange one, borderless route cards on the raised surface, quiet metadata. */
+/* Logs in the 2026-11-27 design: the dashcam / screen-record switch as ink chips, route cards as soft cards on the
+   page surface, quiet metadata. Colours come from the shared tokens, so the page follows the phone's light/dark. */
 #pageLogs .logs-tabs {
-  --segmented-control-selected-bg: var(--md-surface-cont-hh);
-  --segmented-control-selected-fg: var(--md-on-surface);
+  --segmented-control-selected-bg: var(--md-on-surface);
+  --segmented-control-selected-fg: var(--md-surface-cont);
   --segmented-control-item-fg: var(--md-on-surface-var);
-  --segmented-control-item-font-weight: 600;
+  --segmented-control-item-font-weight: 650;
+  gap: 8px;
+  padding: 0;
   border: 0;
+  background: none;
+  box-shadow: none;
 }
 
-#pageLogs .dashcam-route-card {
+#pageLogs .logs-tabs .c-segmented-control__item {
+  min-height: 38px;
+  border-radius: 999px;
+  background: var(--md-surface-cont);
+  box-shadow: inset 0 0 0 1px var(--c-line);
+}
+
+#pageLogs .logs-tabs .c-segmented-control__item.is-active {
+  background: var(--md-on-surface);
+  box-shadow: none;
+  color: var(--md-surface-cont);
+}
+
+#pageLogs .logs-menu__button {
   border: 0;
   border-radius: 14px;
   background: var(--md-surface-cont);
+  box-shadow: var(--c-card-shadow), inset 0 0 0 1px var(--c-line);
+  color: var(--md-on-surface);
+}
+
+#pageLogs .dashcam-route-card {
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--c-radius-card);
+  background: var(--md-surface-cont);
+  box-shadow: var(--c-card-shadow);
 }
 
 #pageLogs .dashcam-route-title {
+  color: var(--md-on-surface);
   font-weight: 700;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 

@@ -1,22 +1,24 @@
 /* Material roles, interaction states, focus and elevation. */
 :root {
-  /* Second design (user request 2026-11-26 "redo the design"): calmer graphite surfaces, a real secondary text
-     tone instead of near-white everywhere, quieter borders, a stronger carrot accent. */
-  --md-surface: #0a0c0f;
-  --md-surface-cont: #13161b;
-  --md-surface-cont-l: #171a20;
-  --md-surface-cont-h: #1c2027;
-  --md-surface-cont-hh: #262b34;
-  --md-surface-bright: #5b6370;
+  /* Third design (user approved 2026-11-27 "이걸로 가자"): calm neutral surfaces, ink text, one carrot accent that
+     only marks what needs attention. Dark is the default; the light set below follows the phone on the pages that
+     are read rather than watched (Settings, Tools, Logs, car and branch pickers). Drive and Terminal stay dark. */
+  color-scheme: dark;
+  --md-surface: #0b0b0b;
+  --md-surface-cont: #171717;
+  --md-surface-cont-l: #131313;
+  --md-surface-cont-h: #1f1f1e;
+  --md-surface-cont-hh: #2a2a29;
+  --md-surface-bright: #5c5c59;
 
-  --md-on-surface: #f2f4f7;
-  --md-on-surface-var: #a7afbc;
-  --md-outline: #c2c9d4;
-  --md-outline-var: #66707e;
-  --md-stroke-soft: #6b7482;
-  --md-stroke-strong: #a3acba;
+  --md-on-surface: #f2f2f0;
+  --md-on-surface-var: #a0a09c;
+  --md-outline: #c9c9c5;
+  --md-outline-var: #686865;
+  --md-stroke-soft: #3c3c3a;
+  --md-stroke-strong: #9a9a96;
 
-  --md-primary: #ff9248;
+  --md-primary: #ff8a3c;
   --md-on-primary: #1f0d00;
   --md-action-filled: #a8521e;
   --md-on-action-filled: #fff4ec;
@@ -63,6 +65,78 @@
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
   --focus-ring-color: color-mix(in srgb, var(--md-primary) 80%, transparent);
+}
+
+/* Shared design tokens of the 2026-11-27 design: a fill for chips and secondary buttons, hairlines, the third text
+   tone, card elevation (none in dark), the floating tab bar and sheets. */
+:root {
+  --c-fill: #242423;
+  --c-fill-press: #2e2e2d;
+  --c-line: rgba(255, 255, 255, 0.075);
+  --c-ink3: #6a6a67;
+  --c-card-shadow: none;
+  --c-bar: rgba(30, 30, 30, 0.86);
+  --c-bar-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --c-knob-off: #8d8d89;
+  --c-scrim: rgba(0, 0, 0, 0.58);
+  --c-sheet: #1b1b1b;
+  --c-danger: #ff6a5c;
+  --c-radius-card: 20px;
+}
+
+@media (prefers-color-scheme: light) {
+  html:is([data-page="setting"], [data-page="tools"], [data-page="logs"], [data-page="car"], [data-page="branch"]) {
+    color-scheme: light;
+    --md-surface: #f4f4f2;
+    --md-surface-cont: #ffffff;
+    --md-surface-cont-l: #fafaf9;
+    --md-surface-cont-h: #ececea;
+    --md-surface-cont-hh: #e2e2df;
+    --md-surface-bright: #c9c9c5;
+
+    --md-on-surface: #151515;
+    --md-on-surface-var: #6c6c69;
+    --md-outline: #4d4d4a;
+    --md-outline-var: #a5a5a1;
+    --md-stroke-soft: #d6d6d2;
+    --md-stroke-strong: #8a8a86;
+
+    --md-primary: #e4580b;
+    --md-on-primary: #ffffff;
+    --md-action-filled: #e4580b;
+    --md-on-action-filled: #ffffff;
+
+    --md-error: #c4271b;
+    --md-on-error: #ffffff;
+    --md-error-cont: #fde3df;
+    --md-on-error-cont: #7a120a;
+    --md-danger: #d1291c;
+    --md-danger-strong: #b81f13;
+    --md-success: #1f8a3e;
+    --md-success-strong: #17803a;
+    --md-warning: #a86a12;
+    --md-warning-strong: #8f5900;
+    --md-info: #0b6fa8;
+    --md-info-strong: #075f91;
+
+    --shadow-1: 0 1px 2px rgba(21, 21, 21, 0.05), 0 4px 12px rgba(21, 21, 21, 0.05);
+    --shadow-2: 0 8px 24px rgba(21, 21, 21, 0.08);
+    --shadow-3: 0 12px 28px rgba(21, 21, 21, 0.10);
+    --shadow-4: 0 18px 40px rgba(21, 21, 21, 0.12);
+    --shadow-5: 0 20px 60px rgba(21, 21, 21, 0.16);
+
+    --c-fill: #ececea;
+    --c-fill-press: #e2e2df;
+    --c-line: rgba(21, 21, 21, 0.08);
+    --c-ink3: #a5a5a1;
+    --c-card-shadow: 0 1px 2px rgba(21, 21, 21, 0.04), 0 6px 20px rgba(21, 21, 21, 0.035);
+    --c-bar: rgba(255, 255, 255, 0.84);
+    --c-bar-shadow: 0 10px 30px rgba(21, 21, 21, 0.10);
+    --c-knob-off: #ffffff;
+    --c-scrim: rgba(20, 20, 20, 0.30);
+    --c-sheet: #ffffff;
+    --c-danger: #d1291c;
+  }
 }
 
 @media (prefers-contrast: more) {

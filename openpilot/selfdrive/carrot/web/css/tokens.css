@@ -20,8 +20,8 @@
      - Value grids for short numeric or code choices.
      - Action lists for commands and destructive choices.
      - Fully rounded shapes are reserved for semantic controls. */
-  --dialog-sheet-radius: 16px;
-  --dialog-sheet-radius-mobile: 18px;
+  --dialog-sheet-radius: 24px;
+  --dialog-sheet-radius-mobile: 24px;
   --dialog-control-radius: var(--control-radius);
   --dialog-choice-radius: var(--control-radius);
   --dialog-sheet-width: 420px;
@@ -63,16 +63,16 @@
      dialogs are unchanged — only non-dialog popups (e.g. the
      dropdown menu) are pulled onto this surface. Size stays per
      component (width/height are NOT tokenized here). */
-  --popup-bg: color-mix(in srgb, var(--md-surface-cont) 96%, #000);
-  --popup-border-color: color-mix(in srgb, var(--md-stroke-soft) 92%, transparent);
+  --popup-bg: var(--c-sheet);
+  --popup-border-color: transparent;
   --popup-radius: var(--dialog-sheet-radius);
   --popup-shadow: var(--shadow-4);
-  --popup-backdrop: color-mix(in srgb, #000 62%, transparent);
-  --popup-item-radius: var(--control-radius);
-  --popup-item-border: color-mix(in srgb, var(--md-outline-var) 46%, transparent);
-  --popup-item-bg: var(--md-surface-cont);
-  --popup-item-active-border: color-mix(in srgb, var(--md-primary) 56%, var(--md-stroke-soft));
-  --popup-item-active-bg: var(--md-primary-state);
+  --popup-backdrop: var(--c-scrim);
+  --popup-item-radius: 14px;
+  --popup-item-border: transparent;
+  --popup-item-bg: var(--c-fill);
+  --popup-item-active-border: transparent;
+  --popup-item-active-bg: var(--c-fill-press);
 
   --drive-layer-surface: 0;
   --drive-layer-content: 1;

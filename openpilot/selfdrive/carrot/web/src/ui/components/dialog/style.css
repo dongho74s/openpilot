@@ -436,21 +436,21 @@
 }
 
 #appDialogConfirm.btn--filled {
-  background: var(--md-action-filled);
-  border-color: color-mix(in srgb, var(--md-action-filled) 78%, var(--md-outline-var));
-  color: var(--md-on-action-filled);
+  background: var(--md-on-surface);
+  border-color: transparent;
+  color: var(--md-surface-cont);
   box-shadow: none;
 }
 
 #appDialogConfirm.btn--filled:hover,
 #appDialogConfirm.btn--filled:focus-visible {
-  background: color-mix(in srgb, var(--md-action-filled) 88%, #fff);
-  border-color: color-mix(in srgb, var(--md-action-filled) 84%, var(--md-outline-var));
-  color: var(--md-on-action-filled);
+  background: color-mix(in srgb, var(--md-on-surface) 88%, var(--md-surface-cont));
+  border-color: transparent;
+  color: var(--md-surface-cont);
 }
 
 #appDialogConfirm.btn--filled:active {
-  background: color-mix(in srgb, var(--md-action-filled) 86%, #2a1204);
+  background: color-mix(in srgb, var(--md-on-surface) 80%, var(--md-surface-cont));
 }
 
 @media (max-width: 640px) and (aspect-ratio < 13/10) {
@@ -532,4 +532,47 @@ html[data-kb-open="1"] .app-dialog--input {
 
 .app-dialog__inputError[hidden] {
   display: none !important;
+}
+
+/* 2026-11-27 design: soft sheets, a quiet title, choices on the shared fill with an ink check for the current one,
+   pill buttons (the confirm button is ink). */
+.app-dialog__title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.app-dialog__choices--list .app-dialog__choiceBtn--action {
+  color: var(--md-on-surface);
+  font-weight: 600;
+}
+
+.app-dialog__choices--list .app-dialog__choiceBtn--action:hover,
+.app-dialog__choices--list .app-dialog__choiceBtn--action:focus-visible {
+  border-color: transparent;
+  background: var(--c-fill-press);
+}
+
+.app-dialog__choices--list .app-dialog__choiceBtn--action.is-current {
+  color: var(--md-on-surface);
+  font-weight: 750;
+}
+
+.app-dialog__choices--list .app-dialog__choiceBtn--action.is-current::after {
+  border-right-color: currentColor;
+  border-bottom-color: currentColor;
+}
+
+.app-dialog__choiceBtn.is-current {
+  border-color: transparent;
+  background: var(--md-on-surface);
+  color: var(--md-surface-cont);
+}
+
+.app-dialog__actions .smallBtn,
+.app-dialog__actions .btn {
+  min-width: 72px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-weight: 650;
 }

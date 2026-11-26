@@ -1,51 +1,484 @@
-/* Settings list as a spec sheet (user request 2026-11-26: "redo it; it must read at a glance; ugly, looks like AI
-   slop; mind the UX"). Rows are lines of text, not boxes: the title on the left, the value on the right. Unchanged
-   values are quiet, a changed value is the one accent on the screen with its default beneath it. A row opens the
-   value sheet below (large stepper or the full list of choices, the range with its default, reset, description).
-   Loaded last, so these rules win over the older row styles; the detail screen keeps the older look. */
+/* Settings in the 2026-11-27 design (user approved the mockup: "이걸로 가자"). Calm and typographic: groups are
+   tiles that say how many settings they hold and how many were changed; a group is a card of rows with the name on
+   the left and the value on the right; only a value that differs from its default takes the carrot accent, with
+   its default beneath it. A row opens the value sheet (big value, − and +, a ruler with the default marked).
+   Loaded last, so these rules win over the older row styles; the detail screen keeps the older layout. */
 
 .page--setting,
 .setting-sheet-backdrop {
-  --sheet-line: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
-  --sheet-line-strong: color-mix(in srgb, var(--md-on-surface) 14%, transparent);
-  --sheet-press: color-mix(in srgb, var(--md-on-surface) 5%, transparent);
-  --sheet-quiet: var(--md-on-surface-var);
-  --sheet-accent: var(--md-primary);
-  --sheet-accent-soft: color-mix(in srgb, var(--md-primary) 14%, transparent);
-  --sheet-raised: color-mix(in srgb, var(--md-on-surface) 7%, var(--md-surface-cont));
+  --set-card: var(--md-surface-cont);
+  --set-fill: var(--c-fill);
+  --set-fill-press: var(--c-fill-press);
+  --set-line: var(--c-line);
+  --set-ink: var(--md-on-surface);
+  --set-ink2: var(--md-on-surface-var);
+  --set-ink3: var(--c-ink3);
+  --set-accent: var(--md-primary);
+  --set-shadow: var(--c-card-shadow);
+  --set-radius: var(--c-radius-card);
 }
 
-/* ── Sections: a label and a run of rows, no card ── */
+/* ── Page chrome ── */
+.page--setting #settingTabBar.setting-tabbar {
+  display: flex;
+  gap: 18px;
+  margin: 6px 0 2px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.page--setting #settingTabBar .setting-tab {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--set-ink3);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.page--setting #settingTabBar .setting-tab.is-active {
+  background: none;
+  color: var(--set-ink);
+}
+
+.page--setting #settingTabBar #settingTabCarrot {
+  order: -1;
+}
+
+.page--setting #settingTabBar .setting-tab:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.page--setting #btnSettingSearch.fab {
+  border: 0;
+  background: var(--set-card);
+  color: var(--set-ink);
+  box-shadow: var(--c-bar-shadow), inset 0 0 0 1px var(--set-line);
+}
+
+/* ── Group screen: search, the changed-settings card, favourites, tiles ── */
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > :not(.groupBtn),
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn--favorites {
+  grid-column: 1 / -1;
+}
+
+.page--setting #carrotTabContent #groupList > .setting-inline-search-slot {
+  margin: 6px 0 4px;
+}
+
+.page--setting #carrotTabContent .setting-inline-search {
+  padding: 0 14px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--set-card);
+  box-shadow: var(--set-shadow), inset 0 0 0 1px var(--set-line);
+}
+
+.page--setting #carrotTabContent .setting-inline-search:focus-within {
+  box-shadow: var(--set-shadow), inset 0 0 0 1.5px var(--set-ink);
+}
+
+.page--setting #carrotTabContent .setting-inline-search input {
+  min-height: 46px;
+  color: var(--set-ink);
+  font-size: 16px;
+}
+
+.page--setting #carrotTabContent .setting-inline-search input::placeholder {
+  color: var(--set-ink3);
+}
+
+.page--setting #carrotTabContent .setting-inline-search__icon {
+  color: var(--set-ink3);
+}
+
+/* the card that counts changed settings and switches to "changed only" */
+.page--setting .setting-changed-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 76px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: var(--set-radius);
+  background: var(--set-card);
+  box-shadow: var(--set-shadow);
+  color: var(--set-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.page--setting .setting-changed-card__n {
+  min-width: 44px;
+  color: var(--set-accent);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.page--setting .setting-changed-card__t {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.page--setting .setting-changed-card__title {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.page--setting .setting-changed-card__hint {
+  color: var(--set-ink2);
+  font-size: 13px;
+}
+
+.page--setting .setting-changed-card__state:empty {
+  display: none;
+}
+
+.page--setting .setting-changed-card__state {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--set-ink);
+  color: var(--set-card);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+/* tiles */
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 84px;
+  margin: 0;
+  padding: 15px 16px 14px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--set-card);
+  box-shadow: var(--set-shadow);
+  color: var(--set-ink);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  text-align: left;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn::after {
+  display: none;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn .setting-group-label {
+  max-width: 100%;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:active {
+  background: var(--set-fill);
+  transform: none;
+}
+
+@media (hover: hover) {
+  .page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:hover {
+    background: color-mix(in srgb, var(--set-ink) 3%, var(--set-card));
+  }
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn.active {
+  background: var(--set-card);
+  box-shadow: var(--set-shadow);
+  color: var(--set-ink);
+}
+
+/* only the split layout shows which group is open beside the list */
+.page--setting.setting-layout-split :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn.active {
+  box-shadow: var(--set-shadow), inset 0 0 0 1.5px var(--set-ink);
+}
+
+/* device groups carry no counts: shorter tiles */
+.page--setting #deviceGroupList > .groupBtn.btn {
+  justify-content: center;
+  min-height: 64px;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.page--setting .groupBtn .setting-group-meta {
+  color: var(--set-ink3);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.page--setting .groupBtn .setting-group-meta b {
+  color: var(--set-accent);
+  font-weight: 650;
+}
+
+.page--setting #carrotTabContent #groupList.is-changed-only > .groupBtn:not(.has-changes):not(.groupBtn--favorites),
+.page--setting #carrotTabContent #groupList.is-changed-only > .setting-category-divider:not(.has-changes) {
+  display: none;
+}
+
+/* favourites: a heading and a strip of their current values */
+.page--setting #carrotTabContent #groupList > .groupBtn.groupBtn--favorites.groupBtn--strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px 12px;
+  min-height: 0;
+  margin-top: 16px;
+  padding: 0 4px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.page--setting #carrotTabContent #groupList > .groupBtn.groupBtn--favorites.groupBtn--strip:active,
+.page--setting #carrotTabContent #groupList > .groupBtn.groupBtn--favorites.groupBtn--strip.active {
+  background: none;
+  box-shadow: none;
+}
+
+.page--setting #carrotTabContent #groupList > .groupBtn--favorites .setting-group-label {
+  color: var(--set-ink2);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.page--setting #carrotTabContent #groupList > .groupBtn--favorites .setting-group-meta {
+  font-size: 13px;
+}
+
+.page--setting .setting-fav-strip {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 10px;
+  margin: 0 -4px;
+  padding: 2px 4px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.page--setting .setting-fav-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.page--setting .setting-fav {
+  display: flex;
+  flex: 0 0 132px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 15px 13px;
+  border-radius: 16px;
+  background: var(--set-card);
+  box-shadow: var(--set-shadow);
+}
+
+.page--setting .setting-fav__k {
+  overflow: hidden;
+  color: var(--set-ink2);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.page--setting .setting-fav__v {
+  overflow: hidden;
+  color: var(--set-ink);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.page--setting .setting-fav.is-changed .setting-fav__v {
+  color: var(--set-accent);
+}
+
+.page--setting .setting-fav__d {
+  color: var(--set-ink3);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* category labels */
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider {
+  justify-content: flex-start;
+  margin: 18px 0 0;
+  padding: 0 4px;
+  border: 0;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider > span {
+  display: none;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider > strong {
+  color: var(--set-ink2);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+/* ── Group screen header: the back chevron and the group name as the page title ── */
+.page--setting #settingScreenItems > .row-between {
+  margin: 4px 0 12px;
+}
+
+.page--setting #itemsTitle.section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: var(--set-ink);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.page--setting #itemsTitle .setting-title-backIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: -6px;
+  color: var(--set-ink2);
+}
+
+.page--setting #itemsTitle .setting-title-backIcon svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* ── Filter above a list: All / Changed as chips ── */
+.page--setting .setting-filter {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.page--setting .setting-filter__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--set-card);
+  box-shadow: inset 0 0 0 1px var(--set-line);
+  color: var(--set-ink2);
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.page--setting .setting-filter__option[aria-checked="true"] {
+  background: var(--set-ink);
+  box-shadow: none;
+  color: var(--set-card);
+}
+
+.page--setting .setting-filter__count {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.page--setting .setting-filter__option:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.page--setting .setting-items--changed-only .setting:not(.is-changed),
+.page--setting .setting-items--changed-only .setting-section-block:not(:has(.setting.is-changed)) {
+  display: none;
+}
+
+.page--setting .setting-items--changed-only:not(:has(.setting.is-changed))::after {
+  content: attr(data-changed-empty);
+  display: block;
+  padding: 32px 0;
+  color: var(--set-ink2);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ── Sections: a label over a card of rows ── */
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-section-block {
   gap: 0;
-  margin: 0 0 28px;
+  margin: 0;
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-group-card__title {
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--sheet-line-strong);
-  color: var(--sheet-quiet);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .04em;
+  margin: 24px 4px 10px;
+  padding: 0;
+  border: 0;
+  color: var(--set-ink2);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-section-block > .setting-group-card {
   padding: 0;
   border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  border-radius: var(--set-radius);
+  background: var(--set-card);
+  box-shadow: var(--set-shadow);
+  overflow: hidden;
 }
 
 /* ── Row ── */
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row,
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-group-card__body > .setting.setting--row {
-  min-height: 54px;
-  margin: 0 -10px;
-  padding: 11px 10px;
+  min-height: 56px;
+  margin: 0;
+  padding: 9px 18px;
   border: 0;
-  border-bottom: 1px solid var(--sheet-line);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -53,13 +486,21 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* inset hairline between rows, drawn as a background so pressed rows keep it */
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row + .setting.setting--row {
+  background-image: linear-gradient(var(--set-line), var(--set-line));
+  background-position: 18px 0;
+  background-size: calc(100% - 36px) 1px;
+  background-repeat: no-repeat;
+}
+
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row:active {
-  background: var(--sheet-press);
+  background-color: var(--set-fill);
 }
 
 @media (hover: hover) {
   .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row:hover {
-    background: var(--sheet-press);
+    background-color: color-mix(in srgb, var(--set-ink) 3%, transparent);
   }
 }
 
@@ -73,8 +514,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
-  min-height: 32px;
+  gap: 14px;
+  min-height: 38px;
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .setting-title-row {
@@ -96,10 +537,11 @@
   animation: none;
   transform: none;
   will-change: auto;
-  color: var(--md-on-surface);
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.35;
+  color: var(--set-ink);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.32;
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
@@ -109,16 +551,17 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 1px;
-  max-width: 46vw;
+  max-width: 44vw;
   text-align: right;
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-row-value__text {
   overflow: hidden;
   max-width: 100%;
-  color: var(--sheet-quiet);
+  color: var(--set-ink);
   font-size: 16px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -126,15 +569,16 @@
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting-row-value__default {
   display: none;
-  color: var(--sheet-quiet);
+  color: var(--set-ink3);
   font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  opacity: .8;
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row.is-changed .setting-row-value__text {
-  color: var(--sheet-accent);
+  color: var(--set-accent);
+  font-weight: 650;
 }
 
 .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row.is-changed .setting-row-value__default {
@@ -151,157 +595,29 @@
   width: auto;
 }
 
-/* ── Filter above the list: all / changed ── */
-.page--setting .setting-filter {
-  display: inline-flex;
-  gap: 2px;
-  margin: 0 0 20px;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--md-surface-cont);
-}
-
-.page--setting .setting-filter__option {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--sheet-quiet);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.page--setting .setting-filter__option[aria-checked="true"] {
-  background: var(--md-surface-cont-hh);
-  color: var(--md-on-surface);
-}
-
-.page--setting .setting-filter__count {
-  color: var(--sheet-quiet);
-  font-size: 13px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-.page--setting .setting-filter__option[aria-checked="true"] .setting-filter__count--changed {
-  color: var(--sheet-accent);
-}
-
-.page--setting .setting-filter__option:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 1px;
-}
-
-.page--setting .setting-items--changed-only .setting:not(.is-changed),
-.page--setting .setting-items--changed-only .setting-section-block:not(:has(.setting.is-changed)) {
-  display: none;
-}
-
-.page--setting .setting-items--changed-only:not(:has(.setting.is-changed))::after {
-  content: attr(data-changed-empty);
-  display: block;
-  padding: 32px 0;
-  color: var(--sheet-quiet);
-  font-size: 14px;
-  text-align: center;
-}
-
-/* ── Wide screens: rows in two columns ── */
+/* ── Wide screens: rows in two columns inside each card ── */
 @media (min-width: 1100px) {
   .page--setting #settingScreenItems .setting-section-block > .setting-group-card > .setting-group-card__body {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 40px;
   }
 
   .page--setting #settingScreenItems .setting-section-block > .setting-group-card > .setting-group-card__body > .setting.setting--row {
-    margin: 0 -10px;
+    background-image: linear-gradient(var(--set-line), var(--set-line));
+    background-position: 18px 0;
+    background-size: calc(100% - 36px) 1px;
+    background-repeat: no-repeat;
+  }
+
+  .page--setting #settingScreenItems .setting-section-block > .setting-group-card > .setting-group-card__body > .setting.setting--row:nth-child(-n + 2) {
+    background-image: none;
   }
 }
 
-/* ── Group list: the same lines, no cards ── */
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) {
-  gap: 0;
-}
-
-.page--setting #carrotTabContent #groupList > .setting-inline-search-slot {
-  margin-bottom: 16px;
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn {
-  box-sizing: border-box;
-  width: calc(100% + 20px);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 52px;
-  margin: 0 -10px;
-  padding: 0 10px;
-  border: 0;
-  border-bottom: 1px solid var(--sheet-line);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--md-on-surface);
-  font-size: 15px;
-  font-weight: 500;
-  text-align: left;
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn::after {
-  content: "";
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  margin-right: 3px;
-  border-top: 1.5px solid var(--sheet-quiet);
-  border-right: 1.5px solid var(--sheet-quiet);
-  transform: rotate(45deg);
-  opacity: .7;
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:active {
-  background: var(--sheet-press);
-}
-
-@media (hover: hover) {
-  .page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:hover {
-    background: var(--sheet-press);
+@media (min-width: 720px) {
+  .page--setting :is(#carrotTabContent #groupList, #deviceGroupList) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn.active {
-  background: var(--sheet-press);
-  color: var(--sheet-accent);
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: -2px;
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider {
-  justify-content: flex-start;
-  margin: 28px 0 0;
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--sheet-line-strong);
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider > span {
-  display: none;
-}
-
-.page--setting :is(#carrotTabContent #groupList, #deviceGroupList) > .setting-category-divider > strong {
-  color: var(--sheet-quiet);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .04em;
 }
 
 /* ── Value sheet ── */
@@ -312,27 +628,29 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(0, 0, 0, 0);
-  transition: background-color .2s ease;
+  background: transparent;
+  transition: background-color 0.2s ease;
 }
 
 .setting-sheet-backdrop.is-open {
-  background: rgba(0, 0, 0, .56);
+  background: var(--c-scrim);
 }
 
 .setting-sheet {
   box-sizing: border-box;
   width: 100%;
   max-width: 560px;
-  max-height: min(88dvh, 720px);
+  max-height: min(90dvh, 760px);
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: 8px 20px calc(20px + env(safe-area-inset-bottom, 0px));
-  border-radius: 18px 18px 0 0;
-  background: var(--md-surface-cont);
-  color: var(--md-on-surface);
+  padding: 8px 22px calc(22px + env(safe-area-inset-bottom, 0px));
+  border-radius: 30px 30px 0 0;
+  background: var(--c-sheet);
+  color: var(--set-ink);
   font-family: var(--font-sans);
+  word-break: keep-all;
   transform: translateY(100%);
-  transition: transform .22s cubic-bezier(.2, 0, 0, 1);
+  transition: transform 0.24s cubic-bezier(0.2, 0, 0, 1);
   overscroll-behavior: contain;
 }
 
@@ -345,11 +663,12 @@
 }
 
 .setting-sheet__grip {
-  width: 36px;
-  height: 4px;
-  margin: 0 auto 12px;
-  border-radius: 2px;
-  background: var(--sheet-line-strong);
+  width: 38px;
+  height: 5px;
+  margin: 0 auto 14px;
+  border-radius: 3px;
+  background: var(--set-ink3);
+  opacity: 0.5;
 }
 
 .setting-sheet__head {
@@ -357,58 +676,60 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 12px;
-  margin-bottom: 20px;
+}
+
+.setting-sheet__kicker {
+  margin-bottom: 3px;
+  color: var(--set-ink2);
+  font-size: 13px;
 }
 
 .setting-sheet__title {
   margin: 0;
-  font-size: 18px;
+  font-size: 21px;
   font-weight: 700;
-  line-height: 1.35;
-  word-break: keep-all;
+  letter-spacing: -0.03em;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
-.setting-sheet__key {
-  margin-top: 4px;
-  color: var(--sheet-quiet);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
 .setting-sheet__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--sheet-raised);
-  color: var(--md-on-surface);
+  background: var(--set-fill);
+  color: var(--set-ink2);
   cursor: pointer;
+}
+
+.setting-sheet__control {
+  margin-top: 24px;
 }
 
 /* stepper: − value + */
 .setting-sheet__control--stepper .ctrl {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 64px;
+  grid-template-columns: 56px minmax(0, 1fr) 56px;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
 }
 
 .setting-sheet__control--stepper .setting-value-arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
   padding: 0;
   border: 0;
-  border-radius: 16px;
-  background: var(--sheet-raised);
-  color: var(--md-on-surface);
+  border-radius: 50%;
+  background: var(--set-fill);
+  box-shadow: none;
+  color: var(--set-ink);
   font-size: 28px;
   font-weight: 400;
   line-height: 1;
@@ -418,7 +739,7 @@
 
 .setting-sheet__control--stepper .setting-value-arrow:active,
 .setting-sheet__control--stepper .setting-value-arrow.is-holding {
-  background: var(--md-surface-cont-hh);
+  background: var(--set-fill-press);
 }
 
 .setting-sheet__control--stepper .val {
@@ -428,18 +749,31 @@
   border: 0;
   background: none;
   box-shadow: none;
-  color: var(--md-on-surface);
+  color: var(--set-ink);
   font-family: var(--font-sans);
-  font-size: 40px;
-  font-weight: 700;
+  font-size: 56px;
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -.01em;
   text-align: center;
   cursor: text;
 }
 
 .setting-sheet.is-changed .setting-sheet__control--stepper .val {
-  color: var(--sheet-accent);
+  color: var(--set-accent);
+}
+
+.setting-sheet__meta {
+  margin-top: 8px;
+  color: var(--set-ink3);
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-sheet__control:not(.setting-sheet__control--stepper) + .setting-sheet__meta {
+  text-align: left;
 }
 
 /* choices */
@@ -457,7 +791,7 @@
 .setting-sheet__control--segmented .setting-segments {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   padding: 0;
   border: 0;
@@ -465,13 +799,13 @@
 }
 
 .setting-sheet__control--segmented .setting-segment {
-  min-height: 52px;
+  min-height: 50px;
   padding: 0 12px;
-  border: 1px solid var(--sheet-line-strong);
-  border-radius: 12px;
-  background: transparent;
+  border: 0;
+  border-radius: 14px;
+  background: var(--set-fill);
   box-shadow: none;
-  color: var(--md-on-surface);
+  color: var(--set-ink);
   font-size: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -479,21 +813,21 @@
 }
 
 .setting-sheet__control--segmented .setting-segment.is-active {
-  border-color: var(--md-on-surface);
-  background: var(--md-on-surface);
-  color: var(--md-surface);
+  background: var(--set-ink);
+  color: var(--c-sheet);
 }
 
 .setting-sheet.is-changed .setting-sheet__control--segmented .setting-segment.is-active {
-  border-color: var(--sheet-accent);
-  background: var(--sheet-accent);
+  background: var(--set-accent);
   color: var(--md-on-primary);
 }
 
 .setting-sheet__control--list .setting-segments {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
-  border-top: 1px solid var(--sheet-line);
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--set-fill);
 }
 
 .setting-sheet__control--list .setting-segment,
@@ -502,16 +836,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 52px;
-  padding: 0 4px;
+  min-height: 50px;
+  padding: 0 16px;
   border: 0;
-  border-bottom: 1px solid var(--sheet-line);
   border-radius: 0;
   background: transparent;
-  color: var(--md-on-surface);
+  color: var(--set-ink);
   font-size: 15px;
   font-weight: 500;
   text-align: left;
+}
+
+.setting-sheet__control--list .setting-segment + .setting-segment {
+  background-image: linear-gradient(var(--set-line), var(--set-line));
+  background-position: 16px 0;
+  background-size: calc(100% - 32px) 1px;
+  background-repeat: no-repeat;
 }
 
 .setting-sheet__control--list .setting-segment.is-active {
@@ -523,14 +863,14 @@
   flex: 0 0 auto;
   width: 6px;
   height: 12px;
-  margin: -3px 6px 0 12px;
+  margin: -3px 4px 0 12px;
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: rotate(45deg);
 }
 
 .setting-sheet.is-changed .setting-sheet__control--list .setting-segment.is-active {
-  color: var(--sheet-accent);
+  color: var(--set-accent);
 }
 
 .setting-sheet__control--toggle {
@@ -538,74 +878,148 @@
   justify-content: flex-end;
 }
 
-/* range with the default marked */
-.setting-sheet__scale {
-  --value-pos: 0;
-  --default-pos: 0;
-  margin: 18px 0 0;
-}
-
-.setting-sheet__track {
+/* ruler: the value sits under the needle, the dot is the default */
+.setting-sheet__ruler {
   position: relative;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--sheet-line-strong);
+  height: 64px;
+  margin: 22px -22px 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent);
 }
 
-.setting-sheet__fill {
+.setting-sheet__ruler.is-dragging {
+  cursor: grabbing;
+}
+
+.setting-sheet__ruler[hidden] {
+  display: none;
+}
+
+.setting-sheet__ticks {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: calc(var(--value-pos) * 100%);
-  border-radius: 2px;
-  background: var(--sheet-quiet);
-}
-
-.setting-sheet.is-changed .setting-sheet__fill {
-  background: var(--sheet-accent);
+  inset: 0;
+  pointer-events: none;
 }
 
 .setting-sheet__tick {
   position: absolute;
-  top: -5px;
-  left: calc(var(--default-pos) * 100%);
+  top: 14px;
   width: 2px;
-  height: 14px;
+  height: 12px;
   margin-left: -1px;
   border-radius: 1px;
-  background: var(--md-on-surface);
+  background: var(--set-ink3);
 }
 
-.setting-sheet__scale-labels {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 8px;
-  color: var(--sheet-quiet);
+.setting-sheet__tick.is-major {
+  height: 22px;
+  background: var(--set-ink2);
+}
+
+.setting-sheet__tick-label {
+  position: absolute;
+  top: 42px;
+  color: var(--set-ink3);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
-.setting-sheet__def {
-  color: var(--md-on-surface);
+.setting-sheet__default-dot {
+  position: absolute;
+  top: 4px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--set-ink2);
+}
+
+.setting-sheet__needle {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 3px;
+  height: 32px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--set-ink);
+  pointer-events: none;
+}
+
+.setting-sheet.is-changed .setting-sheet__needle {
+  background: var(--set-accent);
 }
 
 .setting-sheet__tools {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.setting-sheet__tools-label {
+  color: var(--set-ink2);
+  font-size: 14px;
+}
+
+.setting-sheet__unit.setting-unit-cycle {
+  min-width: 56px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--set-ink);
+  color: var(--c-sheet);
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.setting-sheet__descr {
+  margin: 20px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--set-line);
+  color: var(--set-ink2);
+  font-size: 15px;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.setting-sheet__key {
+  margin-top: 10px;
+  color: var(--set-ink3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.setting-sheet__acts {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .setting-sheet__reset,
-.setting-sheet__unit.setting-unit-cycle {
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--sheet-line-strong);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--md-on-surface);
-  font-size: 14px;
-  font-weight: 600;
+.setting-sheet__detail {
+  min-height: 50px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--set-fill);
+  color: var(--set-ink);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
@@ -614,45 +1028,23 @@
   display: none;
 }
 
-.setting-sheet__descr {
-  margin: 20px 0 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--sheet-line);
-  color: var(--sheet-quiet);
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-line;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
-}
-
-.setting-sheet__detail {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  margin-top: 8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--md-on-surface);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.setting-sheet__detail::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-top: 1.5px solid currentColor;
-  border-right: 1.5px solid currentColor;
-  transform: rotate(45deg);
+.setting-sheet :is(.setting-sheet__reset, .setting-sheet__detail, .setting-sheet__close, .setting-value-arrow):active {
+  background: var(--set-fill-press);
 }
 
 .setting-sheet :is(button, input):focus-visible {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 2px;
+}
+
+/* a real minus sign in the sheet (the shared control writes a hyphen) */
+.setting-sheet__control--stepper .setting-value-arrow--prev {
+  font-size: 0;
+}
+
+.setting-sheet__control--stepper .setting-value-arrow--prev::before {
+  content: "\2212";
+  font-size: 28px;
 }
 
 @media (min-width: 720px) {
@@ -661,11 +1053,11 @@
   }
 
   .setting-sheet {
-    border-radius: 18px;
-    padding-bottom: 20px;
+    border-radius: 26px;
+    padding-bottom: 22px;
     transform: translateY(16px);
     opacity: 0;
-    transition: transform .2s cubic-bezier(.2, 0, 0, 1), opacity .2s ease;
+    transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease;
   }
 
   .setting-sheet-backdrop.is-open .setting-sheet {
@@ -684,50 +1076,64 @@
   }
 }
 
-/* ── Page chrome: the device / carrotpilot switch and the menu button, neutral instead of solid orange ── */
-.page--setting #settingTabBar.setting-tabbar {
-  padding: 3px;
+/* Row marks: the risk note is quiet text, the favourite mark is ink3 */
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .setting-risk-badge {
+  min-height: 0;
+  padding: 1px 7px;
   border: 0;
-  border-radius: 10px;
-  background: var(--md-surface-cont);
-  box-shadow: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--md-warning) 16%, transparent);
+  color: var(--md-warning);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
 }
 
-.page--setting #settingTabBar .setting-tab {
-  min-height: 36px;
+.page--setting :is(#settingScreenItems, #settingInlineSearchResults) .setting.setting--row .setting-favorite-mark {
+  color: var(--set-ink3);
+}
+
+/* Detail screen: the older control layout, inside the same card with the card's padding */
+.page--setting #settingScreenItems .setting-group-card .setting:not(.setting--row) {
+  padding: 16px 18px;
   border: 0;
-  border-radius: 8px;
   background: transparent;
   box-shadow: none;
-  color: var(--sheet-quiet);
-  font-size: 14px;
-  font-weight: 600;
 }
 
-.page--setting #settingTabBar .setting-tab.is-active {
-  background: var(--md-surface-cont-hh);
-  color: var(--md-on-surface);
+/* Split layout: the group column is narrow, so groups become one-line rows (name left, counts right) */
+.page--setting.setting-layout-split :is(#carrotTabContent #groupList, #deviceGroupList) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
 }
 
-.page--setting #btnSettingSearch.fab {
-  border: 1px solid var(--sheet-line-strong);
-  background: var(--md-surface-cont-hh);
-  color: var(--md-on-surface);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+.page--setting.setting-layout-split :is(#carrotTabContent #groupList, #deviceGroupList) > .groupBtn.btn:not(.groupBtn--strip) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 50px;
+  padding: 0 14px;
+  border-radius: 14px;
+  font-size: 15px;
 }
 
-/* a real minus sign in the sheet (the shared control writes a hyphen) */
-.setting-sheet__control--stepper .setting-value-arrow--prev {
-  font-size: 0;
+.page--setting.setting-layout-split .groupBtn .setting-group-meta {
+  flex: 0 0 auto;
+  font-size: 12px;
 }
 
-.setting-sheet__control--stepper .setting-value-arrow--prev::before {
-  content: "\2212";
+.page--setting.setting-layout-split .setting-changed-card {
+  min-height: 64px;
+  padding: 12px 14px;
+}
+
+.page--setting.setting-layout-split .setting-changed-card__n {
+  min-width: 0;
   font-size: 28px;
 }
 
-.setting-sheet__unit.setting-unit-cycle::before {
-  content: attr(data-label) " ";
-  color: var(--sheet-quiet);
-  font-weight: 500;
+.page--setting.setting-layout-split .setting-fav {
+  flex-basis: 116px;
+  padding: 12px;
 }

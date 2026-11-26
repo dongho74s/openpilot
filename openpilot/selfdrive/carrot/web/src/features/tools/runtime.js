@@ -305,6 +305,7 @@ function renderGitPullStatus(status = {}) {
   button.classList.toggle("has-git-error", !hasUpdates && hasError);
   badge.hidden = false;
   badge.textContent = label;
+  badge.dataset.prefix = getUIText("tools_new_commits", "New");
   badge.dataset.state = waiting ? "waiting" : (hasUpdates ? "updates" : (hasError ? "error" : "current"));
 
   if (navButton) {
