@@ -2,6 +2,20 @@
 /*  Carrot — Material 3 Dark Theme                           */
 /* ═══════════════════════════════════════════════════════════ */
 
+/* ── Typeface ──────────────────────────────────────────────────
+   Wanted Sans (user request 2026-11-27), served from the comma so it works
+   without internet. Variable font, weights 400–1000. SIL Open Font License
+   1.1, see /assets/fonts/WantedSans-OFL.txt. Source: github.com/wanteddev/
+   wanted-sans v1.0.3, packages/wanted-sans/fonts/webfonts/variable/complete. */
+@font-face {
+  font-family: "Wanted Sans Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 1000;
+  src: url("/assets/fonts/WantedSansVariable.woff2") format("woff2-variations"),
+       url("/assets/fonts/WantedSansVariable.woff2") format("woff2");
+}
+
 /* ── Reset / Base ─────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 

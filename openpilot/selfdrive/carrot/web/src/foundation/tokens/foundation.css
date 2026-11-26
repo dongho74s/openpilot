@@ -35,9 +35,9 @@
   --z-toast: 200;
   --z-overlay: 220;
 
-  /* The system face first (SF Pro + Apple SD Gothic Neo on Apple devices), as in the approved mockup. */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard Variable", "Pretendard",
-    "Noto Sans KR", "Roboto", system-ui, sans-serif;
+  /* Wanted Sans everywhere (user request 2026-11-27; bundled in /assets/fonts), then the system face. */
+  --font-sans: "Wanted Sans Variable", "Wanted Sans", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Pretendard Variable", "Pretendard", "Noto Sans KR", "Roboto", system-ui, sans-serif;
   --font-mono: ui-monospace, "Roboto Mono", SFMono-Regular, Menlo, monospace;
   --fs-headline: 24px;
   --fs-title-lg: 20px;

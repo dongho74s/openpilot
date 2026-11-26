@@ -83,7 +83,7 @@
       "kind": "bundle",
       "source": "src/entries/design_tokens.css",
       "path": "css/generated/design-tokens.css",
-      "hash": "308c7e5d0a6204eef3dd10de95d175985d7ca6abf547036270a68ef599d51a43"
+      "hash": "c098de6f0fae2bb266923cb0d4e5a603f178491d0b316b49f097b4b56bf09001"
     },
     {
       "id": "design-system.styles",
