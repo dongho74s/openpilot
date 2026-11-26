@@ -1,4 +1,4 @@
-/* Drive tab content "traverse_live": the Traverse Live phone app's driving scene in a drive slot.
+/* Drive tab content "traverse_live", shown as "3D 뷰" / "3D View": the Traverse Live phone app's driving scene in a drive slot.
  *
  * This module is part of the always-loaded drive bundle and stays small: the
  * three.js scene, HUD and socket live in js/generated/traverse-live.js and are
@@ -110,7 +110,7 @@ export async function loadTraverseLiveRuntime(target = globalThis) {
   return { runtime: target.CarrotTraverseLive, models };
 }
 
-// The workspace shows Traverse Live where Carrot Vision was, and back again.
+// The workspace shows the 3D view where Carrot Vision was, and back again.
 function workspaceRuntime(target) {
   return target.DriveWorkspaceRuntime || null;
 }
@@ -146,7 +146,7 @@ export function createTraverseLiveContent(options = {}) {
   panel.className = "ctl-panel";
   const title = doc.createElement("div");
   title.className = "ctl-panel__title";
-  title.textContent = "Traverse Live";
+  title.textContent = "3D View";
   const desc = doc.createElement("div");
   desc.className = "ctl-panel__desc";
   const startButton = doc.createElement("button");
@@ -170,11 +170,12 @@ export function createTraverseLiveContent(options = {}) {
   let mountedHost = null;
 
   function render() {
+    title.textContent = uiText(target, "traverse_live_title", "3D View");
     desc.textContent = uiText(target, "traverse_live_desc",
-      "The Traverse Live driving scene. This device draws it; the comma only sends data.");
+      "Road, lanes and nearby cars in 3D. This device draws it; the comma only sends data.");
     startButton.textContent = loading
       ? uiText(target, "traverse_live_loading", "Loading…")
-      : `▶ ${uiText(target, "start_traverse_live", "Start Traverse Live")}`;
+      : `▶ ${uiText(target, "start_traverse_live", "3D View")}`;
     startButton.disabled = loading;
     message.textContent = error;
     closeButton.textContent = uiText(target, "traverse_live_close", "Close");
@@ -197,7 +198,7 @@ export function createTraverseLiveContent(options = {}) {
       view.start();
       return true;
     } catch (caught) {
-      error = uiText(target, "traverse_live_load_failed", "Could not load Traverse Live.");
+      error = uiText(target, "traverse_live_load_failed", "Could not load the 3D view.");
       target.console?.warn?.("[traverse live] start failed", caught);
       return false;
     } finally {
@@ -298,7 +299,7 @@ export function installTraverseLiveContentGlobal(target = globalThis, content = 
   return content;
 }
 
-/* The "Traverse Live" button next to "Carrot Vision" on the drive start screen. */
+/* The "3D 뷰 시작" (3D View) button next to "Carrot Vision" on the drive start screen. */
 export function installTraverseLiveLauncher(target = globalThis) {
   const doc = target.document;
   if (!doc || target.__carrotTraverseLiveLauncher) return false;
@@ -306,7 +307,7 @@ export function installTraverseLiveLauncher(target = globalThis) {
   injectStyle(doc);
   const label = () => {
     const button = doc.getElementById(TRAVERSE_LIVE_START_BUTTON_ID);
-    if (button) button.textContent = `▶ ${uiText(target, "start_traverse_live", "Start Traverse Live")}`;
+    if (button) button.textContent = `▶ ${uiText(target, "start_traverse_live", "3D View")}`;
   };
   doc.addEventListener("click", (event) => {
     const button = event.target?.closest?.(`#${TRAVERSE_LIVE_START_BUTTON_ID}`);

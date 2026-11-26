@@ -6,7 +6,7 @@ import { TraverseLiveLink, decodeVizCan, sameOriginSocketBase } from "../src/fea
 import { LiveState } from "../src/features/drive/contents/traverse_live/state.js";
 import { LaneFilter } from "../src/features/drive/contents/traverse_live/lanes.js";
 import { Tracker } from "../src/features/drive/contents/traverse_live/tracker.js";
-import { hudText } from "../src/features/drive/contents/traverse_live/hud.js";
+import { externalCarrotMan, formatDistance, hudText } from "../src/features/drive/contents/traverse_live/hud.js";
 import {
   TRAVERSE_LIVE_BUNDLE_ID,
   TRAVERSE_LIVE_CONTENT_ID,
@@ -152,4 +152,57 @@ test("starting from the vision start screen takes Carrot Vision's slot, never th
   assert.equal(requestTraverseLiveInPlaceOfVision(target), true);
   assert.deepEqual(calls, [["vision", "traverse_live"]]);
   assert.equal(requestTraverseLiveInPlaceOfVision({}), false);
+});
+
+test("3D view camera: the default view is the app's, zoom and look-around stay in range", async () => {
+  const { RIG_DEFAULT, RIG_LIMITS, clampRig, createCameraRig, rigEye, paintFor } = await import("../src/features/drive/contents/traverse_live/scene.js");
+  const eye = rigEye(createCameraRig());
+  assert.ok(Math.abs(eye[0] + 12.5) < 1e-9 && Math.abs(eye[1]) < 1e-9 && Math.abs(eye[2] - 6.4) < 1e-9);
+  assert.equal(clampRig("zoom", 10), RIG_LIMITS.zoom[1]);
+  assert.equal(clampRig("zoom", 0.1), RIG_LIMITS.zoom[0]);
+  assert.equal(clampRig("yaw", -200), RIG_LIMITS.yaw[0]);
+  // Zoomed out the camera is further back and higher than the default.
+  const far = rigEye({ ...RIG_DEFAULT, zoom: 2 });
+  assert.ok(far[0] < eye[0] && far[2] > eye[2]);
+  // A car keeps its paint; the palette has more than one colour.
+  assert.equal(paintFor(7), paintFor(7));
+  const colours = new Set(Array.from({ length: 40 }, (_, i) => paintFor(i).getHexString()));
+  assert.ok(colours.size >= 4);
+});
+
+test("3D view picks a vehicle kind from the camera class and width, stable per track", async () => {
+  const { vehicleModel } = await import("../src/features/drive/contents/traverse_live/view.js");
+  assert.equal(vehicleModel({ type: 4, w: 0.5, uid: 1 }), "ped");
+  assert.equal(vehicleModel({ type: 3, w: 0.7, uid: 1 }), "moto");
+  assert.equal(vehicleModel({ type: 2, w: 2.5, uid: 1 }), "truck");
+  assert.equal(vehicleModel({ type: 2, w: 2.0, uid: 1 }), "pickup");
+  assert.ok(["sedan", "hatch", "suv", "suvl"].includes(vehicleModel({ type: 1, w: 1.75, uid: 3 })));
+  assert.ok(["suv", "suvl", "van"].includes(vehicleModel({ type: 1, w: 2.0, uid: 3 })));
+  assert.equal(vehicleModel({ type: 1, w: 1.75, uid: 9 }), vehicleModel({ type: 1, w: 1.75, uid: 9 }));
+  const models = JSON.parse(readFileSync(new URL("../assets/traverse_live/models_kenney.json", import.meta.url), "utf8"));
+  for (const key of ["sedan", "suv", "suvl", "hatch", "van", "pickup", "truck"]) assert.ok(models[key]?.groups?.body, key);
+});
+
+test("speed limit / next turn / signal are shown only from carrotMan the web already receives", () => {
+  const now = 1_000_000;
+  assert.equal(externalCarrotMan({}, now), null);
+  const target = {
+    CarrotHudState: { carrotMan: { nRoadLimitSpeed: 60, xSpdLimit: 50, xSpdDist: 320, xDistToTurn: 450, szTBTMainText: "청라커낼로", trafficState: 1 } },
+    CarrotStateUpdatedAt: { carrotMan: now - 500 },
+  };
+  assert.deepEqual(externalCarrotMan(target, now),
+    { roadLimit: 60, camLimit: 50, camDist: 320, turnDist: 450, turnText: "청라커낼로", traffic: "red" });
+  target.CarrotStateUpdatedAt.carrotMan = now - 5000;   // stale: the 3D view never opens a stream for it
+  assert.equal(externalCarrotMan(target, now), null);
+  assert.equal(formatDistance(447), "450 m");
+  assert.equal(formatDistance(1530), "1.5 km");
+  assert.equal(formatDistance(0), "");
+});
+
+test("the 3D view name is what the drive tab shows", () => {
+  for (const [lang, label] of [["ko", "3D 뷰"], ["en", "3D View"], ["zh", "3D 视图"]]) {
+    const source = readFileSync(new URL(`../js/translations/${lang}.js`, import.meta.url), "utf8");
+    assert.ok(source.includes(`web_drive_layout_content_traverse_live: "${label}"`), lang);
+    assert.ok(!source.includes("Traverse Live"), lang);
+  }
 });

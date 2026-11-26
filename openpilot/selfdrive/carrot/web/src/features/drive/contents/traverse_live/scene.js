@@ -16,14 +16,69 @@ const COL = {
   lead: lin(0.56, 0.68, 0.90), radar: lin(0.28, 0.30, 0.33),
 };
 
+// ---------- Carrot web 3D view: car paint and the camera rig ----------
+// Common car colours (sRGB 0..1) with rough on-road weights; a track keeps its colour by id.
+const PAINTS = [
+  [[0.86, 0.87, 0.88], 3], [[0.62, 0.64, 0.67], 2], [[0.34, 0.35, 0.37], 2], [[0.06, 0.065, 0.07], 3],
+  [[0.12, 0.17, 0.30], 1], [[0.55, 0.08, 0.07], 0.5], [[0.62, 0.57, 0.48], 0.5], [[0.12, 0.20, 0.16], 0.3],
+];
+const PAINT_TOTAL = PAINTS.reduce((sum, [, w]) => sum + w, 0);
+const paintCache = new Map();
+export function paintFor(uid) {
+  const n = Number.isFinite(uid) ? Math.abs(Math.trunc(uid)) : 0;
+  let x = ((n * 2654435761) >>> 0) / 4294967296 * PAINT_TOTAL;
+  let rgb = PAINTS[0][0];
+  for (const [c, w] of PAINTS) { if (x < w) { rgb = c; break; } x -= w; }
+  const key = rgb.join(',');
+  if (!paintCache.has(key)) paintCache.set(key, lin(...rgb));
+  return paintCache.get(key);
+}
+// Mostly diffuse paint under a clear coat: the scene is lit from ahead and the cars are seen from behind, so a metallic
+// body would mirror the dark environment and read as black.
+function paintMaterial(color) {
+  return new THREE.MeshPhysicalMaterial({ color, metalness: 0.08, roughness: 0.42, clearcoat: 0.7, clearcoatRoughness: 0.18 });
+}
+
+// Orbit around a point on the original view ray (camera (-12.5, 0, 6.4) looking at (24, 0, 0), world x forward,
+// y left, z up), so the default view is exactly the app's and zoom is a dolly along that ray.
+export const RIG_PIVOT = [6, 0, 6.4 * (1 - 18.5 / 36.5)];
+const RIG_R0 = Math.hypot(18.5, 6.4 * 18.5 / 36.5);
+export const RIG_DEFAULT = Object.freeze({ zoom: 1, yaw: 0, pitch: Math.atan2(6.4 * 18.5 / 36.5, 18.5) * 180 / Math.PI });
+// Closest: just behind and above the own car (its rear is 3.6 m behind the camera origin); furthest: an overview.
+export const RIG_LIMITS = Object.freeze({ zoom: [0.7, 2.2], yaw: [-80, 80], pitch: [2, 60] });
+export function clampRig(key, value) {
+  const [lo, hi] = RIG_LIMITS[key];
+  return Math.min(hi, Math.max(lo, value));
+}
+export function createCameraRig() {
+  return { ...RIG_DEFAULT, target: { ...RIG_DEFAULT } };
+}
+// Eye position for a rig state; zooming out also tilts the view down a little for an overview.
+export function rigEye(r) {
+  const dist = RIG_R0 * r.zoom;
+  const pitch = Math.min(70, Math.max(2, r.pitch + Math.max(0, r.zoom - 1) * 7)) * Math.PI / 180;
+  const yaw = r.yaw * Math.PI / 180;
+  return [RIG_PIVOT[0] - dist * Math.cos(pitch) * Math.cos(yaw), RIG_PIVOT[1] + dist * Math.cos(pitch) * Math.sin(yaw),
+    RIG_PIVOT[2] + dist * Math.sin(pitch)];
+}
+
 // ---------- shaders: ground decals use the v3 screen-row gradient / fade ----------
-const DECAL_VS = `void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const DECAL_VS = `varying vec3 vW;
+void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const DECAL_FS = `
-uniform vec3 uColor; uniform float uOpacity; uniform float uCy; uniform float uH; uniform int uMode;
+uniform vec3 uColor; uniform float uOpacity; uniform float uCy; uniform float uH; uniform int uMode; uniform float uDist;
+varying vec3 vW;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 void main(){
   float rowTop = uH - gl_FragCoord.y;
   float rows = pow(clamp((rowTop - uCy) / (uH - uCy), 0.0, 1.0), 0.75);
-  if (uMode == 0) { gl_FragColor = vec4(mix(vec3(${ROAD_FAR.map((c) => (c / 255).toFixed(4)).join(',')}), vec3(${ROAD_NEAR.map((c) => (c / 255).toFixed(4)).join(',')}), rows), 1.0); }
+  if (uMode == 0) {
+    // Carrot web 3D view: asphalt grain fixed to the ground (x driven distance), so the road visibly moves under the car.
+    vec2 g = vec2(vW.x, -vW.z + uDist);
+    float grain = 0.55 * hash(floor(g * vec2(7.0, 3.5))) + 0.45 * hash(floor(g * vec2(1.6, 0.8)));
+    vec3 base = mix(vec3(${ROAD_FAR.map((c) => (c / 255).toFixed(4)).join(',')}), vec3(${ROAD_NEAR.map((c) => (c / 255).toFixed(4)).join(',')}), rows);
+    gl_FragColor = vec4(base * (0.93 + 0.12 * grain * rows), 1.0);
+  }
   else { gl_FragColor = vec4(uColor, uOpacity * clamp(rows * 1.6, 0.0, 1.0)); }
 }`;
 const SOFT_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
@@ -104,7 +159,10 @@ export class DriveScene {
     const amb = new THREE.AmbientLight(lin(0.75, 0.8, 0.9), 0.55); this.scene.add(amb);
     this.camera = new THREE.PerspectiveCamera(46, 16 / 9, 0.5, 400);
     this.camera.position.copy(v3(-12.5, 0, 6.4)); this.camera.lookAt(v3(24, 0, 0));
-    this.uniformsCommon = { uCy: { value: 0 }, uH: { value: 1 } };
+    this.uniformsCommon = { uCy: { value: 0 }, uH: { value: 1 }, uDist: { value: 0 } };
+    // Carrot web 3D view: orbit rig around a point on the default view ray (pinch / wheel zoom, drag to look around).
+    this.rig = createCameraRig();
+    this.applyCamera();
 
     this.softTex = softRectTexture(); this.radTex = radialTexture();
     this.decal = (rgb, opacity, order, mode = 1) => {
@@ -136,6 +194,10 @@ export class DriveScene {
       }
       this.templates[name] = groups; this.lengths[name] = m.L; this.widths[name] = m.W; this.lamps[name] = m.lamps || {};
     }
+    // Carrot web 3D view: the own car is a generic SUV (models_kenney.json has no separate "ego" model).
+    if (!this.templates.ego && this.templates.suv) {
+      this.templates.ego = this.templates.suv; this.lengths.ego = this.lengths.suv; this.widths.ego = this.widths.suv; this.lamps.ego = this.lamps.suv;
+    }
     this.lengths.moto = 2.0; this.widths.moto = 0.7; this.lengths.ped = 0.5; this.widths.ped = 0.5;
     this.std = (c, metal, rough, extra = {}) => new THREE.MeshStandardMaterial({ color: c, metalness: metal, roughness: rough, ...extra });
     this.M = {
@@ -150,6 +212,7 @@ export class DriveScene {
     this.objs = new Map();
     this.ego = this.makeVehicle('ego'); this.ego.root.position.copy(v3(-3.6, 0, 0)); this.scene.add(this.ego.root);
     this.egoShadow = this.softQuad([0, 0, 0], 0.5, 1); this.scene.add(this.egoShadow);
+    this.egoContact = this.softQuad([0, 0, 0], 0.42, 1); this.scene.add(this.egoContact);
   }
 
   resize(w, h, dpr) {
@@ -182,7 +245,7 @@ export class DriveScene {
     if (name === 'ped' || name === 'moto') return this.makeVru(name);
     for (const [g, geo] of Object.entries(this.templates[name])) {
       let m;
-      if (g === 'body') m = this.std(name === 'ego' ? COL.ego : (name === 'truck' ? COL.truck : COL.body), 0.15, 0.38);
+      if (g === 'body') m = paintMaterial(name === 'ego' ? COL.ego : (name === 'truck' ? COL.truck : COL.body));
       else if (g.startsWith('lamp') || g === 'chmsl') m = this.M.lampOff();
       else if (g.startsWith('head')) m = this.M.headOff();
       else m = (this.M[g] || this.M.trim)();
@@ -296,6 +359,7 @@ export class DriveScene {
     const seen = new Set(); let si = 0;
     for (const o of fr.objs) {
       seen.add(o.k);
+      if (o.m !== 'ped' && o.m !== 'moto' && !this.templates[o.m]) o.m = this.templates.sedan ? 'sedan' : Object.keys(this.templates)[0];
       let v = this.objs.get(o.k);
       if (!v || v.name !== o.m) { if (v) this.disposeVehicle(v); v = this.makeVehicle(o.m); this.scene.add(v.root); this.objs.set(o.k, v); }
       const L = this.lengths[o.m] ?? 4.8, W = this.widths[o.m] ?? 1.9;
@@ -303,7 +367,12 @@ export class DriveScene {
       else { v.root.position.copy(v3(o.x, o.y, 0)); v.root.rotation.y = 0; }
       for (const m of v.mats) { m.transparent = o.a < 0.999; m.opacity = o.a; }
       const sh = this.pooledSoft('shadows', counts.shadows++, [0, 0, 0], (o.m === 'ped' ? 0.45 : 0.5) * o.a, 1, false);
-      if (o.m === 'ped') this.placeSoft(sh, o.x - 0.25, o.y, 0.5, 0.5, 0.005); else this.placeSoft(sh, o.x, o.y, L, W, 0.005);
+      if (o.m === 'ped') this.placeSoft(sh, o.x - 0.25, o.y, 0.5, 0.5, 0.005);
+      else {
+        this.placeSoft(sh, o.x, o.y, L, W, 0.005);
+        const cs = this.pooledSoft('shadows', counts.shadows++, [0, 0, 0], 0.42 * o.a, 1, false);
+        cs.scale.set(W * 0.9, L * 0.82, 1); cs.position.copy(v3(o.x + L / 2, o.y, 0.006));
+      }
       if (o.lead) { const q = this.pooledSoft('soft', counts.soft++, BLUE, 0.6 * o.a, 6, false); this.placeSoft(q, o.x - 0.6, o.y, L + 1.2, W + 0.5, 0.025); }
       if (o.m === 'ped') {
         const ph = o.ph || 0, n = v.nodes;
@@ -312,7 +381,7 @@ export class DriveScene {
         continue;
       }
       if (o.m === 'moto') continue;
-      v.nodes.body.material.color.copy(o.lead ? COL.lead : (o.r ? COL.radar : (o.m === 'truck' ? COL.truck : COL.body)));
+      v.nodes.body.material.color.copy(o.lead ? COL.lead : (o.r ? COL.radar : (o.m === 'truck' ? COL.truck : paintFor(o.uid))));
       const lm = this.lamps[o.m] || {};
       const at = (nm) => { const [lx, ly, lz] = lm[nm]; return o.f ? [o.x + L - lx, o.y - ly, lz] : [o.x + lx, o.y + ly, lz]; };
       const kindL = o.tl ? 'turn' : (o.br ? 'brake' : null), kindR = o.tr ? 'turn' : (o.br ? 'brake' : null);
@@ -332,6 +401,11 @@ export class DriveScene {
     if (ekL && lm.lampL) this.lampGlow(si++, [-3.6 + lm.lampL[0], lm.lampL[1], lm.lampL[2]], ekL, 1, 0.45);
     if (ekR && lm.lampR) this.lampGlow(si++, [-3.6 + lm.lampR[0], lm.lampR[1], lm.lampR[2]], ekR, 1, 0.45);
     this.egoShadow.material.opacity = 0.56; this.placeSoft(this.egoShadow, -3.6, 0, this.lengths.ego, this.widths.ego, 0.005);
+    this.egoContact.material.opacity = 0.42;
+    this.egoContact.scale.set(this.widths.ego * 0.9, this.lengths.ego * 0.82, 1);
+    this.egoContact.position.copy(v3(-3.6 + this.lengths.ego / 2, 0, 0.006));
+    this.uniformsCommon.uDist.value = fr.dist || 0;
+    this.stepCamera();
     counts.sprites = si;
     for (const kind of ['lines', 'soft', 'shadows']) for (let i = counts[kind]; i < this.pool[kind].length; i++) {
       const x = this.pool[kind][i]; (x.mesh || x).visible = false;
@@ -343,6 +417,47 @@ export class DriveScene {
   disposeVehicle(v) {
     this.scene.remove(v.root);
     for (const m of v.mats) m.dispose();
+  }
+
+  // ---- Carrot web 3D view camera: zoom (pinch / wheel), look around (drag), reset (double tap) ----
+  applyCamera() {
+    const r = this.rig;
+    const eye = rigEye(r);
+    this.camera.position.copy(v3(eye[0], eye[1], eye[2]));
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(v3(RIG_PIVOT[0], RIG_PIVOT[1], RIG_PIVOT[2]));
+    this.camera.updateMatrixWorld();
+    // Zoomed out, keep the far road out of the fog.
+    const k = Math.max(1, r.zoom);
+    this.scene.fog.near = 45 * k; this.scene.fog.far = 165 * k;
+  }
+  // Ease towards the target view once per frame.
+  stepCamera() {
+    const r = this.rig;
+    const before = [r.zoom, r.yaw, r.pitch];
+    r.zoom += (r.target.zoom - r.zoom) * 0.35;
+    r.yaw += (r.target.yaw - r.yaw) * 0.35;
+    r.pitch += (r.target.pitch - r.pitch) * 0.35;
+    if (before.some((x, i) => Math.abs(x - [r.zoom, r.yaw, r.pitch][i]) > 1e-5)) this.applyCamera();
+  }
+  zoomBy(factor) { this.rig.target.zoom = clampRig('zoom', this.rig.target.zoom / factor); }
+  orbitBy(dYawDeg, dPitchDeg) {
+    this.rig.target.yaw = clampRig('yaw', this.rig.target.yaw + dYawDeg);
+    this.rig.target.pitch = clampRig('pitch', this.rig.target.pitch + dPitchDeg);
+  }
+  resetView() { this.rig.target = { ...RIG_DEFAULT }; }
+  isDefaultView() {
+    const t = this.rig.target;
+    return Math.abs(t.zoom - RIG_DEFAULT.zoom) < 1e-3 && Math.abs(t.yaw - RIG_DEFAULT.yaw) < 0.05 && Math.abs(t.pitch - RIG_DEFAULT.pitch) < 0.05;
+  }
+  // World point (x forward, y left, z up) -> CSS px in the canvas, or null behind the camera / off screen.
+  projectToScreen(x, y, z) {
+    if (!this.size) return null;
+    const p = v3(x, y, z).project(this.camera);
+    if (!(p.z > -1 && p.z < 1)) return null;
+    const sx = (p.x + 1) / 2 * this.size.w, sy = (1 - p.y) / 2 * this.size.h;
+    if (sx < 0 || sx > this.size.w || sy < 0 || sy > this.size.h) return null;
+    return { x: sx, y: sy };
   }
 
   // Carrot web: free the GPU context when the drive tab stops this view (not in the app, which never stops).

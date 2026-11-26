@@ -1,11 +1,12 @@
-// Traverse Live view for the carrot web drive tab: the phone app's live scene (road, lanes, nearby cars, brake lights,
-// turn signals) drawn by the viewing device from the comma's /ws/viz stream. Ported from
-// ~/Documents/traverse-viz-app/web/src/main.js (2026-11-05): same frame build, same scene, same HUD.
+// The drive tab's 3D view: the Traverse Live phone app's live scene (road, lanes, nearby cars, brake lights,
+// turn signals) drawn by the viewing device from the comma's /ws/viz stream. Started from
+// ~/Documents/traverse-viz-app/web/src/main.js (2026-11-05); the web adds varied car models and paints, pinch / wheel
+// zoom, drag to look around, double tap to reset, a label over the lead car and a fuller HUD.
 // Loaded lazily (js/generated/traverse-live.js) so three.js is only downloaded when someone starts it.
 import { LiveState, detections, laneTypes, leadLights } from './state.js';
 import { LaneFilter, lineXY } from './lanes.js';
 import { Tracker } from './tracker.js';
-import { DriveScene } from './scene.js';
+import { DriveScene, clampRig } from './scene.js';
 import { Hud } from './hud.js';
 import { TraverseLiveLink } from './link.js';
 
@@ -14,6 +15,7 @@ export const STYLE_ID = 'carrot-traverse-live-style';
 // Phone app look (web/index.html), scoped to the view and sized by --ctl-u (720 units for the shorter side).
 export const CSS = `
 .ctl-view{position:absolute;inset:0;overflow:hidden;color:#eef1f4;background:linear-gradient(#06080a,#16191c);
+  touch-action:none;overscroll-behavior:contain;cursor:grab;
   --ctl-u:1px;font-family:"Wanted Sans Variable","Pretendard","Noto Sans KR","Apple SD Gothic Neo",system-ui,sans-serif;
   -webkit-user-select:none;user-select:none;color-scheme:dark}
 .ctl-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -25,6 +27,30 @@ export const CSS = `
 .ctl-unit{font-size:calc(16 * var(--ctl-u));color:#848c94;margin:calc(4 * var(--ctl-u)) 0 0 calc(4 * var(--ctl-u))}
 .ctl-gears{margin-top:calc(16 * var(--ctl-u));font-size:calc(17 * var(--ctl-u));font-weight:500;letter-spacing:calc(9 * var(--ctl-u))}
 .ctl-gear{color:#464c52}.ctl-gear.is-current{color:#eef1f4}
+.ctl-arrow{font-size:calc(24 * var(--ctl-u));line-height:calc(74 * var(--ctl-u));color:#1eff5c;visibility:hidden;
+  text-shadow:0 0 calc(10 * var(--ctl-u)) rgba(30,255,92,.55)}
+.ctl-arrow.is-on{visibility:visible}.ctl-arrow.is-dim{opacity:.15}
+.ctl-accel{position:relative;width:calc(96 * var(--ctl-u));height:calc(4 * var(--ctl-u));margin:calc(6 * var(--ctl-u)) 0 0 calc(4 * var(--ctl-u));
+  border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}
+.ctl-accel-mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.35)}
+.ctl-accel-fill{position:absolute;top:0;bottom:0;background:#2fae5a;border-radius:99px}
+.ctl-accel-fill.is-brake{background:#e2463c}
+.ctl-limit{display:inline-grid;place-items:center;min-width:calc(34 * var(--ctl-u));height:calc(34 * var(--ctl-u));
+  padding:0 calc(4 * var(--ctl-u));box-sizing:border-box;border-radius:999px;background:#fff;color:#111;
+  border:calc(4 * var(--ctl-u)) solid #e2463c;font-size:calc(15 * var(--ctl-u));font-weight:700;font-variant-numeric:tabular-nums}
+.ctl-pill--override{background:rgba(79,141,255,.22);color:#b9d0ff;border:1px solid rgba(79,141,255,.6)}
+.ctl-badge--cam{background:rgba(255,255,255,.12);color:#eef1f4}
+.ctl-tr-line{text-align:right}.ctl-tr-line--sub{margin-top:calc(6 * var(--ctl-u));color:#6c747c}
+.ctl-nav{position:absolute;left:50%;transform:translateX(-50%);top:calc(26 * var(--ctl-u));font-size:calc(16 * var(--ctl-u));
+  background:rgba(24,28,32,.86);padding:calc(6 * var(--ctl-u)) calc(16 * var(--ctl-u));border-radius:999px;white-space:nowrap;color:#d6dbe0}
+.ctl-nav.is-red{box-shadow:inset 0 0 0 1px rgba(226,70,60,.6)}.ctl-nav.is-green{box-shadow:inset 0 0 0 1px rgba(47,174,90,.6)}
+.ctl-lead-label{position:absolute;left:0;top:0;transform:translate(-50%,-100%);pointer-events:none;white-space:nowrap;
+  font-size:calc(14 * var(--ctl-u));font-weight:600;padding:calc(3 * var(--ctl-u)) calc(9 * var(--ctl-u));border-radius:999px;
+  background:rgba(48,136,255,.88);color:#fff;font-variant-numeric:tabular-nums;will-change:transform}
+.ctl-reset{position:absolute;right:calc(14 * var(--ctl-u));bottom:calc(34 * var(--ctl-u));z-index:2;pointer-events:auto;
+  padding:calc(6 * var(--ctl-u)) calc(12 * var(--ctl-u));border-radius:999px;border:1px solid rgba(255,255,255,.18);
+  background:rgba(20,23,26,.82);color:#eef1f4;font:inherit;font-size:calc(13 * var(--ctl-u));cursor:pointer}
+.ctl-reset:focus-visible{outline:2px solid #3088ff;outline-offset:2px}
 .ctl-row{display:flex;gap:calc(8 * var(--ctl-u));margin-top:calc(12 * var(--ctl-u));align-items:center}
 .ctl-pill{font-size:calc(17 * var(--ctl-u));font-weight:500;padding:calc(6 * var(--ctl-u)) calc(14 * var(--ctl-u));border-radius:999px;white-space:pre}
 .ctl-pill--on{background:rgba(48,136,255,.92);color:#fff}.ctl-pill--wait{background:rgba(54,60,66,.9)}
@@ -48,11 +74,11 @@ export const CSS = `
 `;
 
 const TEXT = {
-  ko: { connecting: '연결 중…', receiving: '수신 중', open: '연결됨 · 시동을 켜면 표시', noCan: ' (CAN 없음)',
+  ko: { reset: '↺ 기본 시점', connecting: '연결 중…', receiving: '수신 중', open: '연결됨 · 시동을 켜면 표시', noCan: ' (CAN 없음)',
     idleTitle: '콤마에 연결됨', idleBody: '시동을 켜면 주행 화면이 나옵니다' },
-  en: { connecting: 'Connecting…', receiving: 'Receiving', open: 'Connected · shows when the car is on', noCan: ' (no CAN)',
+  en: { reset: '↺ Reset view', connecting: 'Connecting…', receiving: 'Receiving', open: 'Connected · shows when the car is on', noCan: ' (no CAN)',
     idleTitle: 'Connected to the comma', idleBody: 'The drive view appears when the car is on' },
-  zh: { connecting: '正在连接…', receiving: '接收中', open: '已连接 · 车辆启动后显示', noCan: '（无 CAN）',
+  zh: { reset: '↺ 默认视角', connecting: '正在连接…', receiving: '接收中', open: '已连接 · 车辆启动后显示', noCan: '（无 CAN）',
     idleTitle: '已连接 comma', idleBody: '车辆启动后显示行驶画面' },
 };
 
@@ -69,7 +95,19 @@ export function injectTraverseLiveStyle(doc) {
   (doc.head || doc.documentElement).appendChild(style);
 }
 
-// One scene frame from the live state: drive_viz drive5.frame (unchanged from the app).
+// Car model for a track: the camera's class and width pick the kind, the track id picks among look-alikes so each
+// car keeps one look. Camera widths come in 0.25 m steps (1.75 car, 2.0 wide car / small truck, 2.25+ truck).
+export function vehicleModel(o) {
+  const type = o.type, w = o.w || 1.8, pick = (list) => list[Math.abs(Math.trunc(o.uid || 0)) % list.length];
+  if (type === 3) return 'moto';
+  if (type === 4) return 'ped';
+  if (type === 2) return w > 2.1 ? 'truck' : 'pickup';
+  if (w > 2.1) return pick(['van', 'pickup']);
+  if (w > 1.86) return pick(['suv', 'suvl', 'suv', 'van']);
+  return pick(['sedan', 'hatch', 'sedan', 'suv', 'suvl']);
+}
+
+// One scene frame from the live state: drive_viz drive5.frame (the app's, with the model choice above).
 export function buildFrame(st, LF, TRK, t) {
   const cs = st.cs, md = st.md;
   const fr = { lines: [], edges: [], objs: [], dist: st.dist, bsm: [!!cs.lbs, !!cs.rbs] };
@@ -100,8 +138,8 @@ export function buildFrame(st, LF, TRK, t) {
   for (const o of TRK.update(t, detections(st, t))) {
     if (!(o.x > -6 && o.x < 150)) continue;
     const typ = o.type, lead = !!o.cipv;
-    const model = { 2: 'truck', 3: 'moto', 4: 'ped' }[typ] || ((o.w || 1.8) > 1.86 ? 'suv' : 'sedan');
-    fr.objs.push({ k: o.key, m: model, x: o.x, y: o.y, f: o.oncoming && [0, 1, 2].includes(typ) ? 1 : 0, a: o.alpha, lead, r: typ === 0,
+    const model = vehicleModel(o);
+    fr.objs.push({ k: o.key, uid: o.uid, m: model, x: o.x, y: o.y, f: o.oncoming && [0, 1, 2].includes(typ) ? 1 : 0, a: o.alpha, lead, r: typ === 0,
       br: lead && lights.brake, tl: lead && blink && [2, 4].includes(lights.turn), tr: lead && blink && [3, 4].includes(lights.turn),
       ph: t * 6.5 + (o.uid % 7) });
   }
@@ -125,10 +163,12 @@ export function createTraverseLiveView(options = {}) {
   const idleTitle = doc.createElement('b'); const idleBody = doc.createElement('span');
   idle.append(idleTitle, doc.createElement('br'), idleBody);
   const conn = doc.createElement('div'); conn.className = 'ctl-conn';
+  const leadLabel = doc.createElement('div'); leadLabel.className = 'ctl-lead-label'; leadLabel.hidden = true;
+  const resetButton = doc.createElement('button'); resetButton.type = 'button'; resetButton.className = 'ctl-reset'; resetButton.hidden = true;
   view.append(canvas);
   root.append(view);
-  const hud = new Hud(view);
-  view.append(idle, conn);
+  const hud = new Hud(view, { target });
+  view.append(leadLabel, idle, conn, resetButton);
 
   const st = new LiveState(), LF = new LaneFilter(), TRK = new Tracker();
   const scene = new DriveScene(canvas, options.models || {});
@@ -187,6 +227,7 @@ export function createTraverseLiveView(options = {}) {
     const { fr, lights, blink } = buildFrame(st, LF, TRK, t);
     const c1 = performance.now();
     scene.update(fr);
+    placeLeadLabel(fr);
     const c2 = performance.now();
     perf.build += c1 - c0; perf.draw += c2 - c1; perf.n++;
     if (t - lastHud > 0.1) { hud.update(st, t, lights, blink); lastHud = t; }
@@ -201,12 +242,97 @@ export function createTraverseLiveView(options = {}) {
     }
   }
 
+  // ---- 3D view extras: label over the lead car, gestures, reset ----
+  let leadLabelText = '';
+  function placeLeadLabel(fr) {
+    // The camera's lead flag first; otherwise the car closest to the radar lead in our lane.
+    let lead = st.rs.st ? fr.objs.find((o) => o.lead) : null;
+    if (!lead && st.rs.st) {
+      const tol = Math.max(4, 0.15 * st.rs.d);
+      let best = Infinity;
+      for (const o of fr.objs) {
+        if (o.m === 'ped') continue;
+        const err = Math.abs(o.x - st.rs.d) + Math.abs(o.y + (st.rs.y || 0));
+        if (Math.abs(o.x - st.rs.d) < tol && Math.abs(o.y + (st.rs.y || 0)) < 2.2 && err < best) { best = err; lead = o; }
+      }
+    }
+    const at = lead ? scene.projectToScreen(lead.x + (scene.lengths[lead.m] || 4.8) * 0.5, lead.y, 2.25) : null;
+    if (!at) { if (!leadLabel.hidden) leadLabel.hidden = true; return; }
+    const vl = st.rs.vl != null ? `  ·  ${Math.max(0, Math.round(st.rs.vl * 3.6))} km/h` : '';
+    const text = `${Math.round(st.rs.d)} m${vl}`;
+    if (text !== leadLabelText) { leadLabelText = text; leadLabel.textContent = text; }
+    leadLabel.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+    if (leadLabel.hidden) leadLabel.hidden = false;
+  }
+
+  function syncResetButton() {
+    const show = !scene.isDefaultView();
+    if (resetButton.hidden === show) resetButton.hidden = !show;
+    resetButton.textContent = viewText(doc).reset;
+  }
+
+  // Two fingers pinch to zoom, one finger (or mouse) drags to look around, a double tap / double click resets.
+  // touch-action:none on the view keeps the browser from scrolling or zooming the page; events stop here.
+  const pointers = new Map();
+  let pinch = null, drag = null, tapDown = null, lastTapAt = 0;
+  const gap = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  function onPointerDown(e) {
+    if (e.target === resetButton) return;
+    e.stopPropagation();
+    try { view.setPointerCapture?.(e.pointerId); } catch (_) { /* ignore */ }
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) { pinch = { d: Math.max(1, gap()), zoom: scene.rig.target.zoom }; drag = null; tapDown = null; }
+    else if (pointers.size === 1) { drag = { x: e.clientX, y: e.clientY }; tapDown = { x: e.clientX, y: e.clientY, at: performance.now() }; }
+  }
+  function onPointerMove(e) {
+    if (!pointers.has(e.pointerId)) return;
+    e.stopPropagation();
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pointers.size >= 2) {
+      scene.rig.target.zoom = clampRig('zoom', pinch.zoom * pinch.d / Math.max(1, gap()));
+    } else if (drag && pointers.size === 1) {
+      const scale = 120 / Math.max(240, Math.min(size.w, size.h));
+      // Like common 3D viewers: the scene follows the finger sideways, dragging up looks down from higher.
+      scene.orbitBy((e.clientX - drag.x) * scale, -(e.clientY - drag.y) * scale * 0.6);
+      drag = { x: e.clientX, y: e.clientY };
+    }
+    if (tapDown && Math.hypot(e.clientX - tapDown.x, e.clientY - tapDown.y) > 10) tapDown = null;
+    syncResetButton();
+  }
+  function onPointerUp(e) {
+    if (!pointers.has(e.pointerId)) return;
+    e.stopPropagation();
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 1) { const [p] = pointers.values(); drag = { x: p.x, y: p.y }; } else drag = null;
+    const now = performance.now();
+    if (tapDown && e.type === 'pointerup' && now - tapDown.at < 300) {
+      if (now - lastTapAt < 350) { scene.resetView(); lastTapAt = 0; } else lastTapAt = now;
+    }
+    tapDown = null;
+    syncResetButton();
+  }
+  function onWheel(e) {
+    e.preventDefault(); e.stopPropagation();
+    scene.zoomBy(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+    syncResetButton();
+  }
+  const stopTouch = (e) => e.stopPropagation();
+  view.addEventListener('pointerdown', onPointerDown);
+  view.addEventListener('pointermove', onPointerMove);
+  view.addEventListener('pointerup', onPointerUp);
+  view.addEventListener('pointercancel', onPointerUp);
+  view.addEventListener('wheel', onWheel, { passive: false });
+  for (const type of ['touchstart', 'touchmove', 'touchend']) view.addEventListener(type, stopTouch, { passive: true });
+  resetButton.addEventListener('click', (e) => { e.stopPropagation(); scene.resetView(); syncResetButton(); });
+
   function start() {
     if (destroyed || running) return false;
     running = true;
     link.start();
     resize();
     renderStatus();
+    syncResetButton();
     rafId = target.requestAnimationFrame(loop);
     return true;
   }
@@ -226,6 +352,11 @@ export function createTraverseLiveView(options = {}) {
     stop();
     destroyed = true;
     resizeObserver?.disconnect();
+    view.removeEventListener('pointerdown', onPointerDown);
+    view.removeEventListener('pointermove', onPointerMove);
+    view.removeEventListener('pointerup', onPointerUp);
+    view.removeEventListener('pointercancel', onPointerUp);
+    view.removeEventListener('wheel', onWheel);
     hud.destroy();
     scene.dispose();
     view.remove();
@@ -244,8 +375,10 @@ export function createTraverseLiveView(options = {}) {
       canReceiving: t - st.rx.can < 1.5,
       fps: Math.round(fps),
       size: { ...size },
+      camera: { zoom: scene.rig.zoom, yaw: scene.rig.yaw, pitch: scene.rig.pitch, target: { ...scene.rig.target }, defaultView: scene.isDefaultView() },
+      leadLabel: leadLabel.hidden ? '' : leadLabelText,
     });
   }
 
-  return Object.freeze({ root: view, start, stop, destroy, resize, status, state: st });
+  return Object.freeze({ root: view, start, stop, destroy, resize, status, state: st, scene });
 }

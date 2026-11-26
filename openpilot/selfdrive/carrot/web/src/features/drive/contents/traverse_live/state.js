@@ -24,16 +24,25 @@ export class LiveState {
       lbs: !!c.leftBlindspot, rbs: !!c.rightBlindspot, brake: !!c.brakePressed,
       gear: GEAR[String(c.gearShifter || '').toLowerCase()] || '-',
       cen: !!c.cruiseState?.enabled, cspdKph: Number(c.vCruiseCluster) || 0,
+      // Carrot web 3D view extras
+      sa: Number.isFinite(Number(c.steeringAngleDeg)) ? Number(c.steeringAngleDeg) : 0,
+      gas: !!c.gasPressed, steerPressed: !!c.steeringPressed, standstill: !!c.standstill,
       // stock camera own-lane markings as card publishes them for Navdy: [left, right], -1 unknown / 0 dashed / 1 solid
       slm: c.stockLaneMarkings?.supported ? [c.stockLaneMarkings.left, c.stockLaneMarkings.right] : null,
     };
     this.rx.raw = t;
   }
-  onSelfdrive(s) { if (s) this.sd = { a1: s.alertText1 || '', en: !!s.enabled }; }
+  onSelfdrive(s) {
+    if (!s) return;
+    const personality = Number.isFinite(Number(s.personality)) ? Number(s.personality) : null;
+    this.sd = { a1: s.alertText1 || '', a2: s.alertText2 || '', en: !!s.enabled, state: String(s.state || ''),
+      exp: !!s.experimentalMode, personality, alertStatus: Number(s.alertStatus) || 0 };
+  }
   onCarControl(c) { if (c) this.cc = { lat: !!c.latActive, lon: !!c.longActive }; }
   onRadar(r) {
     const l = r?.leadOne;
-    this.rs = l ? { st: !!l.status, d: l.dRel ?? 0, vr: l.vRel ?? 0 } : {};
+    this.rs = l ? { st: !!l.status, d: l.dRel ?? 0, vr: l.vRel ?? 0, vl: Number.isFinite(l.vLead) ? l.vLead : null, radar: !!l.radar,
+      y: Number.isFinite(l.yRel) ? l.yRel : 0 } : {};
   }
   onModel(m, t) {
     if (!m || !Array.isArray(m.laneLines) || m.laneLines.length !== 4) return;

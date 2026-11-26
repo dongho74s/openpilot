@@ -55,15 +55,18 @@ The web video and HUD are reference displays. Always prioritize the vehicle's ac
 
 With `ShowPathEnd` on, the lead car gets a rounded box and distance badges (radar and vision) like the C3 screen; they are hidden while neither engaged nor steering. The old web following-distance bar and its 25 m label are not part of the C3 `new ui` 1 screen and are no longer drawn. See [following-gap settings](cruise-gap.md#following-gap) for the gap itself.
 
-### Traverse Live
+### 3D View
 
-On the Drive start screen, `Traverse Live` (under `Carrot Vision`) replaces Carrot Vision with the drive view of the Traverse Live phone app: road, lanes, nearby cars, pedestrians, brake lights, turn signals and blind spots.
+On the Drive start screen, `3D View` (under `Carrot Vision`) replaces Carrot Vision with a 3D drive view (the scene of the Traverse Live phone app): road, lanes, nearby vehicles (cars, SUVs, vans, trucks, each in its own colour), pedestrians, brake lights, turn signals and blind spots, with your car shown as an SUV.
 
+- Pinch with two fingers to zoom in and out, drag with one finger to look around, double tap to return to the default view. On a PC, use the mouse wheel to zoom and drag to look around. After the view changes, `↺ Reset view` appears at the bottom right.
+- Top left: speed and gear, turn-signal arrows, an acceleration bar, the driving state, set speed, and the lead car's distance, speed, relative speed and time gap. Top right: time, outside temperature, steering angle and following-gap step. A distance/speed label follows the lead car.
+- Speed limit, enforcement camera, next-turn distance and traffic light appear only when the carrot web is already receiving them for another view (such as Carrot Vision). The 3D view does not request extra data for them.
 - The viewing device (phone or PC) draws it; the comma only streams data on `/ws/viz`, about 205 KiB/s per viewer.
 - With the car off it shows `Connected to the comma · The drive view appears when the car is on`.
 - `Close` (top right) disconnects and returns to the Carrot Vision start screen. Leaving the Drive tab also disconnects.
-- **Traverse Live** can also be chosen as the area 1 or area 2 content in `Tools > Web Settings > Layout`; start it with that area's `Traverse Live` button.
-- The renderer (three.js) and vehicle models (about 1.3 MB) are downloaded from the comma once, on first start; no internet is needed.
+- **3D View** can also be chosen as the area 1 or area 2 content in `Tools > Web Settings > Layout`; start it with that area's `3D View` button.
+- The renderer (three.js) and vehicle models (Kenney CC0, about 1.8 MB) are downloaded from the comma once, on first start; no internet is needed.
 
 ### AR display and diagnostics
 
