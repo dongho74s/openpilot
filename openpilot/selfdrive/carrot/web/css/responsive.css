@@ -113,7 +113,7 @@
   .topbar .nav-btn.active {
     color: var(--md-primary);
     font-weight: 700;
-    background: var(--md-primary-state-soft);
+    background: color-mix(in srgb, var(--md-on-surface) 5%, transparent);  /* neutral (2026-11-26 redesign) */
   }
 
   .topbar .nav-btn > span:last-child {

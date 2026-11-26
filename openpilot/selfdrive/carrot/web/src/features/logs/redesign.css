@@ -1,0 +1,25 @@
+/* Logs in the settings list's language (user request 2026-11-26: "make the other tabs look good too"): a neutral
+   switch instead of the solid orange one, borderless route cards on the raised surface, quiet metadata. */
+#pageLogs .logs-tabs {
+  --segmented-control-selected-bg: var(--md-surface-cont-hh);
+  --segmented-control-selected-fg: var(--md-on-surface);
+  --segmented-control-item-fg: var(--md-on-surface-var);
+  --segmented-control-item-font-weight: 600;
+  border: 0;
+}
+
+#pageLogs .dashcam-route-card {
+  border: 0;
+  border-radius: 14px;
+  background: var(--md-surface-cont);
+}
+
+#pageLogs .dashcam-route-title {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#pageLogs .dashcam-route-media-info {
+  border-top: 0;
+  background: transparent;
+}

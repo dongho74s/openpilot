@@ -1,0 +1,428 @@
+/* Tools page in the settings list's language (user request 2026-11-26: "make the other tabs look good too,
+   especially the model choice and the drive evaluation at the top of Tools"). Sections are a title over a rule, not
+   glowing cards; no gradient icon tiles or pill states; one accent, used only where something needs attention.
+   Loaded last, so these rules win over the older card styles. */
+
+#pageTools {
+  --tl-line: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
+  --tl-line-strong: color-mix(in srgb, var(--md-on-surface) 14%, transparent);
+  --tl-quiet: var(--md-on-surface-var);
+  --tl-tile: var(--md-surface-cont);
+  --tl-tile-press: color-mix(in srgb, var(--md-on-surface) 6%, var(--md-surface-cont));
+  --tl-accent: var(--md-primary);
+}
+
+/* ── Model / eGPU / drive evaluation: flat sections ── */
+#pageTools .egpu-model-card {
+  display: block;
+  margin: 0 0 28px;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid var(--tl-line-strong);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+#pageTools .egpu-model-card[hidden] {
+  display: none;
+}
+
+#pageTools .egpu-model-card::after,
+#pageTools .egpu-model-card__icon {
+  display: none;
+}
+
+#pageTools .egpu-model-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#pageTools .egpu-model-card__heading {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#pageTools .egpu-model-card__heading strong {
+  color: var(--md-on-surface);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+#pageTools .egpu-model-card__state,
+#pageTools .egpu-model-card[data-state] .egpu-model-card__state {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--tl-quiet);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#pageTools .egpu-model-card[data-state="error"] .egpu-model-card__state {
+  color: var(--md-error);
+}
+
+#pageTools .egpu-model-card[data-state="running"] .egpu-model-card__state,
+#pageTools .egpu-model-card.is-running .egpu-model-card__state {
+  color: var(--tl-accent);
+}
+
+#pageTools .egpu-model-card__detail {
+  margin: 0;
+  color: var(--tl-quiet);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#pageTools .egpu-model-card__amount {
+  color: var(--tl-quiet);
+  font-size: 12px;
+}
+
+#pageTools .egpu-model-card__track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--tl-line-strong);
+}
+
+#pageTools .egpu-model-card__track span {
+  border-radius: 2px;
+  background: var(--tl-accent);
+}
+
+#pageTools .egpu-model-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+#pageTools .egpu-model-card__action.btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--tl-line-strong);
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#pageTools .egpu-model-card__action.btn:disabled {
+  opacity: .45;
+}
+
+/* model choice: one wide select and its apply button */
+#pageTools .internal-model-card__footer {
+  margin-top: 6px;
+}
+
+#pageTools .internal-model-card__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  height: 46px;
+  padding: 0 38px 0 14px;
+  border: 1px solid var(--tl-line-strong);
+  border-radius: 10px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--tl-quiet) 50%) calc(100% - 20px) 50% / 6px 6px no-repeat,
+    linear-gradient(-45deg, transparent 50%, var(--tl-quiet) 50%) calc(100% - 14px) 50% / 6px 6px no-repeat,
+    var(--tl-tile);
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 600;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#pageTools .internal-model-card #btnInternalModelApply:not(:disabled) {
+  border-color: var(--md-on-surface);
+  background: var(--md-on-surface);
+  color: var(--md-surface);
+}
+
+#pageTools .internal-model-card .egpu-model-card__amount {
+  margin-top: 2px;
+}
+
+/* drive evaluation */
+#pageTools .tuning-advice__changed {
+  color: var(--tl-quiet);
+}
+
+#pageTools .tuning-advice__match {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+#pageTools .tuning-advice__match-label {
+  color: var(--tl-quiet);
+  font-size: 13px;
+  opacity: 1;
+}
+
+#pageTools .tuning-advice__match-value {
+  color: var(--md-on-surface);
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  line-height: 1.25;
+}
+
+#pageTools .tuning-advice__match-detail {
+  color: var(--tl-quiet);
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 1;
+}
+
+#pageTools .tuning-advice__rec,
+#pageTools .tuning-advice__review {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 2px 0 2px 14px;
+  border: 0;
+  border-left: 3px solid var(--tl-line-strong);
+  border-radius: 0;
+  background: none;
+}
+
+#pageTools .tuning-advice__rec--change {
+  border-left-color: var(--tl-accent);
+}
+
+#pageTools .tuning-advice__rec-headline,
+#pageTools .tuning-advice__review > strong {
+  color: var(--md-on-surface);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+#pageTools .tuning-advice__list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#pageTools .tuning-advice__list li {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--tl-line);
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+#pageTools .tuning-advice__list li:last-child {
+  border-bottom: 0;
+}
+
+#pageTools .tuning-advice__details {
+  margin-top: 12px;
+}
+
+#pageTools .tuning-advice__details summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 600;
+  list-style: none;
+}
+
+#pageTools .tuning-advice__details summary::-webkit-details-marker {
+  display: none;
+}
+
+#pageTools .tuning-advice__details summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--tl-quiet);
+  border-right: 1.5px solid var(--tl-quiet);
+  transform: rotate(45deg);
+  transition: transform .15s ease;
+}
+
+#pageTools .tuning-advice__details[open] summary::before {
+  transform: rotate(135deg);
+}
+
+#pageTools .tuning-advice__table {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+#pageTools .tuning-advice__table-title {
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+#pageTools .tuning-advice__table-hint {
+  display: block;
+  margin: 2px 0 6px;
+  color: var(--tl-quiet);
+  font-size: 12px;
+}
+
+#pageTools .tuning-advice__row,
+#pageTools .tuning-advice__row.is-change,
+#pageTools .tuning-advice__row.is-check {
+  margin: 0;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--tl-line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+#pageTools .tuning-advice__badge,
+#pageTools .tuning-advice__badge.is-change,
+#pageTools .tuning-advice__badge.is-check,
+#pageTools .tuning-advice__badge.is-info {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tl-quiet);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#pageTools .tuning-advice__badge.is-change {
+  color: var(--tl-accent);
+}
+
+#pageTools .tuning-advice__row-value {
+  font-variant-numeric: tabular-nums;
+}
+
+#pageTools .tuning-advice__row-reason {
+  color: var(--tl-quiet);
+}
+
+#pageTools .tuning-advice__footer {
+  margin-top: 14px;
+}
+
+/* ── Shortcuts and the collapsible groups: plain tiles ── */
+#pageTools .tools-primary-actions {
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+#pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 50px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--tl-tile);
+  box-shadow: none;
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  line-height: 1.3;
+}
+
+#pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn):active {
+  background: var(--tl-tile-press);
+  transform: none;
+}
+
+@media (hover: hover) {
+  #pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn):hover {
+    background: var(--tl-tile-press);
+  }
+}
+
+#pageTools :is(.tools-primary-actions, .tools-group__bodyInner) > :is(.btn, .smallBtn):focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+#pageTools .tools-group__bodyInner > .btn--danger {
+  color: var(--md-error);
+}
+
+#pageTools .git-pull-btn {
+  justify-content: space-between;
+}
+
+#pageTools .git-pull-btn__badge {
+  border: 0;
+  background: none;
+  color: var(--tl-accent);
+  font-weight: 700;
+}
+
+#pageTools .divider {
+  display: none;
+}
+
+#pageTools .section.tools-group {
+  margin: 0 0 20px;
+  padding-top: 6px;
+  border-top: 1px solid var(--tl-line-strong);
+}
+
+#pageTools .tools-group__toggle {
+  min-height: 44px;
+  padding: 0;
+}
+
+#pageTools .tools-group__title,
+#pageTools .tools-group__title.section-title {
+  color: var(--md-on-surface);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+#pageTools .tools-group__chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--tl-quiet);
+  border-bottom: 1.5px solid var(--tl-quiet);
+  opacity: 1;
+}
+
+#pageTools #toolsMeta {
+  color: var(--tl-quiet);
+  font-size: 13px;
+}
+
+/* activity log beside (wide) or below the tools */
+#pageTools .tools-console-log {
+  border-color: var(--tl-line-strong);
+  border-radius: 14px;
+  background: var(--md-surface-cont);
+  box-shadow: none;
+}

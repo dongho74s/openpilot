@@ -324,29 +324,21 @@ body[data-page="carrot"] #driveHudCard.is-vision-hud-suppressed {
 }
 
 .vision-start-overlay .btn--filled {
-  border-color: color-mix(in srgb, var(--md-primary) 82%, rgba(255, 255, 255, 0.22));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--md-primary) 96%, #fff 4%),
-      color-mix(in srgb, var(--md-primary) 82%, #ff8b37)
-    );
+  border-color: transparent;
+  background: var(--md-primary);
   color: var(--md-on-primary);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, #fff 28%, transparent) inset,
-    0 14px 34px rgba(255, 176, 109, 0.18),
-    0 10px 26px rgba(0, 0, 0, 0.28);
+  box-shadow: none;
+  font-weight: 700;
 }
 
-.vision-start-overlay .btn--filled:hover,
+.vision-start-overlay .btn--filled:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--md-primary) 90%, #fff);
+}
+
 .vision-start-overlay .btn--filled:focus-visible {
-  border-color: color-mix(in srgb, var(--md-primary) 90%, rgba(255, 255, 255, 0.28));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--md-primary) 88%, #fff 12%),
-      color-mix(in srgb, var(--md-primary) 90%, #ff9f55)
-    );
+  outline: var(--focus-ring-width) solid var(--md-on-surface);
+  outline-offset: 3px;
 }
 
 .vision-start-overlay__message::after {
@@ -799,13 +791,15 @@ body[data-page="carrot"] #driveHudCard.driveHudCard--loading {
   contain: layout style;
 }
 
+/* The idle particle network is off (2026-11-26 redesign: it read as decoration); vision_background.js does not
+   animate a canvas that is not displayed. */
 .carrot-stage__ambient {
   position: absolute;
   inset: 0;
   z-index: var(--drive-layer-surface);
   width: 100%;
   height: 100%;
-  display: block;
+  display: none;
   opacity: 0.86;
   pointer-events: none;
   transition: opacity 0.36s cubic-bezier(0.4, 0, 0.2, 1);

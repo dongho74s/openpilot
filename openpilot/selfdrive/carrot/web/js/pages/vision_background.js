@@ -28,7 +28,8 @@
   }
 
   function shouldAnimate() {
-    return isCarrotPageVisible() && !isStreamReady() && !reduceMotion?.matches;
+    // a hidden canvas (the stylesheet turns the particle network off) is never animated
+    return isCarrotPageVisible() && !isStreamReady() && !reduceMotion?.matches && canvas.offsetParent !== null;
   }
 
   function rand(min, max) {
