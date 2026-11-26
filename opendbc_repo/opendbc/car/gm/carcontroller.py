@@ -101,6 +101,8 @@ class CarController(CarControllerBase):
     self.stop_ease_cancelled = False
     self.stop_ease_not_slowing = 0
     self.stop_ease_commands = 0
+    self.stop_ease_applied = False  # easing lowered the brake in this stop
+    self.stop_ease_given_up = False  # easing ended for this stop because the car was not slowing or took too long
     self.stop_rolling = False  # this stop was seen rolling (not standstill) while stopping
     self.stop_standstill_seen = False  # and has reached standstill since
     self.stop_settle_brake = None  # the brake kept just after standstill (STOP_SETTLE_COMMANDS), None when not settling
@@ -193,6 +195,7 @@ class CarController(CarControllerBase):
       self.stop_ease_cancelled = False
       self.stop_ease_not_slowing = 0
       self.stop_ease_commands = 0
+      self.stop_ease_applied = self.stop_ease_given_up = False
       return
     if CS.out.standstill:
       # stopped once: no easing again in this stop, also when the wheel speed comes back above the standstill threshold
@@ -209,18 +212,21 @@ class CarController(CarControllerBase):
       self.stop_ease_not_slowing = max(0, self.stop_ease_not_slowing - 1)
     self.stop_ease_commands += 1
     if self.stop_ease_not_slowing >= STOP_EASE_CANCEL_COMMANDS or self.stop_ease_commands > STOP_EASE_MAX_COMMANDS:
-      self.stop_ease_cancelled = True
+      self.stop_ease_cancelled = self.stop_ease_given_up = True
     if self.stop_ease_cancelled:
       return
     closeness = (self.stop_ease_speed - CS.out.vEgo) / self.stop_ease_speed  # 0 at the start speed, 1 at the stop
     eased = self.apply_brake * (1. - self.stop_ease_pct / 100. * closeness)
-    self.apply_brake = int(round(max(STOP_EASE_MIN_BRAKE, eased)))
+    eased = int(round(max(STOP_EASE_MIN_BRAKE, eased)))
+    self.stop_ease_applied = self.stop_ease_applied or eased < self.apply_brake
+    self.apply_brake = eased
 
   def settle_stop_brake(self, CC, CS, stopping):
     """Keep the eased brake until the car has really stopped (StopBrakeEase on): at the first standstill of a stop that
-    was rolling, the brake stays at what was sent (at least STOP_EASE_MIN_BRAKE) for STOP_SETTLE_COMMANDS, then rises by
-    STOP_BRAKE_RISE per command to the hold. Only for a hold of at most STOP_SMOOTH_MAX_BRAKE on a road within
-    STOP_SETTLE_MAX_PITCH; soft hold and wheels turning again (standstill lost) end it at once, and a stop settles once."""
+    was rolling and eased (not given up for a creep / downhill / a too long stop), the brake stays at what was sent (at
+    least STOP_EASE_MIN_BRAKE) for STOP_SETTLE_COMMANDS, then rises by STOP_BRAKE_RISE per command to the hold. Checked
+    every command: a hold above STOP_SMOOTH_MAX_BRAKE, a road steeper than STOP_SETTLE_MAX_PITCH, soft hold and wheels
+    turning again (standstill lost) end it at once (Codex review 2026-11-26 R1, R2); a stop settles once."""
     if not (self.smooth_stop and CC.longActive and stopping):
       self.stop_rolling = self.stop_standstill_seen = False
       self.stop_settle_brake = None
@@ -232,13 +238,14 @@ class CarController(CarControllerBase):
       self.stop_rolling = True
       self.stop_settle_brake = None  # never kept while the wheels turn: the hold (or the stopping brake) at once
       return
-    if not self.stop_standstill_seen:
-      self.stop_standstill_seen = True
-      pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
-      if self.stop_rolling and self.stop_ease_pct > 0 and self.last_sent_brake < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE \
-         and abs(pitch) <= STOP_SETTLE_MAX_PITCH:
-        self.stop_settle_brake = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
-        self.stop_settle_left = STOP_SETTLE_COMMANDS
+    pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
+    if self.apply_brake > STOP_SMOOTH_MAX_BRAKE or abs(pitch) > STOP_SETTLE_MAX_PITCH:
+      self.stop_settle_brake = None  # a strong hold or a steep road: the hold now, also in the middle of a settle
+    elif not self.stop_standstill_seen and self.stop_rolling and self.stop_ease_pct > 0 and self.stop_ease_applied and \
+         not self.stop_ease_given_up and self.last_sent_brake < self.apply_brake:
+      self.stop_settle_brake = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
+      self.stop_settle_left = STOP_SETTLE_COMMANDS
+    self.stop_standstill_seen = True
     if self.stop_settle_brake is None:
       return
     if self.stop_settle_left > 0:

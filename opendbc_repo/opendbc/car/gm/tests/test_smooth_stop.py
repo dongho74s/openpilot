@@ -250,3 +250,27 @@ def test_an_unreadable_setting_turns_easing_off_and_commands_go_on(runtime, monk
   d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopBrakeEase="x", StopBrakeEaseSpeed=4)
   into_a_stop(d)
   assert set(brakes(d.run(-0.5, 0.3, state="stopping", v=0.4, a=-0.3))) == {50}
+
+
+def test_a_stronger_hold_or_a_steep_road_ends_the_settle_at_once(runtime, monkeypatch):
+  """Codex review 2026-11-26 R1: the hold limit and the pitch were only checked when the settle started."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  eased_to_the_stop(d)
+  assert max(brakes(d.run(-0.5, 0.12, state="stopping", v=0.0))) < 50  # settling
+  assert brakes(d.run(-1.0, 0.04, state="stopping", v=0.0)) == [100]  # a stronger stop request: at once
+  steep = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(steep)
+  eased_to_the_stop(steep)
+  assert max(brakes(steep.run(-0.5, 0.12, state="stopping", v=0.0))) < 50
+  assert brakes(steep.run(-0.5, 0.04, state="stopping", v=0.0, pitch=0.031)) == [50]  # the road tilts: at once
+
+
+def test_a_stop_whose_easing_was_given_up_gets_the_hold_at_standstill(runtime, monkeypatch):
+  """Codex review 2026-11-26 R2: easing ended for a creep (aEgo 0), then standstill kept 41 for 0.48 s."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
+  into_a_stop(d)
+  d.run(-0.5, 0.2, state="stopping", v=0.4, a=-0.3)
+  given_up = brakes(d.run(-0.5, 0.32, state="stopping", v=0.2, a=0.0))
+  assert given_up[-1] > given_up[0]  # easing ended, the brake is joining back up
+  assert set(brakes(d.run(-0.5, 0.3, state="stopping", v=0.0))) == {50}
