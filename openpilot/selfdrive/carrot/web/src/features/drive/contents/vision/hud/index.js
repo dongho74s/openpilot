@@ -25,6 +25,7 @@ import { CarrotHudDataBridge } from "./data_bridge.js";
 import { createHudDebugFacade } from "./debug.js";
 import { COLORS } from "./tokens.js";
 import { el } from "./dom.js";
+import { createNewUiHudOverlay } from "../newui/overlay.js";
 
 const installed = new WeakMap();
 if (typeof globalThis === "object") globalThis.CarrotHudDataBridge = CarrotHudDataBridge;
@@ -292,7 +293,11 @@ export function installCarrotHudOverlay(target = globalThis, options = {}) {
     return null;
   }
 
-  const overlay = createHudOverlay(doc);
+  // The drive view shows the C3 "new ui 1" (v10-nui) HUD. The cluster-look overlay above
+  // stays available (and tested) for a caller that asks for it explicitly.
+  const overlay = options.cluster === true
+    ? createHudOverlay(doc)
+    : createNewUiHudOverlay(doc, { target });
   stage.appendChild(overlay.root);
   overlay.startLayout(target);
   overlay.update({});

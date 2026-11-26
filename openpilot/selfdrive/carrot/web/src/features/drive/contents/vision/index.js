@@ -14,6 +14,7 @@ import { installDriveVisionRoadOverlayGeometryRendererFacade } from "./road_over
 import { installDriveVisionRoadOverlayAuxRendererFacade } from "./road_overlay_aux_renderer.js";
 import { installDriveVisionRoadOverlayLeadModelFacade } from "./road_overlay_lead_model.js";
 import { installDriveVisionRoadOverlayLeadRendererFacade } from "./road_overlay_lead_renderer.js";
+import { installDriveVisionRoadOverlayNewUiRendererFacade } from "./road_overlay_newui_renderer.js";
 import { installDriveVisionSessionPolicyFacade } from "./session_policy.js";
 import { installDriveVisionSessionControllerFacade } from "./session_controller.js";
 import { installDriveVisionConnectionTransactionFacade } from "./connection_transaction.js";
@@ -53,6 +54,7 @@ export function installDriveVisionLeafFacades(target = globalThis, options = {})
     roadOverlayAuxRenderer: installDriveVisionRoadOverlayAuxRendererFacade(target),
     roadOverlayLeadModel: installDriveVisionRoadOverlayLeadModelFacade(target),
     roadOverlayLeadRenderer: installDriveVisionRoadOverlayLeadRendererFacade(target),
+    roadOverlayNewUiRenderer: installDriveVisionRoadOverlayNewUiRendererFacade(target),
     sessionPolicy: installDriveVisionSessionPolicyFacade(target),
     sessionController: installDriveVisionSessionControllerFacade(target),
     connectionTransactions: installDriveVisionConnectionTransactionFacade(target),
@@ -60,7 +62,7 @@ export function installDriveVisionLeafFacades(target = globalThis, options = {})
   });
   installedTargets.set(target, installed);
 
-  // 신규 Carrot HUD 오버레이(클러스터 룩) 마운트. 스테이지 DOM 준비 전이면 내부에서 지연 재시도.
+  // Carrot HUD 오버레이(C3 new ui 1 모양) 마운트. 스테이지 DOM 준비 전이면 내부에서 지연 재시도.
   try { installCarrotHudOverlay(target, options.hudOverlay || {}); }
   catch (e) { target.console?.error?.("[carrot hud overlay] install failed", e); }
 
@@ -149,6 +151,7 @@ export * from "./road_overlay_aux_renderer.js";
 export * from "./road_overlay_geometry_renderer.js";
 export * from "./road_overlay_lead_model.js";
 export * from "./road_overlay_lead_renderer.js";
+export * from "./road_overlay_newui_renderer.js";
 export * from "./road_overlay_policy.js";
 export * from "./road_overlay_projection.js";
 export * from "./connection_transaction.js";

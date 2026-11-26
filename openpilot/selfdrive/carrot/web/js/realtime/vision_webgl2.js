@@ -109,7 +109,7 @@ window.CarrotVisionWebGL2 = (() => {
   }
 
   function parseColor(style) {
-    if (style && typeof style === "object" && style.type === "vertical-gradient") return style;
+    if (style && typeof style === "object" && (style.type === "vertical-gradient" || style.type === "vertical-stops")) return style;
     const match = String(style || "").match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/i);
     if (!match) return { r: 1, g: 1, b: 1, a: 0 };
     return {
@@ -117,6 +117,38 @@ window.CarrotVisionWebGL2 = (() => {
       g: Math.max(0, Math.min(255, Number(match[2]))) / 255,
       b: Math.max(0, Math.min(255, Number(match[3]))) / 255,
       a: Math.max(0, Math.min(1, match[4] == null ? 1 : Number(match[4]))),
+    };
+  }
+
+  /* Multi-stop vertical gradient: { type: "vertical-stops", top, bottom,
+   * stops: [{ at, r, g, b, a }] } where at 0 is `bottom` and 1 is `top`
+   * (the Carrot Vision new ui path). Colours are 0..255, alpha 0..1. */
+  function verticalStopsColorAt(style, y) {
+    const stops = Array.isArray(style.stops) ? style.stops : [];
+    if (!stops.length) return { r: 1, g: 1, b: 1, a: 0 };
+    const top = Number(style.top);
+    const bottom = Number(style.bottom);
+    const span = bottom - top;
+    const t = Number.isFinite(span) && Math.abs(span) > 1e-6
+      ? Math.max(0, Math.min(1, (bottom - y) / span))
+      : 0;
+    let lower = stops[0];
+    let upper = stops[stops.length - 1];
+    for (let i = 1; i < stops.length; i += 1) {
+      if (t <= stops[i].at) {
+        lower = stops[i - 1];
+        upper = stops[i];
+        break;
+      }
+    }
+    const range = upper.at - lower.at;
+    const k = range > 1e-6 ? Math.max(0, Math.min(1, (t - lower.at) / range)) : 0;
+    const mix = (a, b) => a + (b - a) * k;
+    return {
+      r: mix(lower.r, upper.r) / 255,
+      g: mix(lower.g, upper.g) / 255,
+      b: mix(lower.b, upper.b) / 255,
+      a: Math.max(0, Math.min(1, mix(lower.a, upper.a))),
     };
   }
 
@@ -378,6 +410,7 @@ window.CarrotVisionWebGL2 = (() => {
 
     colorAt(style, y) {
       const color = parseColor(style);
+      if (color.type === "vertical-stops") return verticalStopsColorAt(color, y);
       if (color.type !== "vertical-gradient") return color;
       const base = color.color || { r: 255, g: 255, b: 255 };
       const stop = Math.max(0, Math.min(1, (this.logicalHeight - y) / (this.logicalHeight * 0.68)));

@@ -305,7 +305,10 @@ export function createRoadOverlayLeadRenderer(options = {}) {
     }
   }
 
-  function draw(sourceModel, overlayState, hudState, calibTransform, videoWidth, videoHeight, stageWidth, stageHeight, transform) {
+  // drawOptions (new ui 1 lead boxes): pathStatus / stateText / radarTargets false leave those out.
+  function draw(sourceModel, overlayState, hudState, calibTransform, videoWidth, videoHeight, stageWidth, stageHeight, transform,
+    drawOptions = {}) {
+    const showStateText = drawOptions.stateText !== false;
     const radarState = overlayState?.radarState || {};
     const modelPath = sourceModel?.position || null;
     const leadState = model.resolveLeadState(overlayState, hudState);
@@ -369,7 +372,7 @@ export function createRoadOverlayLeadRenderer(options = {}) {
         }
       }
 
-      if (leadState?.text) {
+      if (showStateText && leadState?.text) {
         drawLeadStateBadge(leadOneBox, leadState.text, videoWidth, videoHeight, stageWidth, stageHeight, transform);
       }
       primaryStatusAnchorBox = leadOneBox;
@@ -391,7 +394,7 @@ export function createRoadOverlayLeadRenderer(options = {}) {
           transform,
         );
       }
-      if (leadState?.text) {
+      if (showStateText && leadState?.text) {
         drawLeadStateBadge(held.box, leadState.text, videoWidth, videoHeight, stageWidth, stageHeight, transform);
       }
       primaryStatusAnchorBox = held.box;
@@ -424,8 +427,10 @@ export function createRoadOverlayLeadRenderer(options = {}) {
       temporal.resetLeadTwo();
     }
 
-    drawPathStatusText(modelPath, hudState, calibTransform, videoWidth, videoHeight, primaryStatusAnchorBox);
-    drawRadarTargets(radarState, sourceModel, calibTransform, videoWidth, videoHeight);
+    if (drawOptions.pathStatus !== false) {
+      drawPathStatusText(modelPath, hudState, calibTransform, videoWidth, videoHeight, primaryStatusAnchorBox);
+    }
+    if (drawOptions.radarTargets !== false) drawRadarTargets(radarState, sourceModel, calibTransform, videoWidth, videoHeight);
   }
 
   reset();

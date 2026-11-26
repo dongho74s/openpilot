@@ -44,14 +44,16 @@ The Drive page displays live video and driving state. Its usual layout contains 
 With `CarrotVisionEnabled` on, you can start the web camera view while the external HUD is enabled. Simultaneous video use may increase device load; if video stutters, stop the web camera view and compare.
 
 - Select `Start Drive Vision` to begin connecting to the camera stream.
-- The HUD may show vehicle speed, set speed, speed limit, following gap, lead vehicle, and driving alerts.
+- The HUD on the video looks like the C3/C3X `new ui` 1 screen: current speed (KM/H) at the bottom centre, the round steering-wheel button at the bottom right with the `SET` speed and following-gap icon to its left, the LFA icon next to the speed (green when engaged, mint when only steering) with the APN badge, turn signals, blind-spot icons, and alert boxes along the bottom.
+- When neither engaged nor steering, the video turns grey and dim, lane lines are hidden and the path is drawn grey. During a lane change the line being crossed disappears and the lane edges turn mint. In lane mode your lane edges are green.
+- Values the web does not receive are not shown: the driver-monitoring icon, the standstill timer after a minute stopped, the lead-departed notice, and the gas-override (blue) look.
 - Enable or disable AR in `Tools > Web Settings`.
 - If another browser owns the video stream, the page may say that it is in use elsewhere. Select `Use here` only when you intend to move the stream to the current browser.
 - A parked device or unavailable camera/driving data produces a waiting state instead of live video.
 
 The web video and HUD are reference displays. Always prioritize the vehicle's actual warnings and the road ahead.
 
-The following-distance bar and its 25 m label show the current dynamically adjusted following target. This differs from measured lead distance and is hidden without a valid lead. See [following-gap settings](cruise-gap.md#following-gap).
+With `ShowPathEnd` on, the lead car gets a rounded box and distance badges (radar and vision) like the C3 screen; they are hidden while neither engaged nor steering. The old web following-distance bar and its 25 m label are not part of the C3 `new ui` 1 screen and are no longer drawn. See [following-gap settings](cruise-gap.md#following-gap) for the gap itself.
 
 ### AR display and diagnostics
 

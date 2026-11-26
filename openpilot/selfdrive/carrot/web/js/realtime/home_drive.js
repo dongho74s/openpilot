@@ -279,6 +279,7 @@ window.HomeDrive = (() => {
   let leadTwoEmaState = { xl: NaN, xr: NaN, y: NaN, trackId: -1, lastMs: 0 };
   // Lead flicker hold and source-rewind state live in the renderer.
   let roadOverlayLeadRenderer = null;
+  let roadOverlayNewUiRenderer = null;
 
   /* ── Phase 1-2: dirty check ── */
   let _lastOverlaySig = "";
@@ -352,6 +353,8 @@ window.HomeDrive = (() => {
       finiteNumber(liveCalibration?.height?.[0], 0).toFixed(2),
       Boolean(controlsState?.activeLaneLine) ? 1 : 0,
       Boolean(controlsState?.enabled) ? 1 : 0,
+      Boolean(hudState?.selfdriveState?.enabled) ? 1 : 0,
+      Boolean(overlayState?.carControl?.latActive) ? 1 : 0,
       finiteNumber(carState?.useLaneLineSpeed, 0).toFixed(2),
       Boolean(carState?.brakeLights) ? 1 : 0,
       Boolean(carState?.leftBlindspot) ? 1 : 0,
@@ -2166,6 +2169,37 @@ window.HomeDrive = (() => {
   }) || null;
   if (!roadOverlayLeadRenderer) return {};
 
+  // Carrot Vision "new ui 1": the C3 NewUi=1 (v10-nui) road overlay. The classic
+  // renderers above stay as the fallback when this module is unavailable.
+  roadOverlayNewUiRenderer = window.DriveVisionRoadOverlayNewUiRenderer?.create?.({
+    context: ctx,
+    isPerformanceActive: () => performanceGeometryActive,
+    getCachedGradient,
+    pathZOffset: PATH_Z_OFFSET,
+    geometry: {
+      drawPolygon: drawGeometryPolygon,
+      buildRibbon: roadOverlayProjection.buildRibbon,
+      smoothRibbon: roadOverlayProjection.smoothRibbon,
+    },
+  }) || null;
+
+  function isNewUiOverlayActive() {
+    return Boolean(roadOverlayNewUiRenderer) && window.CarrotVisionClassicOverlay !== true;
+  }
+
+  // The part of the video the viewer actually sees, in video pixels.
+  function visibleVideoRect(transform, stageWidth, stageHeight, videoWidth, videoHeight) {
+    const scale = Math.max(1e-6, finiteNumber(transform?.scale, 1));
+    const tx = finiteNumber(transform?.tx, 0);
+    const ty = finiteNumber(transform?.ty, 0);
+    return {
+      left: clamp((0 - tx) / scale, 0, videoWidth),
+      right: clamp((stageWidth - tx) / scale, 0, videoWidth),
+      top: clamp((0 - ty) / scale, 0, videoHeight),
+      bottom: clamp((stageHeight - ty) / scale, 0, videoHeight),
+    };
+  }
+
   function roundedRectPath(context, x, y, width, height, radius) {
     const r = Math.min(radius, width / 2, height / 2);
     context.beginPath();
@@ -2616,7 +2650,26 @@ window.HomeDrive = (() => {
       roadOverlayProjection.resetFrame(performance.now());
       clearOverlay(videoWidth, videoHeight);
       beginGeometryFrame(videoWidth, videoHeight);
-      if (model && projectionReady) {
+      if (model && projectionReady && isNewUiOverlayActive()) {
+        const view = visibleVideoRect(transform, stageWidth, stageHeight, videoWidth, videoHeight);
+        const mode = roadOverlayNewUiRenderer.draw(model, overlayState, hudState, transform.calibTransform, view);
+        // v10-nui draws the Carrot lead boxes and distance badges only with ShowPathEnd on, and not while
+        // disengaged; no path status text, lead state text or radar targets.
+        if (finiteNumber(paramsState.ShowPathEnd, 0) > 0 && mode && !mode.hidden) {
+          roadOverlayLeadRenderer.draw(
+            model,
+            overlayState,
+            hudState,
+            transform.calibTransform,
+            videoWidth,
+            videoHeight,
+            stageWidth,
+            stageHeight,
+            transform,
+            { pathStatus: false, stateText: false, radarTargets: false },
+          );
+        }
+      } else if (model && projectionReady) {
         if (showLaneInfo >= 1) {
           roadOverlayGeometryRenderer.drawLaneLines(model, overlayState, hudState, transform.calibTransform);
         }
