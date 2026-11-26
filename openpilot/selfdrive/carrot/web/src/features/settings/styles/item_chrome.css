@@ -199,19 +199,19 @@
   text-align: left;
 }
 
-@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .ctrl {
     justify-content: center;
   }
 }
 
-@media (max-width: 760px) and (min-aspect-ratio: 13/10), (max-width: 760px) and (horizontal-viewport-segments: 2), (max-width: 760px) and (vertical-viewport-segments: 2), (min-width: 640px) and (max-width: 760px) and (min-height: 650px) {
+@media (max-width: 760px) and (min-aspect-ratio: 13/10), (max-width: 760px) and (horizontal-viewport-segments: 2), (max-width: 760px) and (vertical-viewport-segments: 2), (min-width: 900px) and (max-width: 760px) and (min-height: 650px) {
   .page--setting :is(#settingScreenItems, #settingInlineSearchResults) .ctrl {
     justify-content: start;
   }
 }
 
-@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page--setting :is(#settingScreenItems, #settingInlineSearchResults) > .row-between.mb-sm {
     /* min-height was 48px while the row content (42px back-icon + title) is
        shorter, and align-items:end pushed the ~6px slack ABOVE the title ??

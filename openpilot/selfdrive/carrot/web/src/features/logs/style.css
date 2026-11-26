@@ -6,7 +6,7 @@
   overflow: hidden;
 }
 
-@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px) {
+@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px) {
   .page--logs {
     height: var(--page-content-height, calc(var(--app-vv-height, 100dvh) - 24px));
   }
@@ -1185,7 +1185,7 @@
   }
 }
 
-@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px) {
+@media (min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px) {
   .logs-shell {
     --logs-route-media-column: minmax(230px, 32%);
   }
@@ -1351,7 +1351,7 @@
   }
 }
 
-@media (max-height: 620px) and (min-aspect-ratio: 13/10), (max-height: 620px) and (horizontal-viewport-segments: 2), (max-height: 620px) and (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px) and (max-height: 620px) {
+@media (max-height: 620px) and (min-aspect-ratio: 13/10), (max-height: 620px) and (horizontal-viewport-segments: 2), (max-height: 620px) and (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px) and (max-height: 620px) {
   .logs-tabbar {
     padding-top: 6px;
     padding-bottom: 4px;

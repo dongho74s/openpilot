@@ -92,7 +92,7 @@ import { getToolCommandPreview, renderToolsMeta } from "./runtime.js";
 
   function getMode() {
     if (global.CarrotLayout?.isWide?.()) return MODE.LANDSCAPE;
-    return global.matchMedia?.("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px)")?.matches ? MODE.PORTRAIT : MODE.LANDSCAPE;
+    return global.matchMedia?.("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px)")?.matches ? MODE.PORTRAIT : MODE.LANDSCAPE;
   }
 
   function syncHostMode(out, mode = getMode()) {

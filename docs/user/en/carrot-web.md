@@ -21,7 +21,7 @@ Carrot Web is a local device-management interface. Do not expose it directly to 
 
 ## Pages at a glance
 
-Navigation may appear as a left rail on a wide display or a bottom bar on a portrait phone.
+A wide display (a tablet, or a phone held sideways: 900 px or wider, or 1.3 times wider than tall) shows the left rail and two panes; anything narrower (a portrait phone, an unfolded Fold) shows the floating bottom bar and one column.
 
 | Page | Main purpose |
 |---|---|

@@ -23,7 +23,7 @@ let toolsLogHistoryClosing = false;
 
 function isToolsPortraitMode() {
   if (window.CarrotLayout?.isWide?.()) return false;
-  return Boolean(window.matchMedia?.("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px)")?.matches);
+  return Boolean(window.matchMedia?.("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px)")?.matches);
 }
 
 function pushToolsLogHistoryState() {

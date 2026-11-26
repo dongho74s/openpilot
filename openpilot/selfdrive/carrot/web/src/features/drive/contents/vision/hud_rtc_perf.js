@@ -4,7 +4,7 @@ export const RTC_PERF_HOLD_MS = 600;
 export const RTC_PERF_HOLD_MOVE_PX = 12;
 export const RTC_PERF_SUMMARY_AUTO_CLOSE_MS = 8000;
 export const RTC_PERF_LOG_RESULT_RESET_MS = 1400;
-export const RTC_PERF_WIDE_LAYOUT_QUERY = "(min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px)";
+export const RTC_PERF_WIDE_LAYOUT_QUERY = "(min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px)";
 
 export function createRtcPerfHud(options = {}) {
   const model = options.model || DriveVisionHudModel;

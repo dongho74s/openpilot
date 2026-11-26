@@ -10,8 +10,8 @@
 
    Keep the CSS media query copies in responsive.css, layout_tokens.css, and
    src/features/settings/styles/device.css in sync with LAYOUT_WIDE_QUERY. */
-const LAYOUT_WIDE_QUERY = "(min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px)";
-const LAYOUT_WIDE_MIN_WIDTH = 640;
+const LAYOUT_WIDE_QUERY = "(min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px)";
+const LAYOUT_WIDE_MIN_WIDTH = 900;
 const LAYOUT_WIDE_MIN_HEIGHT = 650;
 const LAYOUT_SQUARE_RATIO = 0.92;
 

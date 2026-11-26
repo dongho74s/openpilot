@@ -1258,7 +1258,7 @@
 
 /* Phones: the favourites strip runs to the screen edge (the screens clip at the edge, not at the gutter), and the
    settings menu is a small round button at the top right instead of a large floating one over the tiles. */
-@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page.page--setting:not(.setting-layout-split) > .page-fab-layer--setting {
     top: 12px;
     right: max(var(--page-gutter-inline, 20px), env(safe-area-inset-right, 0px));
@@ -1310,4 +1310,430 @@
 .page--setting:not(.setting-layout-split) #settingTabBar.setting-tabbar,
 .page--setting:not(.setting-layout-split) #itemsTitle .setting-title-back {
   padding-right: 52px;
+}
+
+/* ── Device tab (user request 2026-11-27: "디바이스 탭 항목들 깨지고 문제가 많다, 완성도 올려") ──
+   The same card-of-rows language as the carrotpilot lists: the name on the left with its note beneath, the value or
+   control on the right of the same line, inset hairlines between rows, pill buttons. Panels (remote support,
+   My Traverse key, Jetson) get the card's padding, key/value rows and the same pills. */
+.page--setting #deviceItems .setting-section-block {
+  margin: 18px 0 0;
+}
+
+.page--setting #deviceItems .setting-section-block > .setting-group-card {
+  padding: 0;
+  border: 0;
+  border-radius: var(--set-radius);
+  background: var(--set-card);
+  box-shadow: var(--set-shadow);
+  overflow: hidden;
+}
+
+.page--setting #deviceItems .setting.device-setting {
+  min-height: 56px;
+  margin: 0;
+  padding: 11px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.page--setting #deviceItems .setting.device-setting + .setting.device-setting {
+  background-image: linear-gradient(var(--set-line), var(--set-line));
+  background-position: 18px 0;
+  background-size: calc(100% - 36px) 1px;
+  background-repeat: no-repeat;
+}
+
+.page--setting #deviceItems .setting.device-setting .settingTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 34px;
+}
+
+.page--setting #deviceItems .setting.device-setting .settingTop > .ctrl,
+.page--setting #deviceItems .setting.device-setting .ctrl {
+  display: flex;
+  grid-column: auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: auto;
+  max-width: 56vw;
+  min-width: 0;
+  margin: 0;
+}
+
+.page--setting #deviceItems .setting.device-setting .title {
+  color: var(--set-ink);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.32;
+}
+
+.page--setting #deviceItems .setting.device-setting .descr {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  margin-top: 3px;
+  color: var(--set-ink2);
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.page--setting #deviceItems .setting.device-setting .device-value,
+.page--setting #deviceItems .setting.device-setting .ctrl > .title.muted {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--set-ink2);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* buttons in rows and panels: pills on the shared fill; filled = ink; danger = red text */
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .smallBtn,
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 34px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--set-fill);
+  background-image: none;
+  box-shadow: none;
+  color: var(--set-ink);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-decoration: none;
+  transform: none;
+}
+
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .smallBtn:active {
+  background: var(--set-fill-press);
+}
+
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .btn--filled {
+  background: var(--set-ink);
+  color: var(--set-card);
+}
+
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .btn--danger,
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .smallBtn.btn--danger {
+  border: 0;
+  background: var(--set-fill);
+  color: var(--c-danger);
+}
+
+.page--setting #deviceItems .setting.device-setting button.is-device-disabled,
+.page--setting #deviceItems :is(.setting.device-setting, .remote-support) .smallBtn:disabled {
+  border: 0;
+  background: var(--set-fill);
+  color: var(--set-ink3);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.page--setting #deviceItems .device-setting--disabled .title {
+  color: var(--set-ink2);
+}
+
+/* selects: a pill with a chevron */
+.page--setting #deviceItems .device-select,
+.page--setting #deviceItems .remote-support__form select {
+  min-height: 34px;
+  height: 34px;
+  max-width: 100%;
+  padding: 0 32px 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--set-ink2) 50%) calc(100% - 17px) 50% / 5px 5px no-repeat,
+    linear-gradient(-45deg, transparent 50%, var(--set-ink2) 50%) calc(100% - 12px) 50% / 5px 5px no-repeat,
+    var(--set-fill);
+  color: var(--set-ink);
+  font-size: 14px;
+  font-weight: 600;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.page--setting #deviceItems .remote-support__form select {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  border-radius: 13px;
+}
+
+/* SSH key row: the key shows in a field with its two actions beneath */
+.page--setting #deviceItems .setting.device-setting.device-setting--ssh .settingTop {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.page--setting #deviceItems .setting.device-setting.device-setting--ssh .ctrl {
+  display: block;
+  justify-content: stretch;
+  width: 100%;
+  max-width: none;
+}
+
+.page--setting #deviceItems .setting.device-setting.device-setting--ssh :is(.device-ssh-form, .setting-form-shell, .setting-form-control) {
+  width: 100%;
+  min-width: 0;
+}
+
+.page--setting #deviceItems .device-setting--ssh .setting-form-control__surface {
+  min-height: 46px;
+  border: 0;
+  border-radius: 13px;
+  background: var(--set-fill);
+  box-shadow: none;
+  color: var(--set-ink);
+}
+
+.page--setting #deviceItems .device-setting--ssh .setting-form-control__actions {
+  gap: 8px;
+}
+
+.page--setting #deviceItems .device-setting--ssh .setting-form-control__action.smallBtn {
+  flex: 1 1 0;
+}
+
+/* switches drawn by the panels (remote support) */
+.page--setting #deviceItems .device-toggle__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.page--setting #deviceItems .device-toggle__slider {
+  position: relative;
+  flex: 0 0 auto;
+  width: 50px;
+  height: 30px;
+  border-radius: 15px;
+  background: var(--set-fill);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.page--setting #deviceItems .device-toggle__slider::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--c-knob-off);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 0.18s ease, background 0.15s ease;
+}
+
+.page--setting #deviceItems .device-toggle__input:checked + .device-toggle__slider {
+  background: var(--set-ink);
+}
+
+.page--setting #deviceItems .device-toggle__input:checked + .device-toggle__slider::after {
+  transform: translateX(20px);
+  background: var(--set-card);
+}
+
+/* panels */
+.page--setting #deviceItems .remote-support {
+  padding: 6px 18px 18px;
+}
+
+.page--setting #deviceItems .remote-support__heading {
+  padding: 18px 0 10px;
+  border-top: 1px solid var(--set-line);
+}
+
+.page--setting #deviceItems .remote-support__heading:first-child {
+  padding-top: 12px;
+  border-top: 0;
+}
+
+.page--setting #deviceItems .remote-support__heading h3 {
+  color: var(--set-ink);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.page--setting #deviceItems .remote-support__heading > span {
+  color: var(--set-ink3);
+  font-size: 13px;
+}
+
+.page--setting #deviceItems .remote-support .remote-support__power {
+  padding: 4px 0 14px;
+  color: var(--set-ink);
+  font-size: 16px;
+}
+
+.page--setting #deviceItems .remote-support__details {
+  gap: 0;
+  margin: 0 0 14px;
+}
+
+.page--setting #deviceItems .remote-support__details > div {
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--set-line);
+}
+
+.page--setting #deviceItems .remote-support__details > div:first-child {
+  border-top: 0;
+}
+
+.page--setting #deviceItems .remote-support dt {
+  color: var(--set-ink2);
+  font-size: 14px;
+}
+
+.page--setting #deviceItems .remote-support dd {
+  color: var(--set-ink);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.page--setting #deviceItems .remote-support__actions {
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.page--setting #deviceItems .remote-support .smallBtn {
+  height: 40px;
+  min-height: 40px;
+  padding: 0 16px;
+}
+
+.page--setting #deviceItems .remote-support__message {
+  color: var(--set-ink2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.page--setting #deviceItems .remote-support__error {
+  color: var(--c-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.page--setting #deviceItems .remote-support__field {
+  color: var(--set-ink2);
+  font-size: 13px;
+}
+
+.page--setting #deviceItems .remote-support textarea,
+.page--setting #deviceItems .remote-support input[type="text"],
+.page--setting #deviceItems .remote-support input[type="password"] {
+  border: 0;
+  border-radius: 13px;
+  background: var(--set-fill);
+  color: var(--set-ink);
+}
+
+.page--setting #deviceItems .remote-support__keys li {
+  border-bottom-color: var(--set-line);
+}
+
+.page--setting #deviceItems .remote-support__checkbox {
+  color: var(--set-ink);
+  font-size: 15px;
+}
+
+.page--setting #deviceItems .remote-support__checkbox input {
+  accent-color: var(--set-ink);
+}
+
+/* network: the connection state under each Wi-Fi name */
+.page--setting #deviceItems .wifi-view-status {
+  color: var(--set-ink2);
+}
+
+.page--setting #deviceItems .wifi-view-status.is-connected {
+  color: var(--md-success);
+}
+
+/* device tiles: the name and a short line about what is inside */
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList)#deviceGroupList {
+  margin-top: 18px;
+}
+
+.page--setting :is(#carrotTabContent #groupList, #deviceGroupList)#deviceGroupList > .groupBtn.btn {
+  justify-content: space-between;
+  min-height: 78px;
+}
+
+.page--setting #deviceGroupList .setting-group-meta {
+  color: var(--set-ink3);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.page--setting.setting-tab-device .setting-home-sub {
+  display: none;
+}
+
+/* a value button (주행 성향: 표준) reads as a value with a chevron, like a carrotpilot row */
+.page--setting #deviceItems .setting.device-setting .val.value-surface {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--set-ink2);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.page--setting #deviceItems .setting.device-setting .val.value-surface::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-top: 1.7px solid var(--set-ink3);
+  border-right: 1.7px solid var(--set-ink3);
+  transform: rotate(45deg);
+}
+
+/* Wi-Fi signal: quiet text, not a bordered box */
+.page--setting #deviceItems .wifi-view-row .ctrl > .wifi-view-status {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--set-ink2);
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }

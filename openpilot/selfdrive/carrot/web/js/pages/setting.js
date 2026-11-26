@@ -1836,7 +1836,7 @@ function isCompactLandscapeMode() {
   // CarrotLayout so fold/large-panel detection matches CSS.
   return window.CarrotLayout
     ? window.CarrotLayout.isWide()
-    : window.matchMedia("(min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 640px) and (min-height: 650px)").matches;
+    : window.matchMedia("(min-aspect-ratio: 13/10), (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2), (min-width: 900px) and (min-height: 650px)").matches;
 }
 
 function getLandscapeDefaultSettingGroup() {
@@ -2408,7 +2408,7 @@ function hasSettingViewportLayoutChanged() {
 
 function isPortraitInternalScrollMode() {
   if (window.CarrotLayout?.isWide?.()) return false;
-  return Boolean(window.matchMedia && window.matchMedia("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px)").matches);
+  return Boolean(window.matchMedia && window.matchMedia("(max-width: 640px), (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px)").matches);
 }
 
 function getSettingItemsScrollContainer() {

@@ -293,7 +293,7 @@
 }
 
 /* While the in-place surface is open the group menu yields to the results. */
-@media (aspect-ratio < 13/10) and (max-width: 639px), (aspect-ratio < 13/10) and (max-height: 649px) {
+@media (aspect-ratio < 13/10) and (max-width: 899px), (aspect-ratio < 13/10) and (max-height: 649px) {
   .page--setting #carrotTabContent.is-inline-search #groupList > :not(.setting-inline-search-slot) {
     display: none;
   }

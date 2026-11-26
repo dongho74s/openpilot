@@ -256,7 +256,10 @@ function renderDeviceGroups(options = {}) {
     if (animateGroups) button.style.setProperty("--i", String(index));
     if (group.id === CURRENT_DEVICE_GROUP) button.classList.add("active");
     button.dataset.deviceGroup = group.id;
-    button.innerHTML = `<span class="setting-group-label">${escapeHtml(label)}</span>`;
+    // A short line about what the group holds, like the counts on the carrotpilot tiles.
+    const meta = getUIText(`device_group_meta_${group.id}`, "");
+    button.innerHTML = `<span class="setting-group-label">${escapeHtml(label)}</span>`
+      + (meta ? `<span class="setting-group-meta">${escapeHtml(meta)}</span>` : "");
     button.onclick = () => selectDeviceGroup(group.id);
     groupContainer.appendChild(button);
   });
