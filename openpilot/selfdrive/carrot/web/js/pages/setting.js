@@ -986,8 +986,10 @@ function openSettingSheet(options) {
   closeSettingSheet({ returnFocus: false });
   const { row, item, title, descr, ctrl, unitBtn, controlKind, onReset, onDetail } = options;
   if (!settingSheetPopstateBound) {
+    // Back, another page or another group: the sheet belongs to the list it was opened from.
     settingSheetPopstateBound = true;
     window.addEventListener("popstate", () => closeSettingSheet({ returnFocus: false }));
+    window.addEventListener("carrot:pagechange", () => closeSettingSheet({ returnFocus: false }));
   }
   const backdrop = document.createElement("div");
   backdrop.className = "setting-sheet-backdrop";
@@ -2785,6 +2787,7 @@ async function renderItems(group, options = {}) {
   // container (single-column layout); everything else owns the items screen.
   const itemsBox = options.container || document.getElementById("items");
   const renderToken = ++settingRenderToken;
+  if (!options.container) closeSettingSheet({ returnFocus: false });
   const detailName = String(options.detailName || "").trim();
   const detailMode = Boolean(detailName);
   const scrollMode = options.scrollMode || "top";
