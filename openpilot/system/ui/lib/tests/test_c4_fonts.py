@@ -11,9 +11,9 @@ import pytest
 from openpilot.system.ui.lib.tests.test_raylib_text import UI_DIR, load_definitions
 
 
-def application_scope(big=False):
+def application_scope(big=False, font_dir=Path("/nonexistent/fonts")):
   scope = {"BIG_UI": big, "StrEnum": StrEnum, "rl": SimpleNamespace(Font=object), "Path": Path,
-           "FONT_SOURCE_EXTS": (".ttf", ".otf")}
+           "FONT_SOURCE_EXTS": (".ttf", ".otf"), "WANTED_SOURCE": font_dir / "wanted" / "WantedSans-SemiBold.ttf"}
   path = UI_DIR / "lib/application.py"
   load_definitions(path, scope, {"FontWeight", "font_fallback"})
   tree = ast.parse(path.read_text())
@@ -48,11 +48,11 @@ def fonts(monkeypatch):
   return SimpleNamespace(**scope, normal=normal, korean=korean, unifont=unifont, loaded=loaded)
 
 
-def test_c4_all_text_roles_share_semibold_and_load_only_three_atlases():
+def test_c4_all_text_roles_share_wanted_sans_semibold_and_load_only_three_atlases():
   weights = application_scope()["FontWeight"]
   for role in ("NORMAL", "MEDIUM", "BOLD", "SEMI_BOLD", "PRETENDARD", "DISPLAY", "DISPLAY_REGULAR", "ROMAN"):
-    assert getattr(weights, role) == "Pretendard-SemiBold.fnt"
-  assert {w.value for w in weights} == {"Pretendard-SemiBold.fnt", "Pretendard-KR-SemiBold.fnt", "unifont.fnt"}
+    assert getattr(weights, role) == "WantedSans-SemiBold.fnt"
+  assert {w.value for w in weights} == {"WantedSans-SemiBold.fnt", "WantedSans-KR-SemiBold.fnt", "unifont.fnt"}
 
 
 def test_big_ui_keeps_existing_fonts():
@@ -62,6 +62,7 @@ def test_big_ui_keeps_existing_fonts():
   assert w.SEMI_BOLD == "Inter-SemiBold.fnt"
   assert w.BOLD == "Inter-Bold.fnt"
   assert w.DISPLAY == w.KOREAN == "KaiGenGothicKR-Bold.fnt"
+  assert w.PRETENDARD == "Pretendard-SemiBold.fnt"
 
 
 @pytest.mark.parametrize("text,target", [
@@ -92,14 +93,22 @@ def test_coverage_cached_and_bootstrap_missing_fallbacks_safe(fonts):
   assert fonts.font_fallback(fonts.normal, "한글") is fonts.normal
 
 
-def test_korean_atlas_uses_existing_source_without_an_extra_font_binary(tmp_path):
-  scope = application_scope()
-  source = tmp_path / "Pretendard-SemiBold.ttf"
+def test_missing_wanted_atlases_load_the_wanted_source_before_scons_runs(tmp_path):
+  scope = application_scope(font_dir=tmp_path)
+  for name in ("WantedSans-SemiBold.fnt", "WantedSans-KR-SemiBold.fnt"):
+    atlas = tmp_path / name
+    assert scope["_resolve_font_path"](None, atlas) == atlas  # no source either: keep the path, raylib logs it
+  source = tmp_path / "wanted" / "WantedSans-SemiBold.ttf"
+  source.parent.mkdir()
   source.touch()
-  atlas = tmp_path / "Pretendard-KR-SemiBold.fnt"
-  assert scope["_resolve_font_path"](None, atlas) == source
-  atlas.touch()
-  assert scope["_resolve_font_path"](None, atlas) == atlas
+  for name in ("WantedSans-SemiBold.fnt", "WantedSans-KR-SemiBold.fnt"):
+    atlas = tmp_path / name
+    assert scope["_resolve_font_path"](None, atlas) == source
+    atlas.touch()
+    assert scope["_resolve_font_path"](None, atlas) == atlas
+  # Other atlases still fall back to a TTF next to them.
+  (tmp_path / "Inter-Bold.ttf").touch()
+  assert scope["_resolve_font_path"](None, tmp_path / "Inter-Bold.fnt") == tmp_path / "Inter-Bold.ttf"
 
 
 def test_source_fallback_sizes_and_hangul_are_bounded():
@@ -110,7 +119,7 @@ def test_source_fallback_sizes_and_hangul_are_bounded():
   scope["rl"].ffi = SimpleNamespace(new=lambda _, v: v, cast=lambda _, v: v)
   scope["rl"].load_font_ex = lambda path, size, cps, count: calls.append((size, set(cps), count))
   for weight in (w.NORMAL, w.KOREAN, w.UNIFONT):
-    scope["_load_font_path"](app, Path("Pretendard-SemiBold.ttf"), weight)
+    scope["_load_font_path"](app, Path("wanted/WantedSans-SemiBold.ttf"), weight)
   assert [c[0] for c in calls] == [200, 48, 16]
   hangul = set(range(0xAC00, 0xD7A4))
   assert not hangul & calls[0][1]
@@ -119,14 +128,20 @@ def test_source_fallback_sizes_and_hangul_are_bounded():
   assert {0x1100, 0x1161, 0x3131, 0x4E2D} <= calls[2][1]
 
 
-def test_generator_and_scons_include_the_extra_atlas():
-  generator = (UI_DIR.parents[1] / "selfdrive/assets/fonts/process_korean.py").read_text()
+def test_generator_and_scons_build_both_wanted_atlases_outside_the_generic_glob():
+  fonts = UI_DIR.parents[1] / "selfdrive/assets/fonts"
+  generator = (fonts / "process_wanted.py").read_text()
   build = (UI_DIR.parents[1] / "selfdrive/ui/SConscript").read_text()
-  assert 'stem = "Pretendard-KR-SemiBold"' in generator
-  assert "alias.symlink_to(source.resolve())" in generator
-  assert 'action=f"python3 {korean_generator}"' in build
-  assert "Pretendard-KR-SemiBold.fnt" in build
-  assert "Pretendard-KR-SemiBold.png" in build
+  assert 'LATIN_STEM = "WantedSans-SemiBold"' in generator
+  assert 'KOREAN_STEM = "WantedSans-KR-SemiBold"' in generator
+  assert 'action=f"python3 {wanted_generator}"' in build
+  for name in ("WantedSans-SemiBold.fnt", "WantedSans-SemiBold.png", "WantedSans-KR-SemiBold.fnt",
+               "WantedSans-KR-SemiBold.png", "fonts/wanted/WantedSans-SemiBold.ttf"):
+    assert name in build
+  # The source must stay out of the generic Glob("fonts/*.ttf"): otherwise the bundled atlases rebuild.
+  assert not list(fonts.glob("WantedSans*.ttf"))
+  assert (fonts / "wanted/WantedSans-SemiBold.ttf").exists() and (fonts / "wanted/OFL.txt").exists()
+  assert "process_korean" not in build
 
 
 @pytest.mark.parametrize("name", ["preview_offroad.py", "preview_new_ui.py"])

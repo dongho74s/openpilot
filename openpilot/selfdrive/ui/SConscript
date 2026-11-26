@@ -15,13 +15,18 @@ env.Command(
   action=f"python3 {generator}",
 )
 
-korean_generator = File("#openpilot/selfdrive/assets/fonts/process_korean.py")
+# C4 Wanted Sans atlases. The source TTF is in fonts/wanted/, outside the glob above, so adding it does not
+# rerun (and rewrite) the bundled atlases; Pretendard SemiBold supplies the few glyphs Wanted Sans lacks.
+wanted_generator = File("#openpilot/selfdrive/assets/fonts/process_wanted.py")
 env.Command(
-  target=["#openpilot/selfdrive/assets/fonts/Pretendard-KR-SemiBold.fnt",
-          "#openpilot/selfdrive/assets/fonts/Pretendard-KR-SemiBold.png"],
-  source=[korean_generator, generator, "#openpilot/selfdrive/assets/fonts/Pretendard-SemiBold.ttf",
+  target=["#openpilot/selfdrive/assets/fonts/WantedSans-SemiBold.fnt",
+          "#openpilot/selfdrive/assets/fonts/WantedSans-SemiBold.png",
+          "#openpilot/selfdrive/assets/fonts/WantedSans-KR-SemiBold.fnt",
+          "#openpilot/selfdrive/assets/fonts/WantedSans-KR-SemiBold.png"],
+  source=[wanted_generator, generator, "#openpilot/selfdrive/assets/fonts/wanted/WantedSans-SemiBold.ttf",
+          "#openpilot/selfdrive/assets/fonts/Pretendard-SemiBold.ttf",
           "#openpilot/selfdrive/ui/translations/languages.json", Glob("#openpilot/selfdrive/ui/translations/*.po")],
-  action=f"python3 {korean_generator}",
+  action=f"python3 {wanted_generator}",
 )
 
 

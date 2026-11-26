@@ -188,8 +188,12 @@ def main():
   characters = ''.join(ko + en for ko, en in LABELS.values()) + AUTO_KO + BUTTON_KO + REBUILD_KO + ERROR_KO + reason + error
   codepoints = sorted(set(range(32, 127)) | {ord(c) for c in characters if ord(c) >= 32})
   glyph_buffer = rl.ffi.new('int[]', codepoints)
-  font = rl.load_font_ex(str(ROOT / 'openpilot/selfdrive/assets/fonts/Pretendard-Medium.ttf'),
-                         round(28 * min(width / 536, height / 240)), rl.ffi.cast('int *', glyph_buffer), len(codepoints))
+  fonts = ROOT / 'openpilot/selfdrive/assets/fonts'
+  font_path = fonts / 'wanted/WantedSans-SemiBold.ttf'  # the C4 UI face; Pretendard only if it is missing
+  if not font_path.exists():
+    font_path = fonts / 'Pretendard-Medium.ttf'
+  font = rl.load_font_ex(str(font_path), round(28 * min(width / 536, height / 240)),
+                         rl.ffi.cast('int *', glyph_buffer), len(codepoints))
   rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
   pages = error_pages(font, error, min(width / 536, height / 240))
   page = 0

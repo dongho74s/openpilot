@@ -42,34 +42,28 @@ def atlases(tmp_path_factory):
   spec = importlib.util.spec_from_file_location("c4_font_generator", FONT_DIR / "process.py")
   generator = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(generator)
-  spec = importlib.util.spec_from_file_location("c4_korean_generator", FONT_DIR / "process_korean.py")
-  korean_generator = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(korean_generator)
-  korean_generator.process = generator
+  spec = importlib.util.spec_from_file_location("c4_wanted_generator", FONT_DIR / "process_wanted.py")
+  wanted_generator = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(wanted_generator)
+  wanted_generator.process = generator
   output = tmp_path_factory.mktemp("c4-font-atlas")
-  base, international = generator._char_sets()
+  _, international = generator._char_sets()
   generator.FONT_DIR = output
-  # The desktop raylib ABI has six arguments; the target's newer ABI has seven.
-  load = rl.load_font_data
-  try:
-    if len(rl.ffi.typeof(rl.rl.LoadFontData).args) == 6:
-      rl.load_font_data = lambda data, size, height, cps, count, kind, out_count: load(data, size, height, cps, count, kind)
-    generator._process_font(FONT_DIR / "Pretendard-SemiBold.ttf", base)
-    korean_generator.generate(FONT_DIR / "Pretendard-SemiBold.ttf", output)
-    generator._process_font(FONT_DIR / "unifont.otf", international)
-  finally:
-    rl.load_font_data = load
+  if len(rl.ffi.typeof(rl.rl.LoadFontData).args) == 6:
+    pytest.skip("desktop raylib with the six-argument LoadFontData; the generators use the target's seven")
+  wanted_generator.generate(output)
+  generator._process_font(FONT_DIR / "unifont.otf", international)
   return output
 
 
 def test_all_modern_hangul_syllables_and_common_compatibility_jamo_have_real_glyphs(atlases):
-  coverage = supported(metrics(atlases / "Pretendard-KR-SemiBold.fnt"))
+  coverage = supported(metrics(atlases / "WantedSans-KR-SemiBold.fnt"))
   assert set(range(0xAC00, 0xD7A4)) <= coverage
   assert set(range(0x3131, 0x3164)) <= coverage
 
 
 def test_unsupported_jamo_and_ui_symbols_have_real_unifont_glyphs(atlases):
-  korean = supported(metrics(atlases / "Pretendard-KR-SemiBold.fnt"))
+  korean = supported(metrics(atlases / "WantedSans-KR-SemiBold.fnt"))
   backup = supported(metrics(atlases / "unifont.fnt"))
   assert not {0x1100, 0x1161, 0x11A8} & korean
   assert set(range(0x1100, 0x1200)) | set(range(0x3131, 0x318F)) <= korean | backup
@@ -78,20 +72,43 @@ def test_unsupported_jamo_and_ui_symbols_have_real_unifont_glyphs(atlases):
 
 def test_generated_atlas_face_and_size_and_texture_budget(atlases):
   from PIL import Image
-  for stem, size in (("Pretendard-SemiBold", 200), ("Pretendard-KR-SemiBold", 48)):
+  for stem, size in (("WantedSans-SemiBold", 200), ("WantedSans-KR-SemiBold", 48)):
     first_line = (atlases / f"{stem}.fnt").read_text().splitlines()[0]
     assert f'face="{stem}"' in first_line
     assert f"size=-{size} " in first_line
-  with Image.open(atlases / "Pretendard-KR-SemiBold.png") as image:
+  with Image.open(atlases / "WantedSans-KR-SemiBold.png") as image:
     assert max(image.size) <= 8192
     assert image.width * image.height <= 8192 * 8192  # Previous KaiGen atlas.
 
 
-def test_font_source_really_is_semibold_600():
-  data = (FONT_DIR / "Pretendard-SemiBold.ttf").read_bytes()
+def font_tables(path):
+  data = path.read_bytes()
   count = struct.unpack_from(">H", data, 4)[0]
-  tables = {tag: offset for tag, _, offset, _ in (struct.unpack_from(">4sIII", data, 12 + 16 * i) for i in range(count))}
+  return data, {tag: offset for tag, _, offset, _ in (struct.unpack_from(">4sIII", data, 12 + 16 * i) for i in range(count))}
+
+
+@pytest.mark.parametrize("path", [FONT_DIR / "wanted/WantedSans-SemiBold.ttf", FONT_DIR / "Pretendard-SemiBold.ttf"])
+def test_font_source_and_fill_really_are_semibold_600(path):
+  data, tables = font_tables(path)
+  assert data.startswith(b"\x00\x01\x00\x00")  # raw TrueType, never an LFS pointer
   assert struct.unpack_from(">H", data, tables[b"OS/2"] + 4)[0] == 600
+
+
+def test_fill_glyphs_share_the_wanted_vertical_metrics():
+  # Pretendard glyphs sit in the Wanted atlas only because both faces share units-per-em and hhea metrics.
+  def vertical(path):
+    data, tables = font_tables(path)
+    return struct.unpack_from(">H", data, tables[b"head"] + 18)[0], struct.unpack_from(">hh", data, tables[b"hhea"] + 4)
+  assert vertical(FONT_DIR / "wanted/WantedSans-SemiBold.ttf") == vertical(FONT_DIR / "Pretendard-SemiBold.ttf") == (2048, (1950, -494))
+
+
+def test_wi_fi_and_keyboard_symbols_stay_in_the_wanted_atlases(atlases):
+  # Wanted Sans lacks these; without the Pretendard fill, Korean "Wi‑Fi" strings would drop to unifont.
+  latin = supported(metrics(atlases / "WantedSans-SemiBold.fnt"))
+  korean = supported(metrics(atlases / "WantedSans-KR-SemiBold.fnt"))
+  symbols = set(map(ord, "\u2011↳⇧⌫␣◀▶"))
+  assert symbols <= latin and symbols <= korean
+  assert set(map(ord, "Wi\u2011Fi 네트워크 검색 중...")) - {0x20} <= korean
 
 
 def test_real_atlas_coverage_selects_consistent_measure_and_draw_fonts(atlases):
@@ -135,7 +152,7 @@ def test_korean_translation_and_event_characters_are_renderable(atlases):
 
 def test_timer_icon_and_long_numbers_stay_inside_bsm_margins(atlases):
   from openpilot.selfdrive.ui.mici.onroad.status_timers import TimerDisplay, format_mmss
-  entries = metrics(atlases / "Pretendard-SemiBold.fnt")
+  entries = metrics(atlases / "WantedSans-SemiBold.fnt")
   drawn = []
   class Label:
     def __init__(self, *args, **kwargs):

@@ -9,7 +9,7 @@ Only messaging, visionipc, Params and ui_state are replaced by in-process stand-
     --output out/ --case nui-engaged --case carrot-engaged
 
 Fonts follow a real C3/C3X: the device type reads as tici (big layout) while BIG stays unset, which is how the
-device starts the UI (Pretendard, FONT_SCALE 1.16). Set BIG=1 to preview the Inter fonts instead.
+device starts the UI (Wanted Sans, FONT_SCALE 1.16). Set BIG=1 to preview the Inter fonts instead.
 """
 import argparse
 import enum
