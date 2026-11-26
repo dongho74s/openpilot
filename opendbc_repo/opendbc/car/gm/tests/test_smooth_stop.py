@@ -162,6 +162,24 @@ def test_the_settle_time_is_a_setting(runtime, monkeypatch, setting, commands):
   assert stopped.index(50) * 0.04 < 1.4  # at 1 s the hold is there about 1.2 s after standstill
 
 
+def test_a_creep_release_called_off_during_the_settle_gets_the_hold_back_at_once(runtime, monkeypatch):
+  """Codex review 2026-11-26 P1: with StopBrakeSettleTime 1 s, AutoResume's creep release (from 1 s of standstill) sets
+  the brake to 0; when it is called off the next command must send the hold, not the eased brake rising from 36."""
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE, StopBrakeSettleTime=100)
+  into_a_stop(d)
+  eased = eased_to_the_stop(d)[-1]
+  assert set(brakes(d.run(-0.5, 0.6, state="stopping", v=0.0))) == {eased}  # settling
+  real = d.c.auto_resume.update
+  releases = iter([True, False])
+
+  def creep_release_once(CC, CS, frame, gas, brake, *args, **kwargs):
+    out = real(CC, CS, frame, gas, brake, *args, **kwargs)
+    return (out[0], 0, *out[2:]) if next(releases, False) else out
+
+  monkeypatch.setattr(d.c.auto_resume, "update", creep_release_once)
+  assert brakes(d.run(-0.5, 0.12, state="stopping", v=0.0)) == [0, 50, 50]  # released once, then the hold at once
+
+
 def test_wheels_turning_again_get_the_hold_at_once_and_a_stop_settles_once(runtime, monkeypatch):
   d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **EASE)
   into_a_stop(d)

@@ -527,9 +527,15 @@ class CarController(CarControllerBase):
 
           send_gas = self.apply_gas
           if self.traverse_long:
+            brake_in = self.apply_brake
             send_gas, self.apply_brake, at_full_stop, acc_engaged = self.auto_resume.update(
               CC, CS, self.frame, self.apply_gas, self.apply_brake, at_full_stop, lambda btn: self.send_btn(CS, can_sends, btn),
               bool(manual_brake))
+            if self.apply_brake < brake_in:
+              # AutoResume took the brake off (its creep release can open 1 s into a stop, inside a StopBrakeSettleTime of
+              # up to 1 s): the settle is over, so a release that is called off gets the hold back at once, not the eased
+              # brake rising from where it was (Codex review 2026-11-26 P1)
+              self.stop_settle_brake = None
             # 판다는 2CB apply 상승 에지로 권한을 주므로, 오픈파일럿이 꺼져 있으면 apply와 가스 펄스를 내보내지 않음
             acc_engaged = acc_engaged and CC.enabled
             if not CC.longActive:
