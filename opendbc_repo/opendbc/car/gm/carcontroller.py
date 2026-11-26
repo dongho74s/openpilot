@@ -7,7 +7,7 @@ from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, structs,
 from opendbc.car.gm import gmcan
 from opendbc.car.gm.torque_rt_guard import PandaRtGuard
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR
+from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, CC_ONLY_CAR, EV_CAR, CAMERA_ACC_CAR, SDGM_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR
 from opendbc.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from opendbc.car.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
@@ -28,6 +28,21 @@ PITCH_DEADZONE = 0.01 # [radians] 0.01 ? 1% grade
 BRAKE_PITCH_FACTOR_BP = [5., 10.] # [m/s] smoothly revert to planned accel at low speeds
 BRAKE_PITCH_FACTOR_V = [0., 1.] # [unitless in [0,1]]; don't touch
 
+def read_int_param(params, key):
+  """An int Param through Params.get (cast in Python, None when unreadable), never raising."""
+  try:
+    value = params.get(key)
+    return None if value is None or isinstance(value, bool) else int(float(value))
+  except Exception:
+    return None
+
+
+# Easing off just before the stop (StopBrakeEase %, StopBrakeEaseSpeed km/h; user request 2026-11-26)
+STOP_SMOOTH_MAX_BRAKE = 80  # counts (-0.8 m/s^2): a stronger stopping brake is not eased
+STOP_EASE_MAX_PCT = 60
+STOP_EASE_MIN_BRAKE = 30  # counts: never eased below this (1-5 km/h logs: about -0.15 m/s^2 against the engine's creep)
+STOP_EASE_CANCEL_COMMANDS = 8  # 25 Hz commands (0.32 s) of a non-decelerating car end easing for that stop
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -35,6 +50,15 @@ class CarController(CarControllerBase):
     self.apply_torque_last = 0
     self.apply_gas = 0
     self.apply_brake = 0
+    # Engine camera-ACC / SDGM cars under openpilot long (user report 2026-11-26, Traverse): the end of a stop stepped
+    # the brake up (41 -> 52, entering stopping) and down (52 -> 40, in the instant the car stopped). EVs (the Bolts:
+    # their stop hold follows the stock camera's, which their ECM needs) and CC-only cars keep their stops.
+    self.smooth_stop = CP.openpilotLongitudinalControl and CP.carFingerprint in (CAMERA_ACC_CAR | SDGM_CAR) and \
+      CP.carFingerprint not in EV_CAR and CP.carFingerprint not in CC_ONLY_CAR
+    self.stop_ease_pct = 0  # StopBrakeEase, read every 0.5 s
+    self.stop_ease_speed = 4. / 3.6  # StopBrakeEaseSpeed, m/s
+    self.stop_ease_cancelled = False
+    self.stop_ease_not_slowing = 0
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
     self.last_steer_frame = 0
@@ -82,6 +106,27 @@ class CarController(CarControllerBase):
 
     return pedal_gas, press_regen_paddle
 
+  def ease_stop_brake(self, CC, CS, stopping):
+    """Ease the brake off just before the stop, like a driver (StopBrakeEase, user request 2026-11-26): from
+    StopBrakeEaseSpeed down to the stop the brake goes down to (100 - StopBrakeEase) % of the stopping brake, never
+    below STOP_EASE_MIN_BRAKE; at standstill the hold is back at once (nothing is eased or ramped there). A car that
+    stops slowing (aEgo above 0 for STOP_EASE_CANCEL_COMMANDS, e.g. downhill) ends easing until it has stopped."""
+    if not (self.smooth_stop and CC.longActive and stopping) or CS.out.standstill:
+      self.stop_ease_cancelled = False
+      self.stop_ease_not_slowing = 0
+      return
+    if self.stop_ease_pct <= 0 or not (0. < CS.out.vEgo < self.stop_ease_speed) or \
+       not (STOP_EASE_MIN_BRAKE < self.apply_brake <= STOP_SMOOTH_MAX_BRAKE):
+      return
+    self.stop_ease_not_slowing = self.stop_ease_not_slowing + 1 if CS.out.aEgo > 0. else 0
+    if self.stop_ease_not_slowing >= STOP_EASE_CANCEL_COMMANDS:
+      self.stop_ease_cancelled = True
+    if self.stop_ease_cancelled:
+      return
+    closeness = (self.stop_ease_speed - CS.out.vEgo) / self.stop_ease_speed  # 0 at the start speed, 1 at the stop
+    eased = self.apply_brake * (1. - self.stop_ease_pct / 100. * closeness)
+    self.apply_brake = int(round(max(STOP_EASE_MIN_BRAKE, eased)))
+
   def update(self, CC, CS, now_nanos):
 
     if self.frame % 50 == 0:
@@ -96,6 +141,13 @@ class CarController(CarControllerBase):
         self.params.STEER_DELTA_UP = min(steerDeltaUp, self.params.max_custom_steer_delta_up())
       if steerDeltaDown > 0:
         self.params.STEER_DELTA_DOWN = min(steerDeltaDown, self.params.PANDA_MAX_RATE_DOWN)
+      if self.smooth_stop:
+        # Params.get casts in Python and gives None for a value it cannot read; get_int's C++ parse would terminate
+        # the process on such a value (Codex review R3). An unreadable StopBrakeEase turns easing off.
+        pct = read_int_param(params, "StopBrakeEase")
+        speed = read_int_param(params, "StopBrakeEaseSpeed")
+        self.stop_ease_pct = int(np.clip(pct, 0, STOP_EASE_MAX_PCT)) if pct is not None else 0
+        self.stop_ease_speed = float(np.clip(speed if speed is not None else 4, 1, 10)) / 3.6
     self.long_pitch = Params().get_bool("LongPitch")
     self.use_ev_tables = Params().get_bool("EVTable")
 
@@ -288,6 +340,7 @@ class CarController(CarControllerBase):
           # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
           can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx,
                                                           acc_engaged, at_full_stop, self.CP.carFingerprint))
+          self.ease_stop_brake(CC, CS, stopping)
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
 

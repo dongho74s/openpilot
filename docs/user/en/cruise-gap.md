@@ -128,6 +128,23 @@ Changes apply within about one second, including while driving. Stronger output 
 
 The description above concerns upstream control. The final CANFD request override is described below.
 
+<a id="stop-brake-ease"></a>
+### `StopBrakeEase` · Ease the brake off before the stop, `StopBrakeEaseSpeed` · Ease start speed
+
+Only on Chevrolet engine cars (Traverse, Trailblazer, Equinox, Silverado and so on, camera ACC / SDGM openpilot longitudinal control). EVs (the Bolts) and other cars are unaffected (user request 2026-11-26).
+
+- `StopBrakeEase`: default `30`, range `0 to 60` (%), step `5`. `0` = off.
+- `StopBrakeEaseSpeed`: default `4`, range `1 to 10` (km/h), step `1`.
+
+Like a driver letting off a little just before the car stops: while stopping, once the car is slower than `StopBrakeEaseSpeed`, the stopping brake is gradually reduced by up to `StopBrakeEase` % until just before the stop, never below brake 30 (about -0.15 m/s²). At standstill the stop hold is back in the next command.
+
+- **Not eased:** a stopping brake stronger than -0.8 m/s², rolling back, standstill.
+- **Ends:** if the car stops decelerating for more than 0.32 s (a downhill, for example), easing ends for that stop and the brake is joined back up to the stopping brake. The next stop eases again.
+- **Higher:** a smaller last jolt, a slightly longer stop (tens of cm at 30%).
+- **Higher start speed:** eases earlier and more gradually; lower eases only right before the stop.
+
+Changes apply within about one second, including while driving. Not yet checked in a real car.
+
 <a id="canfd-stopping"></a>
 ### CANFD stopping control
 
