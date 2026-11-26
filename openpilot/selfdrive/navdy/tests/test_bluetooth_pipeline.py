@@ -556,3 +556,22 @@ def test_socket_that_recovered_does_not_inherit_an_old_block(link):
   for _ in range(10):
     tick(link, .55)
   assert not wire.closed and len(state.pending) <= 1
+
+
+def test_frames_that_always_expire_before_their_first_byte_fail_within_the_tolerance(link, monkeypatch):
+  # Codex review 2026-11-26: a slow serializer can make every frame miss its TTL before its first send. Nothing then
+  # reaches the socket and nothing is pending, so only the no-progress clock can end the link.
+  clock, wire, state = link
+  compress = pipe.zlib.compress
+
+  def slow_compress(data, level):
+    clock.ns += 600_000_000
+    return compress(data, level)
+
+  monkeypatch.setattr(pipe.zlib, 'compress', slow_compress)
+  wire.write_limit = 0
+  with pytest.raises(TimeoutError, match='transmit deadline'):
+    for _ in range(20):
+      tick(link, .05)
+      assert len(state.pending) <= 1
+  assert not wire.output and clock.ns - 10_000_000_000 < 8_000_000_000

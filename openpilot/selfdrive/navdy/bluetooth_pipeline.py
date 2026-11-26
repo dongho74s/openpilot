@@ -164,11 +164,9 @@ class SnapshotPipeline:
         sent = self.conn.send(self.tx)
       except BlockingIOError:
         self.blocked_writes += 1
-        # A socket that takes nothing for STALL_TOLERANCE_NS is dead, whether or not its frames were dropped unsent.
         if self.blocked_since_ns is None:
           self.blocked_since_ns = now_ns
-        elif now_ns - self.blocked_since_ns >= STALL_TOLERANCE_NS:
-          raise TimeoutError('Navdy wireless v2 transmit deadline') from None
+        self._check_send_progress(now_ns)
         return
       if sent <= 0:
         raise ConnectionError('Navdy Bluetooth disconnected during write')
@@ -181,7 +179,15 @@ class SnapshotPipeline:
         self.last_tx_ms = round((time.monotonic_ns() - self.tx_captured_ns) / 1e6, 2)
         return
 
+  def _check_send_progress(self, now_ns):
+    # Nothing reached the socket for STALL_TOLERANCE_NS (blocked sends, frames dropped unsent, or both): the link is
+    # dead. Checked on every update, not only when a send blocks (Codex review 2026-11-26).
+    if self.blocked_since_ns is not None and now_ns - self.blocked_since_ns >= STALL_TOLERANCE_NS:
+      raise TimeoutError('Navdy wireless v2 transmit deadline')
+
   def _drop_unsent(self):
+    if self.blocked_since_ns is None:
+      self.blocked_since_ns = time.monotonic_ns()
     sequence, _ = self.pending.pop()
     if sequence != self.sequence - 1:
       raise ValueError('Navdy wireless v2 unsent frame is not the newest request')
@@ -196,6 +202,7 @@ class SnapshotPipeline:
     now_ns = time.monotonic_ns()
     if self.pending and now_ns - self.pending[0][1] >= RESPONSE_TIMEOUT_NS:
       raise TimeoutError('Navdy wireless v2 response deadline')
+    self._check_send_progress(now_ns)
     self._flush()
     if self.tx or len(self.pending) >= MAX_IN_FLIGHT:
       self.skipped += 1
