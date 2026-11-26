@@ -84,9 +84,13 @@ STOP_SETTLE_COMMANDS = 12  # 25 Hz commands (0.48 s) the eased brake is kept aft
 STOP_SETTLE_MAX_TIME = 100
 STOP_SETTLE_TIME_PER_COMMAND = 4
 STOP_SETTLE_MAX_PITCH = 0.03  # rad (about a 3 % grade): on a steeper road the hold comes at standstill as before
-# After the settle time the brake rises to the hold by STOP_BRAKE_RISE per command, or faster when the hold is far above
-# the kept brake (the Malibus' CP.stopAccel hold, 200): the whole gap within this many 25 Hz commands (0.48 s)
+# After the settle time the brake rises to the hold by STOP_BRAKE_RISE per command. On a car whose CP.stopAccel hold
+# floor is above STOP_SMOOTH_MAX_BRAKE (the Malibus, 200) it rises faster: the whole gap to the hold within this many
+# 25 Hz commands (0.48 s). Other cars keep the rise of 3 (Codex review 2026-11-26 P2).
 STOP_SETTLE_RISE_COMMANDS = 12
+# The Malibus' hold floor waits for standstill (the request brakes the last 0.1 m/s) for at most this many commands
+# (1 s) of a stop, and only while easing is on and not ended (Codex review 2026-11-26 P1)
+STOP_HOLD_DELAY_MAX_COMMANDS = 25
 
 
 class CarController(CarControllerBase):
@@ -118,7 +122,8 @@ class CarController(CarControllerBase):
     self.stop_settle_brake = None  # the brake kept just after standstill (STOP_SETTLE_COMMANDS), None when not settling
     self.stop_settle_left = 0
     self.stop_settle_commands = STOP_SETTLE_COMMANDS  # StopBrakeSettleTime, read every 0.5 s
-    self.stop_settle_rise = STOP_BRAKE_RISE
+    self.stop_settle_start = 0
+    self.stop_hold_delay_commands = 0
     self.stop_request_brake = None  # the stopping request's own brake in this command, below the hold floor
     self.apply_speed = 0 # kans: button spam
     self.frame = 0
@@ -209,6 +214,7 @@ class CarController(CarControllerBase):
       self.stop_ease_not_slowing = 0
       self.stop_ease_commands = 0
       self.stop_ease_applied = self.stop_ease_given_up = False
+      self.stop_hold_delay_commands = 0
       return
     if CS.out.standstill:
       # stopped once: no easing again in this stop, also when the wheel speed comes back above the standstill threshold
@@ -238,7 +244,8 @@ class CarController(CarControllerBase):
     """Keep the eased brake until the car has really stopped (StopBrakeEase on): at the first standstill of a stop that
     was rolling and eased (not given up for a creep / downhill / a too long stop), the brake stays at what was sent (at
     least STOP_EASE_MIN_BRAKE) for StopBrakeSettleTime (default STOP_SETTLE_COMMANDS; 0 starts the rise at once), then
-    rises to the hold by STOP_BRAKE_RISE per command, or by the gap over STOP_SETTLE_RISE_COMMANDS when that is more.
+    rises to the hold by STOP_BRAKE_RISE per command (a hold floor above STOP_SMOOTH_MAX_BRAKE, the Malibus': the gap to
+    it over STOP_SETTLE_RISE_COMMANDS when that is more).
     Checked every command: a stopping request above STOP_SMOOTH_MAX_BRAKE (the request, not CP.stopAccel's hold floor,
     which is 200 on the Malibus), a road steeper than STOP_SETTLE_MAX_PITCH, soft hold and wheels turning again
     (standstill lost) end it at once (Codex review 2026-11-26 R1, R2); a stop settles once. Wheels turning again in a
@@ -265,17 +272,22 @@ class CarController(CarControllerBase):
       self.stop_settle_brake = None  # a strong stop request or a steep road: the hold now, also mid-settle
     elif not self.stop_standstill_seen and self.stop_rolling and self.stop_ease_pct > 0 and self.stop_ease_applied and \
          not self.stop_ease_given_up and self.last_sent_brake < self.apply_brake:
-      self.stop_settle_brake = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
+      self.stop_settle_brake = self.stop_settle_start = max(self.last_sent_brake, STOP_EASE_MIN_BRAKE)
       self.stop_settle_left = self.stop_settle_commands
-      gap = self.apply_brake - self.stop_settle_brake
-      self.stop_settle_rise = max(STOP_BRAKE_RISE, gap / STOP_SETTLE_RISE_COMMANDS)
     self.stop_standstill_seen = True
     if self.stop_settle_brake is None:
       return
     if self.stop_settle_left > 0:
       self.stop_settle_left -= 1
     else:
-      self.stop_settle_brake += self.stop_settle_rise
+      rise = STOP_BRAKE_RISE
+      hold_floor = min(-100 * self.CP.stopAccel, self.params.MAX_BRAKE)
+      if hold_floor > STOP_SMOOTH_MAX_BRAKE:
+        # against the real hold, every command: the first standstill can come while vEgo is still above
+        # NEAR_STOP_BRAKE_PHASE, when this command's target is only the stopping brake (Codex review 2026-11-26 P1)
+        target = max(self.apply_brake, hold_floor)
+        rise = max(STOP_BRAKE_RISE, (target - self.stop_settle_start) / STOP_SETTLE_RISE_COMMANDS)
+      self.stop_settle_brake += rise
     if self.stop_settle_brake >= self.apply_brake:
       self.stop_settle_brake = None  # at the hold
       return
@@ -441,10 +453,15 @@ class CarController(CarControllerBase):
             self.stop_request_brake = stop_brake
             pitch = CC.orientationNED[1] if len(CC.orientationNED) > 1 else 0.
             if not CS.out.standstill and CS.out.vEgo > 0. and not self.stop_standstill_seen and \
-               stop_brake <= STOP_SMOOTH_MAX_BRAKE < self.apply_brake and abs(pitch) <= STOP_SETTLE_MAX_PITCH:
+               STOP_EASE_MIN_BRAKE < stop_brake <= STOP_SMOOTH_MAX_BRAKE < self.apply_brake and \
+               abs(pitch) <= STOP_SETTLE_MAX_PITCH and self.stop_ease_pct > 0 and not self.stop_ease_cancelled and \
+               self.stop_hold_delay_commands < STOP_HOLD_DELAY_MAX_COMMANDS:
               # A hold floor far above the request (the Malibus' CP.stopAccel 200) waits for standstill: in the last
               # 0.1 m/s the request (and its easing) brakes, as on the cars whose floor is near it (user request
-              # 2026-11-26; Malibu 00000050 stepped 73 -> 200 at 0.09 m/s, before standstill)
+              # 2026-11-26; Malibu 00000050 stepped 73 -> 200 at 0.09 m/s, before standstill). Only while easing runs
+              # (a car that is not slowing or a long stop ends it), with a request easing can act on, and for at most
+              # STOP_HOLD_DELAY_MAX_COMMANDS; then the hold (Codex review 2026-11-26 P1).
+              self.stop_hold_delay_commands += 1
               self.apply_brake = stop_brake
           press_regen_paddle = False
         else:

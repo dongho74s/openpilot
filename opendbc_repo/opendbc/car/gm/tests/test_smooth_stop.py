@@ -221,6 +221,67 @@ def test_a_strong_stop_request_on_the_malibu_gets_the_hold_at_once(runtime, monk
   assert brakes(d.run(-1.0, 0.04, state="stopping", v=0.0)) == [200]  # request 100 > STOP_SMOOTH_MAX_BRAKE: the hold
 
 
+def malibu_near_the_stop(d, accel=-0.5):
+  into_a_stop(d, accel)
+  for v in (1.0, 0.6, 0.2):
+    d.run(accel, 0.2, state="stopping", v=v, a=-0.3)
+
+
+def test_the_malibu_hold_comes_back_when_the_car_stops_slowing_near_the_stop(runtime, monkeypatch):
+  """Codex review 2026-11-26 P1: the hold floor waited for standstill with no way back; a car that does not slow below
+  0.1 m/s ends easing (STOP_EASE_CANCEL_COMMANDS) and so the wait."""
+  from opendbc.car.gm.carcontroller import STOP_EASE_CANCEL_COMMANDS
+  d = malibu_drive(runtime, monkeypatch, **EASE)
+  malibu_near_the_stop(d)
+  held = brakes(d.run(-0.5, 1.5, state="stopping", v=0.095, a=0.0))
+  first = held.index(200)
+  assert 0 < first <= STOP_EASE_CANCEL_COMMANDS + 1 and set(held[first:]) == {200}
+
+
+def test_the_malibu_hold_waits_at_most_a_second(runtime, monkeypatch):
+  from opendbc.car.gm.carcontroller import STOP_HOLD_DELAY_MAX_COMMANDS
+  d = malibu_drive(runtime, monkeypatch, **EASE)
+  malibu_near_the_stop(d)
+  held = brakes(d.run(-0.5, 2.0, state="stopping", v=0.09, a=-0.3))  # slowing, but never standstill
+  first = held.index(200)
+  assert first == STOP_HOLD_DELAY_MAX_COMMANDS and set(held[first:]) == {200}
+
+
+@pytest.mark.parametrize("accel", [-0.1, -0.3])
+def test_a_weak_stopping_request_on_the_malibu_gets_the_hold_near_the_stop(runtime, monkeypatch, accel):
+  """Codex review 2026-11-26 P1: StoppingAccel -10 looks up to brake 0 on the Malibu; a request easing cannot act on
+  (STOP_EASE_MIN_BRAKE or less) does not hold off the hold."""
+  d = malibu_drive(runtime, monkeypatch, **EASE)
+  malibu_near_the_stop(d, accel)
+  assert set(brakes(d.run(accel, 0.2, state="stopping", v=0.08, a=-0.3))) == {200}
+
+
+def test_a_malibu_first_standstill_above_the_near_stop_speed_still_reaches_the_hold_in_time(runtime, monkeypatch):
+  """Codex review 2026-11-26 P1: standstill (raw wheels) with vEgo 0.15 still filtering down: that command's target is
+  only the stopping brake; the rise is set against the real hold every command."""
+  from opendbc.car.gm.carcontroller import STOP_SETTLE_COMMANDS, STOP_SETTLE_RISE_COMMANDS
+  d = malibu_drive(runtime, monkeypatch, **EASE)
+  malibu_near_the_stop(d)
+  eased = brakes(d.run(-0.5, 0.2, state="stopping", v=0.12, a=-0.3))[-1]
+  first = brakes(d.run(-0.5, 0.04, state="stopping", v=0.15, a=-0.3, standstill=True))
+  stopped = first + brakes(d.run(-0.5, 1.5, state="stopping", v=0.0))
+  assert stopped[0] == eased and stopped.index(200) <= STOP_SETTLE_COMMANDS + STOP_SETTLE_RISE_COMMANDS
+  assert set(stopped[stopped.index(200):]) == {200}
+
+
+def test_the_traverse_settle_still_rises_by_three_to_a_stronger_hold(runtime, monkeypatch):
+  """Codex review 2026-11-26 P2: StopBrakeEase 60 and a -0.8 stop request (hold 80, kept brake ~36) must keep the rise
+  of 3 per command; only a hold floor above STOP_SMOOTH_MAX_BRAKE rises faster."""
+  from opendbc.car.gm.carcontroller import STOP_SETTLE_COMMANDS, STOP_BRAKE_RISE
+  d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), StopBrakeEase=60, StopBrakeEaseSpeed=4)
+  into_a_stop(d, accel=-0.8)
+  for v in (1.0, 0.8, 0.6, 0.4, 0.2, 0.05):
+    d.run(-0.8, 0.2, state="stopping", v=v, a=-0.3)
+  stopped = brakes(d.run(-0.8, 2.0, state="stopping", v=0.0))
+  rise = stopped[STOP_SETTLE_COMMANDS:stopped.index(80) + 1]
+  assert len(rise) > 3 and all(b2 - b1 == STOP_BRAKE_RISE for b1, b2 in zip(rise, rise[1:-1]))
+
+
 @pytest.mark.parametrize("ease", [30, 0])
 def test_a_malibu_rolling_again_after_standstill_gets_the_hold_at_once(runtime, monkeypatch, ease):
   """User report 2026-11-26 (Malibu ASCM 00000050): 1.2 s into the hold the car let go and rolled to 0.37 m/s; the brake
