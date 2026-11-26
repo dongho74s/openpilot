@@ -71,7 +71,8 @@ STOP_BRAKE_RISE = 3  # friction brake counts per 25 Hz command at least, while s
 STOP_SMOOTH_MAX_SPEED = 2.0  # m/s: the stopping brake rise is joined up only below this
 STOP_SMOOTH_MAX_BRAKE = 80  # counts (-0.8 m/s^2): and only up to this; a stronger stopping brake goes on at once
 # Easing off just before the stop (StopBrakeEase %, StopBrakeEaseSpeed km/h; user request 2026-11-26)
-STOP_EASE_MAX_PCT = 60
+STOP_EASE_MAX_PCT = 100  # wide on purpose (user request 2026-11-26); STOP_EASE_MIN_BRAKE stays the floor
+STOP_EASE_SPEED_MAX = 20  # km/h, StopBrakeEaseSpeed 1-20
 STOP_EASE_MIN_BRAKE = 30  # counts: never eased below this (1-5 km/h logs: about -0.15 m/s^2 against the engine's creep)
 STOP_EASE_CANCEL_COMMANDS = 8  # 25 Hz commands (0.32 s, net) of a non-decelerating car end easing for that stop
 STOP_EASE_MIN_DECEL = -0.05  # m/s^2: weaker than this counts as not decelerating
@@ -80,8 +81,8 @@ STOP_EASE_MAX_COMMANDS = 125  # 25 Hz commands (5 s): easing ends for a stop tha
 # 2026-11-26 "a thump at the very end", rlog 00000260: the accelerometer kept decelerating 0.4-0.5 s after standstill,
 # then rocked back). Jumping to the hold at standstill braked those last centimetres harder (-0.23 -> -0.36 m/s^2).
 STOP_SETTLE_COMMANDS = 12  # 25 Hz commands (0.48 s) the eased brake is kept after standstill, then it rises to the hold
-# StopBrakeSettleTime (user request 2026-11-26): that time in 0.01 s, 0-1 s, default 48; one 25 Hz command is 4 of it
-STOP_SETTLE_MAX_TIME = 100
+# StopBrakeSettleTime (user request 2026-11-26): that time in 0.01 s, 0-3 s, default 48; one 25 Hz command is 4 of it
+STOP_SETTLE_MAX_TIME = 300  # 0-3 s (user request 2026-11-26: wide ranges)
 STOP_SETTLE_TIME_PER_COMMAND = 4
 STOP_SETTLE_MAX_PITCH = 0.03  # rad (about a 3 % grade): on a steeper road the hold comes at standstill as before
 # After the settle time the brake rises to the hold by STOP_BRAKE_RISE per command. On a car whose CP.stopAccel hold
@@ -341,7 +342,7 @@ class CarController(CarControllerBase):
         pct = read_int_param(params, "StopBrakeEase")
         speed = read_int_param(params, "StopBrakeEaseSpeed")
         self.stop_ease_pct = int(np.clip(pct, 0, STOP_EASE_MAX_PCT)) if pct is not None else 0
-        self.stop_ease_speed = float(np.clip(speed if speed is not None else 4, 1, 10)) / 3.6
+        self.stop_ease_speed = float(np.clip(speed if speed is not None else 4, 1, STOP_EASE_SPEED_MAX)) / 3.6
         creep = read_int_param(params, "StopCreepBrake")  # an unreadable value keeps the default 100 %
         self.stop_creep_pct = 100 if creep is None else int(np.clip(creep, 0, STOP_CREEP_MAX_PCT))
         settle = read_int_param(params, "StopBrakeSettleTime")  # an unreadable value keeps the default 0.48 s

@@ -154,24 +154,25 @@ def test_the_brake_eases_off_as_the_car_slows_and_stays_eased_until_the_car_has_
   assert set(stopped[stopped.index(50):]) == {50} and stopped.index(50) * 0.04 < 1.0  # before an AutoResume creep release
 
 
-@pytest.mark.parametrize("setting,commands", [(None, 12), (48, 12), (0, 0), (20, 5), (50, 13), (100, 25), (150, 25),
+@pytest.mark.parametrize("setting,commands", [(None, 12), (48, 12), (0, 0), (20, 5), (50, 13), (100, 25), (150, 38), (300, 75), (500, 75),
                                               (-5, 0), ("x", 12)])
 def test_the_settle_time_is_a_setting(runtime, monkeypatch, setting, commands):
-  """StopBrakeSettleTime (user request 2026-11-26): the eased brake is kept 0-1 s (x0.01 s, one command per 4) after
-  standstill, then rises as before; out of range is clipped, unreadable keeps 0.48 s, 0 starts the rise at once."""
+  """StopBrakeSettleTime (user request 2026-11-26): the eased brake is kept 0-3 s (x0.01 s, one command per 4) after
+  standstill, then rises as before; out of range is clipped, unreadable keeps 0.48 s, 0
+  starts the rise at once."""
   from opendbc.car.gm.carcontroller import STOP_BRAKE_RISE
   params = dict(EASE) if setting is None else dict(EASE, StopBrakeSettleTime=setting)
   d = Drive(runtime, monkeypatch, build_cp(runtime, CAR.CHEVROLET_TRAVERSE, True), **params)
   into_a_stop(d)
   eased = eased_to_the_stop(d)[-1]
   assert d.c.stop_settle_commands == commands
-  stopped = brakes(d.run(-0.5, 2.0, state="stopping", v=0.0))
+  stopped = brakes(d.run(-0.5, 4.0, state="stopping", v=0.0))
   assert stopped[:commands] == [eased] * commands
   assert stopped[commands] == eased + STOP_BRAKE_RISE
   rise = stopped[commands:stopped.index(50)]
   assert all(0 < b2 - b1 <= STOP_BRAKE_RISE for b1, b2 in zip(rise, rise[1:] + [50]))
   assert set(stopped[stopped.index(50):]) == {50}
-  assert stopped.index(50) * 0.04 < 1.4  # at 1 s the hold is there about 1.2 s after standstill
+  assert stopped.index(50) * 0.04 < commands * 0.04 + 0.4  # the hold within 0.4 s after the settle time
 
 
 def test_a_creep_release_called_off_during_the_settle_gets_the_hold_back_at_once(runtime, monkeypatch):
