@@ -84,8 +84,63 @@
   --c-radius-card: 20px;
 }
 
+/* Light set: on the pages that are read rather than watched. "theme" is the viewer's choice on this browser
+   (Tools > 화면 테마, kept in localStorage): light always, dark never, or, with no choice, the phone's setting. */
+html[data-theme="light"]:is([data-page="setting"], [data-page="tools"], [data-page="logs"], [data-page="car"], [data-page="branch"]) {
+  color-scheme: light;
+  --md-surface: #f4f4f2;
+  --md-surface-cont: #ffffff;
+  --md-surface-cont-l: #fafaf9;
+  --md-surface-cont-h: #ececea;
+  --md-surface-cont-hh: #e2e2df;
+  --md-surface-bright: #c9c9c5;
+
+  --md-on-surface: #151515;
+  --md-on-surface-var: #6c6c69;
+  --md-outline: #4d4d4a;
+  --md-outline-var: #a5a5a1;
+  --md-stroke-soft: #d6d6d2;
+  --md-stroke-strong: #8a8a86;
+
+  --md-primary: #e4580b;
+  --md-on-primary: #ffffff;
+  --md-action-filled: #e4580b;
+  --md-on-action-filled: #ffffff;
+
+  --md-error: #c4271b;
+  --md-on-error: #ffffff;
+  --md-error-cont: #fde3df;
+  --md-on-error-cont: #7a120a;
+  --md-danger: #d1291c;
+  --md-danger-strong: #b81f13;
+  --md-success: #1f8a3e;
+  --md-success-strong: #17803a;
+  --md-warning: #a86a12;
+  --md-warning-strong: #8f5900;
+  --md-info: #0b6fa8;
+  --md-info-strong: #075f91;
+
+  --shadow-1: 0 1px 2px rgba(21, 21, 21, 0.05), 0 4px 12px rgba(21, 21, 21, 0.05);
+  --shadow-2: 0 8px 24px rgba(21, 21, 21, 0.08);
+  --shadow-3: 0 12px 28px rgba(21, 21, 21, 0.10);
+  --shadow-4: 0 18px 40px rgba(21, 21, 21, 0.12);
+  --shadow-5: 0 20px 60px rgba(21, 21, 21, 0.16);
+
+  --c-fill: #ececea;
+  --c-fill-press: #e2e2df;
+  --c-line: rgba(21, 21, 21, 0.08);
+  --c-ink3: #a5a5a1;
+  --c-card-shadow: 0 1px 2px rgba(21, 21, 21, 0.04), 0 6px 20px rgba(21, 21, 21, 0.035);
+  --c-bar: rgba(255, 255, 255, 0.84);
+  --c-bar-shadow: 0 10px 30px rgba(21, 21, 21, 0.10);
+  --c-knob-off: #ffffff;
+  --c-scrim: rgba(20, 20, 20, 0.30);
+  --c-sheet: #ffffff;
+  --c-danger: #d1291c;
+}
+
 @media (prefers-color-scheme: light) {
-  html:is([data-page="setting"], [data-page="tools"], [data-page="logs"], [data-page="car"], [data-page="branch"]) {
+  html:not([data-theme="dark"]):is([data-page="setting"], [data-page="tools"], [data-page="logs"], [data-page="car"], [data-page="branch"]) {
     color-scheme: light;
     --md-surface: #f4f4f2;
     --md-surface-cont: #ffffff;

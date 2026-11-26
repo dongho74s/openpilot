@@ -33,7 +33,7 @@ A wide display (a PC, a tablet, an unfolded Fold, a phone held sideways) shows t
 
 Some controls or content may be absent depending on device type, driving state, branch, and browser capabilities.
 
-Settings, Tools and Logs follow the phone's (browser's) light or dark setting. Drive and Terminal are always dark. The bottom navigation is a rounded bar floating over the page; the current page is shown in bold.
+Settings, Tools and Logs follow the phone's (browser's) light or dark setting by default; `Tools → Theme` can pin them to light or dark. Drive and Terminal are always dark. The bottom navigation is a rounded bar floating over the page; the current page is shown in bold.
 
 ## Drive page
 
@@ -269,6 +269,7 @@ notice for physical validation limits of each installation path.
 - `Web Settings`: configure the Drive layout, video, HUD, AR, and other web-only display options.
 - `Info`: view and copy the device type, branch, commit, identifiers, and network information.
 - `Bluetooth remote`, `Map search`
+- `Theme`: `Automatic (follow the phone)`, `Light` or `Dark`. The choice is saved in that browser only, so a phone and a PC can differ. Drive and Terminal always stay dark.
 
 ### Update
 

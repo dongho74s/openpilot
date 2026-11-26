@@ -424,6 +424,59 @@ function getAvailableWebLanguages() {
     .filter(Boolean);
 }
 
+// Light / dark for this browser (Tools > 화면 테마). "auto" follows the phone; the choice lives in localStorage
+// and index.html applies it before the first paint. Drive and Terminal stay dark either way.
+const TOOLS_THEME_KEY = "carrot_theme";
+
+function getToolsTheme() {
+  try {
+    const value = localStorage.getItem(TOOLS_THEME_KEY);
+    return value === "light" || value === "dark" ? value : "auto";
+  } catch (_e) {
+    return "auto";
+  }
+}
+
+function toolsThemeLabel(theme) {
+  if (theme === "light") return getUIText("tools_theme_light", "Light");
+  if (theme === "dark") return getUIText("tools_theme_dark", "Dark");
+  return getUIText("tools_theme_auto", "Automatic (follow the phone)");
+}
+
+function applyToolsTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  try {
+    if (theme === "light" || theme === "dark") localStorage.setItem(TOOLS_THEME_KEY, theme);
+    else localStorage.removeItem(TOOLS_THEME_KEY);
+  } catch (_e) {}
+  syncToolsThemeTile();
+}
+
+function syncToolsThemeTile() {
+  const sub = document.getElementById("toolsThemeSub");
+  if (sub) sub.textContent = toolsThemeLabel(getToolsTheme());
+}
+
+globalThis.syncToolsThemeTile = syncToolsThemeTile;
+
+async function openToolsThemeDialog() {
+  const current = getToolsTheme();
+  const selected = await openAppDialog({
+    mode: "choice",
+    title: getUIText("tools_theme", "Theme"),
+    message: getUIText("tools_theme_note", "Drive and Terminal always stay dark."),
+    choiceLayout: "list",
+    choices: ["auto", "light", "dark"].map((theme) => ({
+      label: toolsThemeLabel(theme),
+      value: theme,
+      selected: theme === current,
+    })),
+  });
+  if (selected && selected !== current) applyToolsTheme(selected);
+}
+
 async function openToolsLanguageDialog() {
   const languages = getAvailableWebLanguages();
   const current = languages.find((item) => item.lang === LANG) || languages[0];
@@ -1170,6 +1223,11 @@ function initToolsPage() {
   bindOnce("btnToolsLanguage", () => {
     openToolsLanguageDialog().catch((e) => showError("language", e));
   });
+
+  bindOnce("btnToolsTheme", () => {
+    openToolsThemeDialog().catch((e) => showError("theme", e));
+  });
+  syncToolsThemeTile();
 
   bindOnce("btnToolsWebSettings", () => {
     if (typeof openWebSettingsDialog === "function") openWebSettingsDialog();

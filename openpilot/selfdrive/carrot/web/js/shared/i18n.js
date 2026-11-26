@@ -259,6 +259,8 @@ function renderUIText() {
   setText("toolsWebSettingsLabel", getUIText("web_settings", "Web Settings"));
   setText("toolsDeviceInfoLabel", getUIText("tools_device_info", "Device info"));
   setText("toolsNavigationLabel", getUIText("tools_nav_map", "Map search"));
+  setText("toolsThemeLabel", getUIText("tools_theme", "Theme"));
+  if (typeof syncToolsThemeTile === "function") syncToolsThemeTile();
   setText("toolsCommandTitle", getUIText("tools_section_command", "Command"));
   setText("btnSysCmdRun", getUIText("tools_command_run", "Run"));
   const sysCmdInputEl = document.getElementById("sysCmdInput");

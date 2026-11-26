@@ -34,6 +34,11 @@
         }
       } catch (e) {}
       document.documentElement.dataset.carrotStartPage = startPage;
+      // Light / dark chosen in Tools > 화면 테마 (this browser only); none = follow the phone.
+      try {
+        var theme = localStorage.getItem("carrot_theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch (e) {}
     })();
   </script>
   <script>
@@ -375,6 +380,7 @@
             <button id="btnDeviceInfo" class="btn" type="button"><span id="toolsDeviceInfoLabel" class="tools-tile__name">Info</span><small id="toolsDeviceInfoSub" class="tools-tile__sub"></small></button>
             <button id="btnToolsBluetooth" class="btn" type="button" aria-haspopup="dialog"><span id="toolsBluetoothLabel" class="tools-tile__name">Bluetooth</span><small id="toolsBluetoothSub" class="tools-tile__sub"></small></button>
             <a id="toolsNavigation" class="btn" href="/navigation"><span id="toolsNavigationLabel" class="tools-tile__name">Nav Map / 지도 검색</span><small id="toolsNavigationSub" class="tools-tile__sub"></small></a>
+            <button id="btnToolsTheme" class="btn" type="button" aria-haspopup="dialog"><span id="toolsThemeLabel" class="tools-tile__name">Theme</span><small id="toolsThemeSub" class="tools-tile__sub"></small></button>
           </div>
         </section>
 
