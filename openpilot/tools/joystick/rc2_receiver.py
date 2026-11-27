@@ -218,7 +218,7 @@ def run(args, limits: Limits) -> None:
         remote_drive = sm['controlsState'].lateralControlState.which() == 'debugState'
         fields = car_status(sm, params, remote_drive)
       else:
-        fields = {"text": "dry run on a computer, no car"}
+        fields = {"text": "컴퓨터 시험 모드 · 차 없음"}  # shown on the RC 2 screen
       out = link.status_packet(now, link=status, accel_cmd=gb * JOYSTICKD_ACCEL_GAIN, steer_cmd=steer,
                                speed_cap_kph=round(limits.speed_cap * 3.6) if limits.speed_cap else 0, **fields)
       if out is not None:
