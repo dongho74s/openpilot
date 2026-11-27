@@ -87,7 +87,7 @@ class Car:
     self.can_sock = messaging.sub_sock('can', timeout=20)
     self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'carrotMan', 'longitudinalPlan',
                                    'radarState', 'modelV2', 'drivingModelData', 'customReservedRawData0',
-                                   'liveParameters', 'livePose', 'selfdriveState', 'lateralPlan'])
+                                   'liveParameters', 'livePose', 'selfdriveState', 'lateralPlan', 'controlsState'])
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'customReservedRawData1'])
 
     self.can_rcv_cum_timeout_counter = 0
@@ -449,6 +449,9 @@ class Car:
       now_nanos = self.can_log_mono_time if REPLAY else int(time.monotonic() * 1e9)
       model_v2 = self.sm['modelV2'] if self.sm.valid['modelV2'] and self.sm.alive['modelV2'] else None
       radar_state = self.sm['radarState'] if self.sm.valid['radarState'] and self.sm.alive['radarState'] else None
+      # joystickd (RC 2 remote control) publishes controlsState with debugState; controllers that care steer faster then
+      self.CI.CC.joystick_mode = bool(self.sm.alive['controlsState'] and
+                                      self.sm['controlsState'].lateralControlState.which() == 'debugState')
       self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos, model_v2, radar_state)
       apply_done_ns = time.monotonic_ns()
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))

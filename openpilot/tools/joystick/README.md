@@ -64,7 +64,8 @@ Onroad the switch takes effect once openpilot has been disengaged for 1 s (manag
   sweep) and talks to `rc2_receiver` over UDP 7720. The wire format is in `rc2_protocol.py`; every packet is signed with
   the key in `/data/rc2_joystick/key`, which the receiver creates the first time it runs. Pair the app once with
   `pair.sh` in the app folder.
-- Left stick up/down is gas/brake, right stick left/right is steering. Full stick asks for the most openpilot can
+- Left stick up/down is gas/brake, right stick left/right is steering. card tells the car controller when joystickd drives;
+  the GM controller then ramps steering torque at the panda maximum (JoystickSteerRamp, Traverse +12/-25 per command). Full stick asks for the most openpilot can
   request (+2.0 / -4.0 m/s^2, full steering torque), with no speed cap; the car controller and the panda still apply
   their own limits.
 - The sticks pass through only while control is unlocked in the app and its dead-man button (C2 by default) is held. On

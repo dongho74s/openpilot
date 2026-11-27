@@ -102,6 +102,26 @@ STOP_CREEP_V = [25, 21, 16, 10, 0]  # brake counts at 100 %
 STOP_CREEP_MAX_PCT = 300  # StopCreepBrake 0-300 %, a wide range on purpose (user request 2026-11-26)
 
 
+class JoystickSteerRamp:
+  """CarControllerParams as the torque limiter sees them in joystick mode (the DJI RC 2 remote control): the
+  fastest ramps the panda accepts. Rising torque is capped by the panda's 250 ms real-time check
+  (max_custom_steer_delta_up: 12 at the Traverse's 3-frame step), torque falling toward zero only by its
+  per-message rate (PANDA_MAX_RATE_DOWN). Everything else is the normal params."""
+  def __init__(self, params):
+    self._params = params
+
+  def __getattr__(self, name):
+    return getattr(self._params, name)
+
+  @property
+  def STEER_DELTA_UP(self):
+    return self._params.max_custom_steer_delta_up()
+
+  @property
+  def STEER_DELTA_DOWN(self):
+    return self._params.PANDA_MAX_RATE_DOWN
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -147,6 +167,9 @@ class CarController(CarControllerBase):
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
+    # set by card while joystickd drives (RC 2 remote control); only then the steering ramps run at the panda maximum
+    self.joystick_mode = False
+    self.joystick_steer_params = JoystickSteerRamp(self.params)
     self.panda_rt_guard = PandaRtGuard(self.params.PANDA_MAX_RT_DELTA, self.params.PANDA_RT_INTERVAL_MS)
     self.params_ = Params() # kans: button spam
     self.traverse_sdgm_long = bool(
@@ -390,7 +413,8 @@ class CarController(CarControllerBase):
 
       if CC.latActive:
         new_torque = int(round(actuators.torque * self.params.STEER_MAX))
-        apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params)
+        limits = self.joystick_steer_params if self.joystick_mode else self.params
+        apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, limits)
       else:
         apply_torque = 0
       # stays inside the panda's 250 ms change limit even when the loop runs late and catches up
