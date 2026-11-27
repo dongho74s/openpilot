@@ -420,6 +420,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"GmClusterTakeSteering", {PERSISTENT, INT, "0"}},
     {"BoltPedalLongMode", {PERSISTENT, INT, "1"}},
     {"CarrotVisionEnabled", {PERSISTENT, BOOL, "0"}},
+    {"Rc2RemoteControl", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
     {"MuteDoor", {PERSISTENT, INT, "0"}},
     {"MuteSeatbelt", {PERSISTENT, INT, "0"}},
 

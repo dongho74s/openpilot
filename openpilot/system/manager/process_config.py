@@ -53,11 +53,38 @@ def ublox(started: bool, params: Params, CP: car.CarParams) -> bool:
     params.put_bool("UbloxAvailable", use_ublox)
   return started and use_ublox
 
+class _DriveLatch:
+  """Reads a param when the car starts and keeps that value until it stops, so a switch flipped
+  mid-drive (e.g. from Carrot web) never swaps controlsd and joystickd under a moving car."""
+  def __init__(self, key: str):
+    self.key = key
+    self.started = False
+    self.value = False
+
+  def __call__(self, started: bool, params: Params, CP: car.CarParams) -> bool:
+    if started and not self.started:
+      self.value = params.get_bool(self.key)
+    self.started = started
+    return started and self.value
+
+# Carrot web switch: drives started with it on take their sticks from a DJI RC 2 on the same network
+rc2_drive = _DriveLatch("Rc2RemoteControl")
+
 def joystick(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return started and params.get_bool("JoystickDebugMode")
+  rc2 = rc2_drive(started, params, CP)
+  return started and (params.get_bool("JoystickDebugMode") or rc2)
 
 def not_joystick(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return started and not params.get_bool("JoystickDebugMode")
+  return started and not joystick(started, params, CP)
+
+def rc2_receiver(started: bool, params: Params, CP: car.CarParams) -> bool:
+  # also offroad, so the RC 2 screen shows the comma before the drive
+  rc2 = rc2_drive(started, params, CP)
+  return rc2 or params.get_bool("Rc2RemoteControl")
+
+def gamepad_joystick(started: bool, params: Params, CP: car.CarParams) -> bool:
+  # only one testJoystick publisher at a time
+  return started and params.get_bool("JoystickDebugMode") and not rc2_receiver(started, params, CP)
 
 def long_maneuver(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and params.get_bool("LongitudinalManeuverMode")
@@ -200,7 +227,8 @@ procs = [
   PythonProcess("webrtcd", "openpilot.system.webrtc.webrtcd", notcar),
   PythonProcess("carrot_webrtcd", "openpilot.system.webrtc.carrot_webrtcd", and_(iscar, enable_webrtc)),
   PythonProcess("webjoystick", "openpilot.tools.bodyteleop.web", notcar, enabled=BODYTELEOP_AVAILABLE),
-  PythonProcess("joystick", "openpilot.tools.joystick.joystick_control", and_(joystick, iscar)),
+  PythonProcess("joystick", "openpilot.tools.joystick.joystick_control", and_(gamepad_joystick, iscar)),
+  PythonProcess("rc2_joystick", "openpilot.tools.joystick.rc2_receiver", rc2_receiver),
 
   # Recovery happens after manager's IPC threads are running. Do not fork that
   # live interpreter: a blocked restart also stops managerState publication.

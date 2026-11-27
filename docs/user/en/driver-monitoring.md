@@ -23,6 +23,8 @@ Echo filtering uses a short correlation window immediately after an automatic ca
 
 The three-CANCEL gesture turns monitoring off only for the current ignition session and does not change the saved `DriverMonitoringEnabled` setting. The next ignition-on or manager/device restart clears only this temporary off state. Monitoring resumes under the saved `DriverMonitoringMode` if `DriverMonitoringEnabled` is ON. If you turned it OFF in Carrot Web, it remains OFF across drives and restarts until you manually turn that setting back ON.
 
+Drives started with `Rc2RemoteControl` (DJI RC 2 remote control, test) keep driver monitoring as it is. Monitoring alerts and disengagement apply the same way in joystick mode, so the person in the driver's seat must keep watching the road. The setting does not change which monitoring processes run. See the System section of [Settings](settings.md#system).
+
 ## Four operating cases
 
 | Camera and mode | Alert timing | Interaction and forward attention |

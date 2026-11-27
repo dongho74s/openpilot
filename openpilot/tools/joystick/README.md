@@ -51,3 +51,24 @@ Now start your car and openpilot should go into joystick mode with an alert on s
 Make sure the conditions are met in the panda to allow controls (e.g. cruise control engaged). You can also make a modification to the panda code to always allow controls.
 
 ![](https://github.com/commaai/openpilot/assets/8762862/e640cbca-cb7a-4dcb-abce-b23b036ad8e7)
+
+## DJI RC 2 on the same network (carrotpilot)
+
+Turn on **System → Remote Controller → DJI RC 2 remote control** (`Rc2RemoteControl`) in Carrot web. While it is on,
+manager runs `rc2_receiver` (also offroad), and a drive started with it on runs `joystickd` instead of `controlsd`.
+The switch is read once at ignition, so changing it mid-drive applies from the next drive; a reboot turns it off.
+
+- The RC 2 app (`rc2-openpilot-joystick`, outside this repo) reads the sticks from the DJI input stream on
+  `127.0.0.1:40007`, finds the comma by broadcasting on its network (falling back to the last known address and a /24
+  sweep) and talks to `rc2_receiver` over UDP 7720. The wire format is in `rc2_protocol.py`; every packet is signed with
+  the key in `/data/rc2_joystick/key`, which the receiver creates the first time it runs. Pair the app once with
+  `pair.sh` in the app folder.
+- Left stick up/down is gas/brake, right stick left/right is steering. Full stick asks for the most openpilot can
+  request (+2.0 / -4.0 m/s^2, full steering torque), with no speed cap; the car controller and the panda still apply
+  their own limits.
+- The sticks pass through only while the app is armed and its dead-man button (shutter by default) is held. On link loss
+  (0.3 s), dead-man release or stale stick data the receiver brakes at 1.5 m/s^2 with zero torque, and both sticks must
+  return to centre before they pass through again. If the receiver itself stops, `joystickd` brakes at 1.5 m/s^2 too.
+- Engaging still needs someone in the driver's seat pressing the cruise buttons, and brake, seatbelt, door and driver
+  monitoring still disengage. Use it only in a closed area.
+- `rc2_receiver.py --dry-run --key <file>` runs it on a computer without a car, to check the app end to end.

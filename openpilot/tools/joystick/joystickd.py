@@ -11,6 +11,7 @@ from openpilot.common.swaglog import cloudlog
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 MAX_LAT_ACCEL = 3.0
+FAILSAFE_ACCEL = -1.5  # m/s^2 on a car once testJoystick stops arriving
 
 
 def joystickd_thread():
@@ -43,7 +44,8 @@ def joystickd_thread():
     if not should_reset_joystick:
       joystick_axes = sm['testJoystick'].axes
     else:
-      joystick_axes = [0.0, 0.0]
+      # a car whose joystick source died should slow down, not hold its speed with nobody steering it
+      joystick_axes = [0.0 if CP.notCar else FAILSAFE_ACCEL / 4.0, 0.0]
 
     if CC.longActive:
       actuators.accel = 4.0 * float(np.clip(joystick_axes[0], -1, 1))

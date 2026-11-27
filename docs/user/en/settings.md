@@ -560,7 +560,7 @@ The Replay event timeline also identifies Carrot Navi connection and route-sessi
 <a id="system"></a>
 ## System
 
-The 15 system settings cover recording, power, cameras, the driving model, network, navigation input, sound, and software menus.
+The 16 system settings cover recording, power, cameras, the driving model, network, navigation input, the remote controller, sound, and software menus.
 
 | Group | Parameters | Purpose |
 |---|---|---|
@@ -568,6 +568,7 @@ The 15 system settings cover recording, power, cameras, the driving model, netwo
 | Camera | `UseWideCamera`, `CarrotVisionEnabled` | Wide road camera use (turn off only if it is broken) and Carrot Web road video |
 | Driving model | `InternalModelLiveSwitch` | Switch to a compiled driving model while disengaged, without restarting (test) |
 | Network and map | `HotspotOnBoot`, `MapboxStyle`, `CarrotNaviSource`, `NavdyConnectionMode` | Boot hotspot and map background style (neither currently changes anything), navigation input and the Navdy link |
+| Remote controller | `Rc2RemoteControl` | Joystick mode driven by the sticks of a DJI RC 2 (test, closed areas only) |
 | Sound | `SoundLanguageSetting`, `SoundVolumeAdjust`, `SoundVolumeAdjustEngage`, `AutoNaviCountDownMode`, `FcwWarningTest` | Prompt language and volume, the spoken seconds countdown to turns and cameras, and the Traverse FCW warning test |
 | Software | `SoftwareMenu` | Off stops the offroad update checker and hides the Carrot Web software menu |
 
@@ -578,6 +579,15 @@ Check storage use for recording and network use, heat, and privacy before enabli
 In this migration branch, `MaxTimeOffroadMin` supports up to `4320` minutes (three days); existing saved values are unchanged. Automatic shutdown happens only while the harness is detected as connected, and never while ignition is on: USB power such as a phone charger or laptop, detected as no harness, never powers off by itself (unless the harness is misdetected as connected). The offroad timer requests shutdown only after the longer of the setting and five minutes offroad, and only once the device has gone onroad (ignition ON) since hardwared started or an hour after booting (so even a setting of 0 does not power off right after an install or power-up, 2026-11-16). The low-voltage shutdown has no such wait. Low-voltage shutdown follows after both raw and filtered battery voltage stay below `11.0V` (changed from `11.3V` on 2026-11-16) for ten seconds with fresh measurements. Ignition ON, voltage recovery or missing measurements reset that confirmation. The manager checks fresh ignition, offroad and harness state again immediately before requesting poweroff; stale automatic requests cannot latch a manual shutdown. The estimated battery-capacity cutoff is not used. Manual shutdown/reboot behavior is unchanged. Long operation and a low voltage threshold increase depletion and no-start risk.
 
 `CarrotNaviSource`, under System > Network and map, selects `0` network guidance or `1` Navdy. Restart after saving. The default transport policy tries direct USB, then the configured Bluetooth peer and paired Jetson relays; USB reattachment takes priority. An explicitly configured `bluetooth_only` policy keeps telemetry on Bluetooth even with USB attached for diagnostics. Bluetooth requires the compatible Navdy receiver and prior pairing; a Git update alone does not install the APK or enroll a peer. See [Bluetooth setup](../../../tools/navdy/BLUETOOTH.md). Navdy mode does not fall back to network guidance; music and clock synchronization remain available. See [input and expiry rules](speed-deceleration.md#navdy-input).
+
+**DJI RC 2 remote control (test)** (`Rc2RemoteControl`, `0/1`, default `0`, off again after a reboot): start the car with it on and that drive runs in joystick mode (`joystickd`) instead of openpilot driving (`controlsd`); the RC 2 app on the same Wi-Fi or hotspot accelerates and brakes (left stick up/down) and steers (right stick left/right). While it is on, the receiver (`rc2_joystick`) also runs with the car off so the RC 2 screen shows the comma's state.
+
+- Someone must sit in the driver's seat and engage with the cruise buttons. Disengaging on brake, seatbelt, door and driver monitoring, and the panda's steering and accel limits, all stay as they are.
+- The sticks pass through only while the arm switch in the RC 2 app is on and the dead-man button (the shutter by default) is held. If the signal drops for more than 0.3 s, the dead-man is released or the stick data goes stale, it slows at 1.5 m/s² with zero steering torque, and both sticks must return to centre before they pass through again.
+- There are no extra caps. Full stick asks for the most openpilot can request from the car (2.0 m/s² accel, 4.0 m/s² braking, full steering torque) with no speed cap, and steering is proportional to the stick. The car controller and panda limits stay, so a Traverse never exceeds steering torque 300 (about 3 Nm) or its torque ramp rate.
+- Changing it mid-drive leaves the current drive as it is and applies from the next ignition, so the controlling process never switches under a moving car.
+- The RC 2 finds the comma on the same network by itself (UDP 7720). Every packet is signed with a key shared by the comma and the RC 2, so pair once from a Mac with the pairing script. The comma creates the key at `/data/rc2_joystick/key` the first time it is turned on.
+- Behaviour in a real car, the RC 2 button mapping and the link latency are not verified yet. Do not use it on public roads.
 
 `SoundVolumeAdjust = -1` displays **Automatic** and adjusts general sound volume using microphone ambient-noise measurements. `0` mutes general sounds; `1-200` remains a percentage multiplier of automatic volume, not a fixed absolute volume. `-1` and the existing `100` use the same volume curve. Changes apply at the next noise measurement while no alert is playing. The reboot chime has no ambient sample and uses its default `0.5` gain in automatic mode. Engage volume and browser playback volume retain their separate settings. DM's first audible warning has a 70% minimum output gain; its final warning always uses 100%, regardless of volume settings or ambient-noise attenuation. The preceding visual-only notice remains silent. See [driver monitoring](driver-monitoring.md) for details.
 

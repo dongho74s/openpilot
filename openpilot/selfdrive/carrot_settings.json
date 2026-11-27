@@ -659,6 +659,15 @@
           ]
         },
         {
+          "id": "SYS_REMOTE",
+          "ko": "원격 조종기",
+          "en": "Remote Controller",
+          "zh": "遥控器",
+          "params": [
+            "Rc2RemoteControl"
+          ]
+        },
+        {
           "id": "SYS_SOUND",
           "ko": "사운드",
           "en": "Sound",
@@ -2449,6 +2458,24 @@
           "开启"
         ]
       }
+    },
+    {
+      "group": "시스템",
+      "name": "Rc2RemoteControl",
+      "title": "DJI RC 2 원격 조종 (시험)",
+      "descr": "DJI RC 2 조종기의 스틱으로 차를 조작하는 시험 기능입니다. 켠 상태로 시동을 걸면 그 주행은 오픈파일럿 자동 주행 대신 조이스틱 모드가 되고, 같은 와이파이나 핫스팟에 있는 RC 2 앱의 왼쪽 스틱 위아래로 가감속, 오른쪽 스틱 좌우로 조향합니다. 운전석에 사람이 앉아 크루즈 버튼으로 인게이지해야 움직이고, 브레이크·안전벨트·문·운전자 감시에 의한 해제와 판다 제한은 그대로입니다. 조종기 신호가 끊기거나 데드맨 버튼을 놓으면 부드럽게 감속합니다. 따로 둔 상한은 없어서 스틱 끝은 차가 허용하는 최대 가감속·조향 토크이고 속도 상한도 없습니다. 주행 중에 바꾸면 다음 시동부터 적용되고, 재부팅하면 꺼집니다. 막힌 공간에서만 쓰세요.",
+      "egroup": "SYSTEM",
+      "etitle": "DJI RC 2 remote control (test)",
+      "edescr": "Test feature for driving the car with the sticks of a DJI RC 2 controller. Start the car with this on and that drive runs in joystick mode instead of openpilot driving: the RC 2 app on the same Wi-Fi or hotspot accelerates and brakes with the left stick up/down and steers with the right stick left/right. Someone must sit in the driver's seat and engage with the cruise buttons; disengaging on brake, seatbelt, door and driver monitoring and the panda limits all stay as they are. If the controller's signal drops or you release the dead-man button it slows down gently. There are no extra caps: full stick asks for the most accel, braking and steering torque the car allows, with no speed cap. Changing it mid-drive applies from the next ignition, and a reboot turns it off. Use it only in a closed area.",
+      "cgroup": "系统",
+      "ctitle": "DJI RC 2 遥控（测试）",
+      "cdescr": "用 DJI RC 2 遥控器摇杆操控车辆的测试功能。开启后点火，该次行驶以摇杆模式代替 openpilot 自动驾驶：同一 Wi-Fi 或热点中的 RC 2 应用用左摇杆上下加减速，右摇杆左右转向。驾驶座必须有人并用巡航按钮接合；刹车、安全带、车门和驾驶员监控导致的解除以及 panda 限制保持不变。遥控器信号中断或松开死人按钮时会平缓减速。没有额外上限：摇杆推到底即车辆允许的最大加减速和转向扭矩，也没有速度上限。行驶中更改将从下次点火起生效，重启后自动关闭。只能在封闭场地使用。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle",
+      "risk": "high"
     },
     {
       "group": "시작",
