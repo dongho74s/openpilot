@@ -4,6 +4,10 @@ JS/CSS fingerprints are derived from contained regular files and cached by
 resolved path metadata. Requested and startup-precompressed sidecars share the
 same asset lock, stable source snapshot, and atomic replacement path so a
 downstream static handler never observes a partial gzip or Brotli file.
+
+JSON is compressed too (the 3D view's car models are a 1.7 MB JSON file under
+assets/) but is not fingerprinted, so index.html links to .json files keep their
+URLs untouched.
 """
 from __future__ import annotations
 
@@ -36,7 +40,9 @@ class _BrotliCodec(Protocol):
 IMMUTABLE_STATIC_PREFIXES: Final = ("/js/", "/css/", "/assets/")
 _VENDOR_STATIC_PREFIXES: Final = ("/js/vendor/", "/css/vendor/")
 _ONE_YEAR: Final = 31536000
-_COMPRESS_EXTS: Final = (".js", ".css")
+_FINGERPRINT_EXTS: Final = (".js", ".css")
+_COMPRESS_EXTS: Final = (".js", ".css", ".json")
+_PRECOMPRESS_DIRS: Final = ("js", "css", "assets")
 _SOURCE_READ_ATTEMPTS: Final = 3
 
 
@@ -68,9 +74,10 @@ def create_static_cache_middleware(web_dir: str) -> Middleware:
 def _resolve_local_asset(
   web_dir: str | os.PathLike[str],
   asset_path: str | os.PathLike[str],
+  extensions: tuple[str, ...] = _FINGERPRINT_EXTS,
 ) -> Path | None:
   raw_path = os.fspath(asset_path)
-  if not raw_path.endswith(_COMPRESS_EXTS) or raw_path.startswith(("//", "\\\\")):
+  if not raw_path.endswith(extensions) or raw_path.startswith(("//", "\\\\")):
     return None
   relative_path = raw_path[1:] if raw_path.startswith("/") else raw_path
   try:
@@ -182,7 +189,7 @@ def _refresh_static_asset(
   asset_path: str | os.PathLike[str],
   codec: _BrotliCodec | None,
 ) -> None:
-  source = _resolve_local_asset(web_dir, asset_path)
+  source = _resolve_local_asset(web_dir, asset_path, _COMPRESS_EXTS)
   if source is None:
     return
   gzip_path = source.with_name(f"{source.name}.gz")
@@ -227,9 +234,9 @@ def _refresh_requested_gzip(web_dir: str, request_path: str) -> None:
 
 
 def precompress_static_assets(web_dir: str) -> None:
-  """Generate matching gzip/Brotli siblings for JS/CSS under ``web_dir``."""
+  """Generate matching gzip/Brotli siblings for JS/CSS/JSON under ``web_dir``."""
   codec = _load_brotli()
-  for subdirectory in ("js", "css"):
+  for subdirectory in _PRECOMPRESS_DIRS:
     root = os.path.join(web_dir, subdirectory)
     if not os.path.isdir(root):
       continue
