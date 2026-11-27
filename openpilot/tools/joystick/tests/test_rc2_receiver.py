@@ -138,17 +138,31 @@ class TestLink:
     app.send(0.1, accel=0.04, steer=-0.04)
     assert link.axes(0.1, 0.0) == (0.0, 0.0, "ok")
 
-  def test_link_timeout_brakes_and_needs_recentre(self):
+  def test_link_timeout_brakes(self):
     link, app = connected()
     app.send(0.1, accel=0.8)
-    assert link.axes(0.35, 0.0)[2] == "ok"
-    assert link.axes(0.45, 0.0) == (FAILSAFE, 0.0, "link_lost")
-    app.send(0.5, accel=0.8)  # link back but the stick is still held forward
-    assert link.axes(0.5, 0.0) == (FAILSAFE, 0.0, "center_sticks")
-    app.send(0.55)
-    assert link.axes(0.55, 0.0)[2] == "ok"
-    app.send(0.6, accel=0.8)
-    assert link.axes(0.6, 0.0)[0] > 0
+    assert link.axes(0.55, 0.0)[2] == "ok"  # within the 0.5 s link timeout
+    assert link.axes(0.65, 0.0) == (FAILSAFE, 0.0, "link_lost")
+
+  def test_short_stop_resumes_without_recentre(self):
+    link, app = connected()
+    app.send(0.1, accel=0.8)
+    link.axes(0.1, 0.0)
+    assert link.axes(0.7, 0.0)[2] == "link_lost"
+    app.send(1.2, accel=0.8)  # back within a second, stick still held forward
+    assert link.axes(1.2, 0.0)[0] > 0
+
+  def test_long_stop_needs_recentre(self):
+    link, app = connected()
+    app.send(0.1, accel=0.8)
+    link.axes(0.1, 0.0)
+    assert link.axes(0.7, 0.0)[2] == "link_lost"
+    app.send(2.0, accel=0.8)
+    assert link.axes(2.0, 0.0) == (FAILSAFE, 0.0, "center_sticks")
+    app.send(2.05)
+    assert link.axes(2.05, 0.0)[2] == "ok"
+    app.send(2.1, accel=0.8)
+    assert link.axes(2.1, 0.0)[0] > 0
 
   def test_held_stick_at_start_waits_for_centre(self):
     link = Rc2Link(KEY, rng=fixed_rng)
@@ -157,17 +171,37 @@ class TestLink:
     app.send(0.0, steer=0.9)
     assert link.axes(0.0, 0.0) == (FAILSAFE, 0.0, "center_sticks")
 
+  @pytest.mark.parametrize("kw", [{"armed": False}, {"fresh": False}, {"age": 600}])
+  def test_flag_flicker_keeps_last_command(self, kw):
+    link, app = connected()
+    app.send(0.1, accel=0.8, steer=0.5)
+    good = link.axes(0.1, 0.0)
+    app.send(0.2, accel=0.8, steer=0.5, **kw)  # one packet with the dead-man bit missing or a late DJI frame
+    assert link.axes(0.2, 0.0) == good
+    app.send(0.25, accel=0.8, steer=0.5)
+    assert link.axes(0.25, 0.0) == good
+    assert link.glitches == 1
+
+  def test_released_dead_man_brakes_after_the_hold(self):
+    link, app = connected()
+    app.send(0.1, accel=0.8)
+    good = link.axes(0.1, 0.0)
+    app.send(0.3, accel=0.8, armed=False)
+    assert link.axes(0.3, 0.0) == good  # 0.2 s after the last command: still held
+    app.send(0.4, accel=0.8, armed=False)
+    assert link.axes(0.4, 0.0) == (FAILSAFE, 0.0, "disarmed")
+
   @pytest.mark.parametrize("kw,status", [
     ({"armed": False}, "disarmed"),
     ({"fresh": False}, "stale_sticks"),
-    ({"age": 400}, "stale_sticks"),
+    ({"age": 600}, "stale_sticks"),
   ])
   def test_unsafe_packets_brake(self, kw, status):
     link, app = connected()
-    app.send(0.1, accel=0.5, steer=0.5, **kw)
-    assert link.axes(0.1, 0.0) == (FAILSAFE, 0.0, status)
-    app.send(0.2, accel=0.5, steer=0.5)
-    assert link.axes(0.2, 0.0)[2] == "center_sticks"
+    app.send(0.5, accel=0.5, steer=0.5, **kw)
+    assert link.axes(0.5, 0.0) == (FAILSAFE, 0.0, status)
+    app.send(0.6, accel=0.5, steer=0.5)
+    assert link.axes(0.6, 0.0)[2] == "ok"  # a short stop picks up where it left off
 
   def test_replayed_or_old_packets_are_rejected(self):
     link, app = connected()

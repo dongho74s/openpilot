@@ -66,9 +66,10 @@ The switch is read once at ignition, so changing it mid-drive applies from the n
 - Left stick up/down is gas/brake, right stick left/right is steering. Full stick asks for the most openpilot can
   request (+2.0 / -4.0 m/s^2, full steering torque), with no speed cap; the car controller and the panda still apply
   their own limits.
-- The sticks pass through only while the app is armed and its dead-man button (shutter by default) is held. On link loss
-  (0.3 s), dead-man release or stale stick data the receiver brakes at 1.5 m/s^2 with zero torque, and both sticks must
-  return to centre before they pass through again. If the receiver itself stops, `joystickd` brakes at 1.5 m/s^2 too.
+- The sticks pass through only while control is unlocked in the app and its dead-man button (C2 by default) is held. On
+  link loss (0.5 s), dead-man release (0.25 s) or stale stick data (0.5 s) the receiver brakes at 1.5 m/s^2 with zero
+  torque; shorter flag drops keep the last command. After a stop longer than 1 s both sticks must return to centre before
+  they pass through again. If the receiver itself stops, `joystickd` brakes at 1.5 m/s^2 too.
 - Engaging still needs someone in the driver's seat pressing the cruise buttons, and brake, seatbelt, door and driver
   monitoring still disengage. Use it only in a closed area.
 - `rc2_receiver.py --dry-run --key <file>` runs it on a computer without a car, to check the app end to end.

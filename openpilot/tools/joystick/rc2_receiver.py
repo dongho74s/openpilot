@@ -12,8 +12,9 @@ swaps controlsd and joystickd under a moving car.
 Nothing here relaxes openpilot's own checks: selfdrived still needs the driver to engage with the
 cruise buttons and still disengages on brake, seatbelt, door and driver monitoring, and the panda
 keeps its torque and accel limits. On top of that this process brakes gently and centres the wheel
-whenever the RC 2 link is lost, the dead-man button is released or the stick data goes stale, and
-after any such gap it waits for both sticks to return to centre before passing them through again.
+whenever the RC 2 link is lost, the dead-man button is released or the stick data goes stale. Drops of the
+dead-man or freshness flag shorter than glitch_hold keep the last command, and after a stop longer than
+recenter_after it waits for both sticks to return to centre before passing them through again.
 """
 import argparse
 import os
@@ -40,8 +41,10 @@ class Limits:
   failsafe_decel: float = 1.5    # m/s^2 while the link is lost, disarmed or stale
   speed_cap: float | None = None  # m/s; when set, forward stick adds no accel above it
   steer_scale: float = 1.0       # fraction of the car's max steer torque at full stick
-  link_timeout: float = 0.3      # s without a valid CONTROL packet
-  stick_timeout_ms: int = 300    # age of the DJI stick sample the app last read
+  link_timeout: float = 0.5      # s without a valid CONTROL packet (Wi-Fi stalls of a few hundred ms happen)
+  stick_timeout_ms: int = 500    # age of the DJI stick sample the app last read (the DJI stream is ~10 Hz)
+  glitch_hold: float = 0.25      # s: dead-man/fresh flags dropping this briefly keep the last command
+  recenter_after: float = 1.0    # s: only a stop longer than this needs both sticks back at centre
   deadzone: float = 0.05
   steer_expo: float = 0.0        # linear: half stick is half torque
   center_tol: float = 0.05
@@ -73,6 +76,11 @@ class Rc2Link:
     self.need_center = True
     self.rejected = 0
     self.status_seq = 0
+    self.last_good: tuple[float, float] | None = None  # last command passed through
+    self.last_good_t = -1e9
+    self.bad_since: float | None = None  # when the current stop began
+    self.in_glitch = False
+    self.glitches = 0  # flag drops bridged by glitch_hold
 
   def handle(self, data: bytes, now: float, addr=None) -> bytes | None:
     """Feed one datagram; returns a reply to send back to its sender, if any."""
@@ -89,6 +97,7 @@ class Rc2Link:
         return None  # keep the live session; a replayed HELLO must not knock it off
       self.session, self.nonce, self.peer, self.last_heard = session, self.rng(proto.NONCE_LEN), addr, now
       self.last_seq, self.ctrl, self.need_center = -1, None, True
+      self.last_good, self.bad_since = None, None
       return proto.encode_challenge(self.key, session, self.nonce)
 
     if kind == proto.CONTROL and self.nonce is not None:
@@ -104,21 +113,40 @@ class Rc2Link:
     self.rejected += 1
     return None
 
-  def _failsafe(self, reason: str) -> tuple[float, float, str]:
-    self.need_center = True
-    return -self.limits.failsafe_decel / JOYSTICKD_ACCEL_GAIN, 0.0, reason
+  def _blocked(self, now: float) -> str | None:
+    lim, ctrl = self.limits, self.ctrl
+    if ctrl is None:
+      return "no_link"
+    if now - self.last_rx > lim.link_timeout:
+      return "link_lost"
+    if not ctrl.armed:
+      return "disarmed"
+    if not ctrl.fresh or ctrl.stick_age_ms > lim.stick_timeout_ms:
+      return "stale_sticks"
+    return None
 
   def axes(self, now: float, v_ego: float) -> tuple[float, float, str]:
     """testJoystick axes [gas/brake, steer] for joystickd, and the link code (rc2_protocol.LINK_CODES)."""
     lim, ctrl = self.limits, self.ctrl
-    if ctrl is None:
-      return self._failsafe("no_link")
-    if now - self.last_rx > lim.link_timeout:
-      return self._failsafe("link_lost")
-    if not ctrl.armed:
-      return self._failsafe("disarmed")
-    if not ctrl.fresh or ctrl.stick_age_ms > lim.stick_timeout_ms:
-      return self._failsafe("stale_sticks")
+    reason = self._blocked(now)
+    if reason is not None:
+      # a missed DJI frame or a flicker of the dead-man bit must not jab the brakes: keep the last command briefly
+      if reason in ("disarmed", "stale_sticks") and self.last_good is not None and now - self.last_good_t <= lim.glitch_hold:
+        if not self.in_glitch:
+          self.glitches += 1
+          self.in_glitch = True
+        return self.last_good[0], self.last_good[1], "ok"
+      if self.bad_since is None:
+        self.bad_since = now
+      self.last_good = None
+      return -lim.failsafe_decel / JOYSTICKD_ACCEL_GAIN, 0.0, reason
+
+    self.in_glitch = False
+    if self.bad_since is not None:
+      # short stops resume where they left off; after a real pause both sticks must come back to centre first
+      if now - self.bad_since > lim.recenter_after:
+        self.need_center = True
+      self.bad_since = None
 
     if self.need_center:
       if abs(ctrl.accel) > lim.center_tol or abs(ctrl.steer) > lim.center_tol:
@@ -135,7 +163,9 @@ class Rc2Link:
 
     # openpilot steers left for positive torque; the app sends stick right as positive
     steer = -shape(ctrl.steer, lim.deadzone, lim.steer_expo) * lim.steer_scale
-    return accel / JOYSTICKD_ACCEL_GAIN, max(-1.0, min(1.0, steer)), "ok"
+    out = accel / JOYSTICKD_ACCEL_GAIN, max(-1.0, min(1.0, steer))
+    self.last_good, self.last_good_t = out, now
+    return out[0], out[1], "ok"
 
   def status_packet(self, now: float, **fields) -> tuple[bytes, object] | None:
     """A STATUS datagram and where to send it, while an app is connected."""
@@ -234,7 +264,9 @@ def run(args, limits: Limits) -> None:
       where = f"peer={link.peer} rejected={link.rejected}"
       print(f"{status:13s} gb={gb:+.3f} steer={steer:+.3f} v={v_ego * 3.6:5.1f}km/h stick={stick} {where}", flush=True)
       if cloudlog is not None and status != last_status:
-        cloudlog.event("rc2_joystick_status", status=status, prev=last_status)
+        cloudlog.event("rc2_joystick_status", status=status, prev=last_status, glitches=link.glitches,
+                       flags=ctrl.flags if ctrl else -1, stick_age_ms=ctrl.stick_age_ms if ctrl else -1,
+                       rx_age_ms=int((now - link.last_rx) * 1000))
       last_status, last_print = status, now
 
     next_t += period
