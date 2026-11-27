@@ -23,7 +23,7 @@ from openpilot.system.manager.camera_config import configure_wide_camera
 from openpilot.selfdrive.monitoring.config import configure_monitoring
 from openpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog
 from openpilot.system.manager.process import ensure_running
-from openpilot.system.manager.process_config import managed_processes
+from openpilot.system.manager.process_config import managed_processes, rc2_drive
 from openpilot.system.manager.update_status import UpdateStatus
 from openpilot.system.manager.xiaoge_startup import XiaogeStartupGate
 from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_ID
@@ -209,6 +209,8 @@ def manager_thread(update_status: UpdateStatus) -> None:
     now = time.monotonic()
 
     started = sm['deviceState'].started
+    # lets the RC 2 switch swap controlsd/joystickd only while disengaged; unknown (selfdrived not up) counts as engaged
+    rc2_drive.note_engaged(started and (sm['selfdriveState'].enabled or not sm.alive['selfdriveState']))
 
     if started and not started_prev:
       params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)

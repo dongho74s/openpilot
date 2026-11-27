@@ -1,4 +1,5 @@
 import os
+import time
 import platform
 import importlib.util
 
@@ -53,22 +54,36 @@ def ublox(started: bool, params: Params, CP: car.CarParams) -> bool:
     params.put_bool("UbloxAvailable", use_ublox)
   return started and use_ublox
 
-class _DriveLatch:
-  """Reads a param when the car starts and keeps that value until it stops, so a switch flipped
-  mid-drive (e.g. from Carrot web) never swaps controlsd and joystickd under a moving car."""
-  def __init__(self, key: str):
+class _SwitchWhenDisengaged:
+  """Follows a param, but onroad only changes once openpilot has been disengaged for SETTLE_S, so a switch
+  flipped mid-drive (e.g. from Carrot web) never swaps controlsd and joystickd under an engaged car. While
+  engaged the change waits until the driver disengages. manager reports engagement with note_engaged(); without
+  it a mid-drive change waits for the next ignition. During the swap selfdrived refuses to engage on its own,
+  since controlsState/carControl go missing and the new process is not running yet."""
+  SETTLE_S = 1.0
+
+  def __init__(self, key: str, clock=time.monotonic):
     self.key = key
-    self.started = False
+    self.clock = clock
     self.value = False
+    self.disengaged_since: float | None = None
+
+  def note_engaged(self, engaged: bool) -> None:
+    if engaged:
+      self.disengaged_since = None
+    elif self.disengaged_since is None:
+      self.disengaged_since = self.clock()
 
   def __call__(self, started: bool, params: Params, CP: car.CarParams) -> bool:
-    if started and not self.started:
-      self.value = params.get_bool(self.key)
-    self.started = started
+    want = params.get_bool(self.key)
+    if want != self.value:
+      settled = self.disengaged_since is not None and self.clock() - self.disengaged_since >= self.SETTLE_S
+      if not started or settled:
+        self.value = want
     return started and self.value
 
-# Carrot web switch: drives started with it on take their sticks from a DJI RC 2 on the same network
-rc2_drive = _DriveLatch("Rc2RemoteControl")
+# Carrot web switch: drives take their sticks from a DJI RC 2 on the same network; onroad it switches only while disengaged
+rc2_drive = _SwitchWhenDisengaged("Rc2RemoteControl")
 
 def joystick(started: bool, params: Params, CP: car.CarParams) -> bool:
   rc2 = rc2_drive(started, params, CP)

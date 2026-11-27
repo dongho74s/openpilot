@@ -6,8 +6,8 @@ authenticated stick packets over UDP (see rc2_protocol). This process turns them
 for joystickd and sends the car's state back for the RC 2 screen.
 
 manager runs it while the Carrot web switch Rc2RemoteControl is on. Whether a drive runs in RC 2
-joystick mode is decided once at ignition (process_config), so flipping the switch mid-drive never
-swaps controlsd and joystickd under a moving car.
+joystick mode changes only while openpilot is disengaged (process_config), so flipping the switch mid-drive
+never swaps controlsd and joystickd under an engaged car.
 
 Nothing here relaxes openpilot's own checks: selfdrived still needs the driver to engage with the
 cruise buttons and still disengages on brake, seatbelt, door and driver monitoring, and the panda

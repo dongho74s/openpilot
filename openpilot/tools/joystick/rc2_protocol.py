@@ -31,7 +31,7 @@ FLAG_FRESH = 0x02  # the stick sample came from the DJI stream within the app's 
 
 # STATUS.state bits
 ST_ONROAD = 1 << 0
-ST_REMOTE_DRIVE = 1 << 1    # this drive runs in RC 2 joystick mode (latched at ignition)
+ST_REMOTE_DRIVE = 1 << 1    # joystickd runs now, driven by the RC 2
 ST_ENABLED = 1 << 2
 ST_ACTIVE = 1 << 3
 ST_BRAKE = 1 << 4
@@ -40,7 +40,7 @@ ST_DOOR_OPEN = 1 << 6
 ST_SEATBELT_OFF = 1 << 7
 ST_STANDSTILL = 1 << 8
 ST_CRUISE_AVAILABLE = 1 << 9
-ST_TOGGLE_ON = 1 << 10      # the Carrot web switch is on now (takes effect at the next ignition)
+ST_TOGGLE_ON = 1 << 10      # the Carrot web switch is on (onroad it applies once openpilot is disengaged)
 ST_STEER_FAULT = 1 << 11
 
 # STATUS.link codes, the reason rc2_receiver passes the sticks through or brakes

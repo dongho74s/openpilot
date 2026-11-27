@@ -56,7 +56,8 @@ Make sure the conditions are met in the panda to allow controls (e.g. cruise con
 
 Turn on **System → Remote Controller → DJI RC 2 remote control** (`Rc2RemoteControl`) in Carrot web. While it is on,
 manager runs `rc2_receiver` (also offroad), and a drive started with it on runs `joystickd` instead of `controlsd`.
-The switch is read once at ignition, so changing it mid-drive applies from the next drive; a reboot turns it off.
+Onroad the switch takes effect once openpilot has been disengaged for 1 s (manager reports engagement to
+`process_config.rc2_drive`), so controlsd and joystickd never swap under an engaged car; a reboot turns it off.
 
 - The RC 2 app (`rc2-openpilot-joystick`, outside this repo) reads the sticks from the DJI input stream on
   `127.0.0.1:40007`, finds the comma by broadcasting on its network (falling back to the last known address and a /24
