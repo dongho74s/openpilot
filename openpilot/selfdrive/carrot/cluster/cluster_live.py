@@ -823,10 +823,10 @@ class OpenpilotLiveSource:
         accel_out = self._finite_path(car_control, "actuators.accel")
 
         if show_plot_mode == 1:
-            return (a_ego, accel_target, accel_out), "1.Accel (Y:a_ego, G:a_target, O:a_out)"
+            return (a_ego, accel_target, accel_out), "1.Accel (W:a_ego, G:a_target, O:a_out)"
 
         if show_plot_mode == 2:
-            return (speed_target, v_ego, a_ego), "2.Speed/Accel(Y:speed_0, G:v_ego, O:a_ego)"
+            return (speed_target, v_ego, a_ego), "2.Speed/Accel(W:speed_0, G:v_ego, O:a_ego)"
 
         if show_plot_mode == 3:
             position = safe_get(model, "position")
@@ -834,7 +834,7 @@ class OpenpilotLiveSource:
             pos_32 = self._finite_index(safe_get(position, "x"), 32) if position is not None else 0.0
             vel_32 = self._finite_index(safe_get(velocity, "x"), 32) if velocity is not None else 0.0
             vel_0 = self._finite_index(safe_get(velocity, "x"), 0) if velocity is not None else 0.0
-            return (pos_32, vel_32, vel_0), "3.Model(Y:pos_32, G:vel_32, O:vel_0)"
+            return (pos_32, vel_32, vel_0), "3.Model(W:pos_32, G:vel_32, O:vel_0)"
 
         if show_plot_mode == 4:
             lead = safe_get(radar, "leadOne")
@@ -842,7 +842,7 @@ class OpenpilotLiveSource:
                 accel_target,
                 self._finite_attr(lead, "aLeadK"),
                 self._finite_attr(lead, "vRel"),
-            ), "4.Lead(Y:accel, G:a_leadK, O:v_rel)"
+            ), "4.Lead(W:accel, G:a_leadK, O:v_rel)"
 
         if show_plot_mode == 5:
             lead = safe_get(radar, "leadOne")
@@ -850,7 +850,7 @@ class OpenpilotLiveSource:
                 a_ego,
                 self._finite_attr(lead, "aLead"),
                 self._finite_attr(lead, "jLead"),
-            ), "5.Lead(Y:a_ego, G:a_lead, O:j_lead)"
+            ), "5.Lead(W:a_ego, G:a_lead, O:j_lead)"
 
         if show_plot_mode == 6:
             torque_state = self._path_value(controls_state, "lateralControlState.torqueState")
@@ -858,14 +858,14 @@ class OpenpilotLiveSource:
                 self._finite_attr(torque_state, "actualLateralAccel") * 10.0,
                 self._finite_attr(torque_state, "desiredLateralAccel") * 10.0,
                 self._finite_attr(torque_state, "output") * 10.0,
-            ), "6.Steer(Y:actual, G:desire, O:output) *10"
+            ), "6.Steer(W:actual, G:desire, O:output) *10"
 
         if show_plot_mode == 7:
             return (
                 self._finite_attr(car_state, "steeringAngleDeg"),
                 self._finite_path(car_control, "actuators.steeringAngleDeg"),
                 self._finite_attr(live_params, "angleOffsetDeg") * 10.0,
-            ), "7.SteerA(Y:Actual, G:Target, O:Offset*10)"
+            ), "7.SteerA(W:Actual, G:Target, O:Offset*10)"
 
         if show_plot_mode == 8:
             curvature = self._finite_path(car_control, "actuators.curvature") * 10000.0

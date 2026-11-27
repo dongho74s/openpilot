@@ -4802,7 +4802,7 @@ class ClusterUiRenderer:
             return
 
         colors = (
-            (255, 220, 0),
+            WHITE,
             GREEN,
             (255, 165, 0),
         )
