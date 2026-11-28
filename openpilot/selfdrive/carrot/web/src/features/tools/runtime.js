@@ -317,6 +317,8 @@ function renderGitPullStatus(status = {}) {
   if (leadAction) leadAction.textContent = getUIText("tools_pull_action", "Get");
   badge.dataset.state = waiting ? "waiting" : (hasUpdates ? "updates" : (hasError ? "error" : "current"));
 
+  renderGitPullNotes(hasUpdates ? status.notes : null);
+
   if (navButton) {
     navButton.classList.toggle("has-git-updates", hasUpdates);
     if (hasUpdates) navButton.dataset.gitBehind = label;
@@ -334,6 +336,73 @@ function renderGitPullStatus(status = {}) {
   } else {
     button.title = "Up to date";
   }
+}
+
+// Plain-language notes for the waiting commits (server services/update_notes.py): the described changes first, then
+// the commits nobody described yet behind a fold with their English subjects. Built with textContent only.
+function renderGitPullNotes(notes) {
+  const box = document.getElementById("gitPullNotes");
+  if (!box) return;
+  const items = Array.isArray(notes?.items) ? notes.items : [];
+  const undescribed = Array.isArray(notes?.undescribed) ? notes.undescribed : [];
+  const undescribedCount = Math.max(undescribed.length, Number(notes?.undescribed_count) || 0);
+  const lang = (typeof LANG !== "undefined" && LANG) ? String(LANG) : "ko";
+  const texts = items
+    .map((item) => String((lang === "ko" ? item?.ko : item?.en) || item?.ko || item?.en || "").trim())
+    .filter(Boolean);
+  if (!texts.length && !undescribedCount) {
+    box.hidden = true;
+    box.textContent = "";
+    box.dataset.key = "";
+    return;
+  }
+  const key = JSON.stringify([lang, texts, notes?.more_items || 0, undescribedCount, undescribed]);
+  if (box.dataset.key === key && !box.hidden) return;  // polling must not fold an opened list again
+  box.dataset.key = key;
+  box.textContent = "";
+
+  const title = document.createElement("div");
+  title.className = "git-pull-notes__title";
+  title.textContent = getUIText("tools_update_notes_title", "What's in this update");
+  box.appendChild(title);
+
+  if (texts.length) {
+    const list = document.createElement("ul");
+    list.className = "git-pull-notes__list";
+    for (const text of texts) {
+      const row = document.createElement("li");
+      row.textContent = text;
+      list.appendChild(row);
+    }
+    const moreItems = Math.max(0, Number(notes?.more_items) || 0);
+    if (moreItems) {
+      const row = document.createElement("li");
+      row.className = "git-pull-notes__more-items";
+      row.textContent = getUIText("tools_update_notes_more", "and {count} more", { count: moreItems });
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+  }
+
+  if (undescribedCount) {
+    const fold = document.createElement("details");
+    fold.className = "git-pull-notes__fold";
+    const summary = document.createElement("summary");
+    summary.textContent = getUIText("tools_update_notes_undescribed", "{count} changes without a description", {
+      count: undescribedCount,
+    });
+    fold.appendChild(summary);
+    const list = document.createElement("ul");
+    list.className = "git-pull-notes__commits";
+    for (const commit of undescribed) {
+      const row = document.createElement("li");
+      row.textContent = String(commit?.subject || commit?.hash || "").trim();
+      list.appendChild(row);
+    }
+    fold.appendChild(list);
+    box.appendChild(fold);
+  }
+  box.hidden = false;
 }
 
 async function refreshGitPullStatus(options = {}) {

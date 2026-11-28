@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "about": "Carrot Web > Tools > Update lists these notes for the commits a device has not pulled yet (server/services/update_notes.py). One entry per change, written for drivers: commits = hash prefixes (7+ chars), ko = Korean (shown in Korean), en = English (optional). Add an entry when you push; a commit that changes only this file is not listed.",
+  "notes": [
+    {
+      "commits": ["6339565a", "d7964887", "93b71a0d", "1e05c961"],
+      "ko": "볼트 EUV(순정 ACC, 페달 없음)에서 오픈파일럿이 가감속할 때: 시속 5km 미만에서는 완전히 서서 브레이크를 밟아야 켜지고, 정차 중 크루즈 고장이 나지 않도록 순정처럼 정지를 유지합니다. 오래 섰다가 출발할 때는 RES를 누르거나 가속페달을 살짝 밟으세요. 조향 반응도 페달 단 볼트처럼 빨라졌습니다. 페달 단 볼트는 정지 중 RES를 눌러도 설정속도가 오르지 않습니다.",
+      "en": "Bolt EUV with the factory ACC and no pedal, on openpilot longitudinal: below 5 km/h it engages only fully stopped with the brake pressed, and it holds a stop like the stock ACC so the cruise does not fault. After a long stop, press RES or tap the accelerator to go. Steering responds as quickly as on the pedal Bolt. On the pedal Bolt (mode 1) a held RES at a stop no longer raises the set speed."
+    },
+    {
+      "commits": ["7e0503d2", "e9d02691", "7e807587", "d690b0ad", "49f08073"],
+      "ko": "DJI RC 2 조종기로 조이스틱 모드를 쓸 수 있게 했습니다(당근웹에서 켜기, 같은 와이파이). 디스인게이지 상태면 주행 중에도 켜고 끌 수 있고, 신호가 잠깐 끊겨도 바로 멈추지 않습니다. 실험 기능입니다.",
+      "en": "Joystick mode from a DJI RC 2 on the same Wi-Fi, switched on in Carrot Web. It can be switched while driving when disengaged and rides out brief signal drops. Experimental."
+    },
+    {
+      "commits": ["5a2a83dd", "bd78f0cb", "a7dd10c8", "cea0cac9"],
+      "ko": "당근웹 주행 탭: 차 주변을 입체로 보는 3D 보기를 추가했고, 당근 비전 화면을 C3 new ui 모양으로 바꿨습니다. 3D 차 모델 파일은 압축해서 보내 빨리 열립니다.",
+      "en": "Carrot Web Drive tab: a 3D view of the car and its surroundings, and Carrot Vision in the C3 new UI look. The 3D car models are sent compressed so they open quickly."
+    },
+    {
+      "commits": ["21a7aa59", "e15c00fe", "4288c033", "293830ad", "7cf0df14", "17784e6c", "197199a4", "c0f9aaa3", "7b5b271a", "f00730f7", "29f665f4"],
+      "ko": "당근웹 디자인을 새로 바꿨습니다. 설정은 값을 한눈에 보는 목록과 값 고르기 창으로 바뀌었고, 도구 화면에 밝게·어둡게·자동 테마 버튼이 생겼습니다. 글꼴은 Wanted Sans이고, 폴드를 펼친 화면과 PC에서도 보기 좋게 배치합니다.",
+      "en": "A new Carrot Web design: settings as a list with values at a glance and a value sheet, a light / dark / automatic theme switch in Tools, the Wanted Sans typeface, and layouts for an unfolded Fold and PCs."
+    },
+    {
+      "commits": ["ef058434"],
+      "ko": "당근 설정 설명을 실제 동작에 맞게 쉬운 말로 다시 썼고, 몇몇 설정을 맞는 메뉴로 옮겼습니다.",
+      "en": "Carrot settings descriptions rewritten in plain language against the code, and some settings moved to the menu they belong in."
+    },
+    {
+      "commits": ["7049589c", "4658f8b4"],
+      "ko": "C4 화면의 모든 글자를 Wanted Sans로 바꿨습니다.",
+      "en": "The C4 screen draws all its text in Wanted Sans."
+    },
+    {
+      "commits": ["db696a38", "759f1891", "96e77ad9", "9e728b5c", "06590c7f", "0776c4fd"],
+      "ko": "나브디 연결: 블루투스가 최대 6초 멈춰도 끊지 않고 버팁니다. USB는 케이블이 순간 빠졌다 붙으면 0.25초 안에 다시 연결합니다.",
+      "en": "Navdy link: Bluetooth rides out a stall of up to 6 s instead of dropping, and USB reconnects within a quarter second after a brief cable drop."
+    },
+    {
+      "commits": ["5e7605e9", "d4c62660", "27a0929c", "5db3cafd", "107b53c4", "ab0c7f68", "ec541866", "fa9bdb77", "82591332", "8715fbe5", "c91cc9f4", "4b38dfda", "5b31b40a", "475d1f80"],
+      "ko": "GM 엔진차(트래버스·말리부 등, 오픈파일럿 가감속): 서기 직전 브레이크를 살짝 풀어 덜컥임을 줄이고, 천천히 설 때 차가 끌리지 않도록 저속 크립 보상 브레이크를 더했습니다(당근웹에서 세기 조절). 서 있다가 뒤로 밀리면 바로 브레이크를 겁니다.",
+      "en": "GM engine cars on openpilot longitudinal (Traverse, Malibu): the brake eases off just before a stop, a low-speed creep brake keeps a slow stop from dragging (adjustable in Carrot Web), and rolling back brakes at once."
+    },
+    {
+      "commits": ["a10f272f", "cfb48579"],
+      "ko": "말리부 ASCM 하네스: 0xBE 신호가 없는 차도 브레이크 페달 위치로 브레이크를 알아채고, 오픈파일럿 가감속 중 ASCM이 경로 정보를 끊으면 알림을 띄웁니다.",
+      "en": "Malibu ASCM harness: cars without 0xBE also detect the brake from the pedal position, and an alert shows when the ASCM gives up its path data on openpilot longitudinal."
+    },
+    {
+      "commits": ["05323682"],
+      "ko": "오류 보고: 보고를 올리는 서버에 맞춰 연결을 열고, 실패하면 잠시 쉬었다가 다시 시도합니다.",
+      "en": "Crash reports open their session on the server they are posted to and back off while it fails."
+    },
+    {
+      "commits": ["6754c1ac", "6b036798", "3a49d713", "46d9eb27"],
+      "ko": "GM 카메라 가감속 차(트래버스·볼트 등): 탄력 주행에서 브레이크로 넘어갈 때 한 번에 넣지 않고 약 0.4초에 걸쳐 이어 붙여, 제동 시작이 부드러워졌습니다.",
+      "en": "GM camera-longitudinal cars (Traverse, Bolt): the brake now fades in over about 0.4 s after coasting instead of stepping in."
+    }
+  ]
+}

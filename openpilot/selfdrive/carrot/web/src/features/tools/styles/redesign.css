@@ -783,6 +783,66 @@
   color: var(--tl-danger);
 }
 
+/* what the waiting update changes, under the update row (services/update_notes.py) */
+#pageTools .tools-list > .git-pull-notes {
+  margin-top: -6px;
+  padding: 0 18px 16px;
+  color: var(--tl-ink2);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+#pageTools .tools-list > .git-pull-notes[hidden] {
+  display: none;
+}
+
+#pageTools .git-pull-notes__title {
+  margin-bottom: 4px;
+  color: var(--tl-ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+#pageTools .git-pull-notes__list,
+#pageTools .git-pull-notes__commits {
+  margin: 0;
+  padding-left: 18px;
+}
+
+#pageTools .git-pull-notes__list li + li,
+#pageTools .git-pull-notes__commits li + li {
+  margin-top: 4px;
+}
+
+#pageTools .git-pull-notes__more-items {
+  color: var(--tl-ink3);
+  list-style: none;
+  margin-left: -18px;
+}
+
+#pageTools .git-pull-notes__fold {
+  margin-top: 8px;
+  color: var(--tl-ink3);
+  font-size: 13px;
+}
+
+#pageTools .git-pull-notes__fold summary {
+  cursor: pointer;
+}
+
+#pageTools .git-pull-notes__commits {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+#pageTools .tools-list > .git-pull-notes + .tools-row.btn {
+  background-image: linear-gradient(var(--tl-line), var(--tl-line));
+  background-position: 18px 0;
+  background-size: calc(100% - 36px) 1px;
+  background-repeat: no-repeat;
+}
+
 /* the recording row ends in a switch drawn from its state */
 #pageTools .tools-list > .tools-row--switch.btn::after {
   content: "";

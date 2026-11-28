@@ -7,6 +7,8 @@ from typing import Any
 from openpilot.common.async_process import run_process
 from openpilot.common.repo_update import RepoBusyError, repo_lock
 
+from .update_notes import collect_update_notes
+
 
 REPO_DIR = "/data/openpilot"
 GIT_STATUS_TTL = 600.0
@@ -137,6 +139,12 @@ async def _read_status() -> dict[str, Any]:
   ahead = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
   behind = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
   target_head = await _git_text(["rev-parse", upstream])
+  notes = None
+  if fetch_rc == 0 and behind > 0:
+    try:
+      notes = await collect_update_notes(_git, upstream, behind)
+    except Exception as exc:  # the update row must not depend on the notes
+      print(f"[git_status] update notes failed: {exc}")
 
   return {
     "available": fetch_rc == 0,
@@ -151,6 +159,7 @@ async def _read_status() -> dict[str, Any]:
     "remote_branch": remote_branch,
     "checked_at": int(_now()),
     "error": fetch_out if fetch_rc != 0 else "",
+    "notes": notes,
   }
 
 

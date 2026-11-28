@@ -288,7 +288,7 @@ notice for physical validation limits of each installation path.
 
 ### Update
 
-- `Get update` (git pull): fetch and integrate new commits for the current branch. The right side shows how many commits are waiting (`New 3`), or `✓` when up to date.
+- `Get update` (git pull): fetch and integrate new commits for the current branch. The right side shows how many commits are waiting (`New 3`), or `✓` when up to date. When an update is waiting, `What's in this update` below it lists what changes in plain language (Korean, or English where written). The notes come from `openpilot/selfdrive/carrot/update_notes.json` in the repository; commits without a note are listed by their subject under `N changes without a description`.
 - `Sync` (git sync): synchronize with the remote branch; local work may be cleaned up.
 - `Change log` (git log): inspect commits and choose a commit or branch.
 - `Change branch`: choose a local or remote branch.
