@@ -13,7 +13,7 @@ from opendbc.car.gm.values import MALIBU_CLUSTER_CAR
 from opendbc.car.gm.manual_auto_hold import ManualAutoHold, manual_hold_supported
 from opendbc.car.gm.stock_fcw import StockFcw, stock_fcw_replay_supported, stock_fcw_supported
 from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, CAR, DBC, CanBus, GMFlags, CAMERA_ACC_CAR, \
-  ASCM_INT_CAR, is_bolt_acc_pedal_starpilot, is_cc_only
+  ASCM_INT_CAR, is_bolt_acc_pedal_starpilot, is_bolt_camera_long, is_cc_only
 from opendbc.car.interfaces import CarStateBase
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 
@@ -95,6 +95,8 @@ class CarState(CarStateBase):
     # (StarPilot) runs as a CC-only pedal-long car and replays the camera's 0x370 FCWAlert level on openpilot's 0x370.
     self.is_bolt_acc_pedal = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED
     self.is_bolt_starpilot = self.is_bolt_acc_pedal and is_bolt_acc_pedal_starpilot(CP)
+    # The Bolt on camera long, with the pedal (mode 1) or without one: keeps the ECM's standstill (see update)
+    self.bolt_camera_long = is_bolt_camera_long(CP)
     self.bolt_gas_pressed = False
     self.cc_only = is_cc_only(CP)
     self.stock_fcw_alert = 0
@@ -351,7 +353,13 @@ class CarState(CarStateBase):
     # The Bolt ACC with pedal keeps the ECM's ACC standstill: in mode 1 the controller taps the pedal while it is set to
     # start from a stop, in mode 2 it releases StarPilot's pedal stop hold (as in StarPilot); controlsd sets
     # cruiseControl.resume from it and LongControl does not let it hold off starting.
-    if self.CP.carFingerprint not in CAR.CHEVROLET_VOLT and not self.is_bolt_acc_pedal:
+    # The same car on camera long without a pedal keeps it too, as StarPilot does for it (user request 2026-11-28, Codex
+    # review R1): LongControl then waits on it with the FullStop / 0xD hold on and "Press Resume" shows until the
+    # driver's RES or gas takes the ECM out of it, and a RES there resumes instead of raising the set speed. The stock
+    # camera does the same: it kept FullStop and 0xD through the ECM's standstill and let go only once the ECM was active
+    # again (rlogs 00000023--f5c4a454cd--13 at 12.88 s and 00000028--02c4808d1b--21 at 43.40 s, its frames on bus 2).
+    # Clearing it ("avoid accFault") let LongControl release the hold and ask for gas with the ECM still in standstill.
+    if self.CP.carFingerprint not in CAR.CHEVROLET_VOLT and not self.is_bolt_acc_pedal and not self.bolt_camera_long:
       ret.cruiseState.standstill = False
     if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.CP.flags & GMFlags.NO_CAMERA.value:
       if not self.cc_only:

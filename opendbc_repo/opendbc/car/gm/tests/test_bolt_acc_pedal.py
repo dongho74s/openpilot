@@ -241,7 +241,8 @@ HYSTERESIS_DIGESTS = {
 # - every Bolt EUV case: the Bolt No-ACC's 33 Hz steering timing (0x180 only);
 # - without a pedal on openpilot long (/False/True/): the stop hold kept through controlsd's resume (ticks 472-479: 0x315
 #   brake 40 with mode 0xD instead of the lookup's 55) and the 0x370 gap level following the HUD only with CAN valid and
-#   ACC main on (0 here: these drives leave canValid unset), and mode 1's LongControl start and stop.
+#   ACC main on (0 here: these drives leave canValid unset), and mode 1's LongControl start and stop; its CarState keeps
+#   the ECM's standstill (ticks 120-139, Codex review R1), which is its only CarState change.
 # With the port switched off every stream is still the frozen one (test_..._without_the_bolt_euv_port).
 PORT_DIGESTS = {
   "ctrl:CHEVROLET_BOLT_EUV/True/False/0": "f810624923d5d91e09d4c1361cde1228beb9bbd4be2bb52cee85192e183b8e18",
@@ -250,6 +251,7 @@ PORT_DIGESTS = {
   "ctrl:CHEVROLET_BOLT_EUV/False/True/1": "7c7556ce7b1f5077861cad681cc0b430d2090da235db4c478fe73abd7e5a0061",
   "ctrl:CHEVROLET_BOLT_EUV/False/False/0": "a30b1449f498af59fac9e218f60516184452e70851cd779b5069dae861634fe2",
   "ctrl:CHEVROLET_BOLT_EUV/False/False/1": "a30b1449f498af59fac9e218f60516184452e70851cd779b5069dae861634fe2",
+  "cs:CHEVROLET_BOLT_EUV/False/True": "920923467f7051727a5264f470827f62994d75ce5da063020766832eff8df964",
   "lc:CHEVROLET_BOLT_EUV/False/True": "3e3bbece1d29d218df8405eb2311f02840315ca1693c5538086443e18f822972",
 }
 PORT_DIGESTS_WITHOUT_HYSTERESIS = {
@@ -273,6 +275,7 @@ def without_the_bolt_euv_port(runtime, monkeypatch):
   monkeypatch.setattr(values, "FROGPILOT_STEER_TIMING_CAR", values.FROGPILOT_STEER_TIMING_CAR - {CAR.CHEVROLET_BOLT_EUV})
   mode_1_only = lambda CP: values.is_bolt_camera_long(CP) and bool(CP.enableGasInterceptorDEPRECATED)
   monkeypatch.setattr(runtime.controller, "is_bolt_camera_long", mode_1_only)
+  monkeypatch.setattr(runtime.state, "is_bolt_camera_long", mode_1_only)
   monkeypatch.setattr(longcontrol, "is_bolt_camera_long", mode_1_only)
 
 
@@ -306,7 +309,19 @@ def test_other_bolt_controller_streams_unchanged_without_the_bolt_euv_port(runti
 
 @pytest.mark.parametrize("key", CARSTATE_BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
 def test_other_bolt_carstate_streams_unchanged(runtime, monkeypatch, key):
-  assert digest(carstate_stream(runtime, monkeypatch, *key)) == BASELINE_DIGESTS["cs:" + "/".join(map(str, key))]
+  name = "cs:" + "/".join(map(str, key))
+  assert digest(carstate_stream(runtime, monkeypatch, *key)) == PORT_DIGESTS.get(name, BASELINE_DIGESTS[name])
+
+
+@pytest.mark.parametrize("key", CARSTATE_BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
+def test_other_bolt_carstate_streams_unchanged_without_the_bolt_euv_port(runtime, monkeypatch, key):
+  ported = carstate_stream(runtime, monkeypatch, *key)
+  without_the_bolt_euv_port(runtime, monkeypatch)
+  stream = carstate_stream(runtime, monkeypatch, *key)
+  assert digest(stream) == BASELINE_DIGESTS["cs:" + "/".join(map(str, key))]
+  # the port changes nothing but the kept standstill
+  assert [{k: v for k, v in r.items() if k != "cruise_standstill"} for r in ported] == \
+         [{k: v for k, v in r.items() if k != "cruise_standstill"} for r in stream]
 
 
 @pytest.mark.parametrize("key", LONGCONTROL_BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
@@ -440,8 +455,13 @@ def test_carstate_is_the_bolt_euvs_but_keeps_the_ecm_standstill(runtime, monkeyp
   assert [t for t, r in enumerate(ours) if r["enabled"]] == list(range(50, 140)) + list(range(300, 305))
 
 
-def test_carstate_without_pedal_clears_the_standstill(runtime, monkeypatch):
-  assert not any(r["cruise_standstill"] for r in carstate_stream(runtime, monkeypatch, BOLT, False, True))
+@pytest.mark.parametrize("car", [BOLT, CAR.CHEVROLET_BOLT_EUV])
+def test_carstate_without_pedal_keeps_the_standstill_only_on_camera_long(runtime, monkeypatch, car):
+  """Without a pedal on camera long the ECM's standstill is kept since 2026-11-28 (Codex review R1), so LongControl waits
+  on it and "Press Resume" shows; on the stock ACC carrot still clears it."""
+  long_stream = carstate_stream(runtime, monkeypatch, car, False, True)
+  assert [t for t, r in enumerate(long_stream) if r["cruise_standstill"]] == list(range(120, 140))  # AcceleratorPedal2 4
+  assert not any(r["cruise_standstill"] for r in carstate_stream(runtime, monkeypatch, car, False, False))
 
 
 def gas_pressed_for(runtime, raw1, raw2):
@@ -957,3 +977,91 @@ def test_no_pedal_stop_ramps_only_to_a_quarter(runtime, monkeypatch, key):
   loc = longcontrol.LongControl(cp)
   outs = stop_from(runtime, loc, cp, -0.05)
   assert -0.25 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.25
+
+
+def ecm_standstill_carstate(runtime, cp, pedal):
+  """Real DBC, packer, parser and CarState: stopped, ACC main on, the ECM's CruiseState 4 (standstill), no brake or gas."""
+  cs = runtime.state.CarState(cp)
+  parsers = cs.get_can_parsers(cp)
+  cs.update(parsers)
+  packer = runtime.CANPacker(DBC[cp.carFingerprint][Bus.pt])
+  override = [
+    packer.make_can_msg("EBCMWheelSpdFront", 0, {"FLWheelSpd": 0, "FRWheelSpd": 0}),
+    packer.make_can_msg("EBCMWheelSpdRear", 0, {"RLWheelSpd": 0, "RRWheelSpd": 0}),
+    packer.make_can_msg("ECMEngineStatus", 0, {"CruiseMainOn": 1, "BrakePressed": 0}),
+    packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": 4, "AcceleratorPedal2": 0}),
+    packer.make_can_msg("ECMAcceleratorPos", 0, {"BrakePedalPos": 0}),
+    packer.make_can_msg("ECMPRDNL2", 0, {"PRNDL2": 4}),
+  ]
+  replaced = {addr for addr, _, _ in override}
+  frames = [f for f in carstate_frames(packer, 0, pedal) if f[0] not in replaced] + override
+  for tick in range(20):
+    for parser in parsers.values():
+      parser.update([(1_000_000_000 + tick * 10_000_000, frames)])
+    out = cs.update(parsers)
+  return cs, out
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_waits_at_the_ecm_standstill_from_can_to_can(runtime, monkeypatch, key):
+  """Codex review R1 (2026-11-28): CarState cleared the ECM's standstill on these cars, so LongControl started (hold
+  released, gas asked) with the ECM still in standstill and "Press Resume" never showed. From the CAN parser on: the
+  standstill is kept, LongControl waits, the hold stays with apply 1, "Press Resume" shows, and a RES there resumes
+  instead of raising the set speed (it went 80 -> 81)."""
+  import sys
+  from openpilot.cereal import car, log
+  monkeypatch.delitem(sys.modules, "openpilot.common.realtime", raising=False)  # the runtime fixture's stub lacks what
+  from openpilot.selfdrive.car.car_specific import CarSpecificEvents             # car_specific's imports need
+  from openpilot.selfdrive.car.tests.test_carrot_cruise_buttons import make_cruise_helper, make_button_tracker
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(longcontrol, "Params", MemoryParams)
+  cp = bolt_cp(runtime, *key)
+  cs, out = ecm_standstill_carstate(runtime, cp, pedal=False)
+  assert cs.pcm_acc_status == 4 and out.standstill and out.cruiseState.standstill
+
+  cp_reader = car.CarParams.from_bytes(cp.to_bytes()).__enter__()  # as controlsd gets it
+  loc = longcontrol.LongControl(cp_reader)
+  limits = runtime.interface.CarInterface.get_pid_accel_limits(cp, 0.0, 0.0)
+  plan = log.LongitudinalPlan.new_message(aTarget=-0.5, vTargetNow=0.0, shouldStop=True, hasLead=True)
+  loc.update(True, out, plan, limits, 0.0, log.RadarState.new_message())
+  plan.shouldStop, plan.aTarget = False, 0.21  # the lead moves off
+  accel = float(loc.update(True, out, plan, limits, 0.0, log.RadarState.new_message())[0])
+  assert loc.long_control_state == LongCtrlState.stopping and accel < 0
+
+  cc = structs.CarControl(enabled=True, longActive=True, latActive=True)
+  cc.actuators.accel, cc.actuators.longControlState = accel, loc.long_control_state
+  cc.cruiseControl.resume = out.cruiseState.standstill  # controlsd: standstill and the plan's end speed above 0.1
+  cc.orientationNED = [0.0, 0.0, 0.0]
+  events = CarSpecificEvents(cp_reader).update(out, car.CarState.new_message(), cc)
+  assert log.OnroadEvent.EventName.resumeRequired in events.names
+
+  monkeypatch.setattr(runtime.controller, "Params", memory_params())
+  controller = runtime.controller.CarController(DBC[cp.carFingerprint], cp)
+  cs.out = out
+  sends = []
+  for tick in range(12):
+    sends += controller.update(cc.as_reader(), cs, 2_000_000_000 + tick * 10_000_000)[1]
+  assert {(d[0] & 1, (d[1] >> 5) & 1) for a, d, b in sends if a == 0x2CB} == {(1, 1)}
+  assert {(d[0] >> 4, friction_brake(d)) for a, d, b in sends if a == 0x315} == {(0xD, 40)}
+  assert not [a for a, d, b in sends if a == 0x200]
+
+  helper, _, _ = make_cruise_helper(81, 0, False, True)
+  helper.CP = cp
+  tracker = make_button_tracker()
+  for name in ("button_cnt", "button_prev", "button_long_time", "button_big_step", "long_pressed",
+               "_cruise_speed_unit_basic", "_cruise_button_long_delay", "is_metric"):
+    setattr(helper, name, getattr(tracker, name))
+  helper._prepare_buttons = runtime.cruise.VCruiseCarrot._prepare_buttons.__get__(helper)
+  speed = 80
+  for pressed in (True, False):
+    out.buttonEvents = [car.CarState.ButtonEvent(type="accelCruise", pressed=pressed)]
+    speed = helper._update_cruise_buttons(out, cc, speed)
+  assert speed == 80
+
+
+@pytest.mark.parametrize("key", [(CAR.CHEVROLET_BOLT_EUV, True, False), (CAR.CHEVROLET_BOLT_EUV, False, False),
+                                 (BOLT, False, False)], ids=lambda k: "/".join(map(str, k)))
+def test_pedal_long_and_stock_acc_bolts_still_clear_the_ecm_standstill(runtime, key):
+  cp = bolt_cp(runtime, *key)
+  cs, out = ecm_standstill_carstate(runtime, cp, pedal=key[1])
+  assert cs.pcm_acc_status == 4 and not out.cruiseState.standstill
