@@ -59,6 +59,11 @@ def get_error_blend_factor(desired_lateral_accel, v_ego, low_speed_scale):
     factor *= float(np.interp(v_ego, LOW_SPEED_ERROR_BLEND_BP, LOW_SPEED_ERROR_BLEND_V))
   return factor
 
+def get_speed_kp(v_ego, kp_base, kp_low):
+  """Speed-scheduled Kp: kp_low at/below 55 km/h, kp_base at/above 65 km/h, linear in between.
+  Same 55/65 km/h breakpoints as the low-speed error blend (LOW_SPEED_ERROR_BLEND_BP)."""
+  return float(np.interp(v_ego, LOW_SPEED_ERROR_BLEND_BP, [kp_low, kp_base]))
+
 def get_predicted_lateral_jerk(lat_accels, t_diffs):
   # compute finite difference between subsequent model_data.acceleration.y values
   lat_accel_diffs = np.diff(lat_accels)
@@ -203,6 +208,12 @@ class LatControlTorque(LatControl):
         self.torque_params.latAccelFactor = self.params.get_float("LateralTorqueAccelFactor")*0.001
         self.torque_params.friction = self.params.get_float("LateralTorqueFriction")*0.001
         lateralTorqueKp = self.params.get_float("LateralTorqueKpV")*0.01
+        if self.low_speed_error_blend:
+          # Trailblazer only (2026-11-28): KpV 65 is too hot below 55 km/h (0.65 deg wobble at 30-40 km/h
+          # on route 11d while the highway is stable). Use the low-speed Kp below 55 km/h, blend back to
+          # the base Kp by 65 km/h; the highway is untouched.
+          lateralTorqueKpLow = self.params.get_float("LateralTorqueKpVLow")*0.01
+          lateralTorqueKp = get_speed_kp(CS.vEgo, lateralTorqueKp, lateralTorqueKpLow)
         lateralTorqueKi = self.params.get_float("LateralTorqueKiV")*0.01
         lateralTorqueKf = self.params.get_float("LateralTorqueKf")*0.01
         lateralTorqueKd = self.params.get_float("LateralTorqueKd")*0.01

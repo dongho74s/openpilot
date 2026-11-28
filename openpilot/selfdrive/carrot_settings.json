@@ -215,6 +215,7 @@
                     "LateralTorqueAccelFactor",
                     "LateralTorqueFriction",
                     "LateralTorqueKpV",
+                    "LateralTorqueKpVLow",
                     "LateralTorqueKiV",
                     "LateralTorqueKf",
                     "LateralTorqueKd"
@@ -856,6 +857,22 @@
       "min": 0,
       "max": 200,
       "default": 100,
+      "unit": 1
+    },
+    {
+      "group": "조향토크",
+      "name": "LateralTorqueKpVLow",
+      "title": "_LateralTorqueKpVLow*0.01(50)",
+      "descr": "저속 조향 비례 계수(55km/h 이하에서 적용, 65km/h에서 일반 KpV로 복귀) \n\n 50 권장",
+      "egroup": "LAT_TQ",
+      "etitle": "_LateralTorqueKpVLow*0.01(50)",
+      "edescr": "Low-Speed Steering Response Speed (below 55 km/h) — 50 Recommended",
+      "cgroup": "转向",
+      "ctitle": "转向力矩 低速Kp*0.01(50)",
+      "cdescr": "低速转向响应速度 — 推荐 50",
+      "min": 0,
+      "max": 200,
+      "default": 50,
       "unit": 1
     },
     {
