@@ -23,16 +23,16 @@ test("logs tabs render as an equal-width shared segmented control", () => {
   assert.match(tabList, /role="tablist"/);
 
   const tabs = tabList.match(/data-logs-tab="([a-z]+)"/g) || [];
-  assert.deepEqual(tabs, ["data-logs-tab=\"dashcam\"", "data-logs-tab=\"screen\""]);
+  assert.deepEqual(tabs, ["data-logs-tab=\"live\"", "data-logs-tab=\"dashcam\"", "data-logs-tab=\"screen\""]);
 
-  for (const [tab, panel] of [["dashcam", "logsDashcamPanel"], ["screen", "logsScreenPanel"]]) {
+  for (const [tab, panel] of [["live", "logsLivePanel"], ["dashcam", "logsDashcamPanel"], ["screen", "logsScreenPanel"]]) {
     assert.match(tabList, new RegExp(`aria-controls="${panel}"[^>]*data-logs-tab="${tab}"`, "s"));
     assert.match(shell, new RegExp(`id="${panel}"[^>]*role="tabpanel"`));
   }
 
   // Every label is its own element so a longer translation is bounded by the
   // segment instead of resizing it.
-  assert.equal((tabList.match(/class="c-segmented-control__label"/g) || []).length, 2);
+  assert.equal((tabList.match(/class="c-segmented-control__label"/g) || []).length, 3);
 });
 
 test("equal segments share the track independently of label length", () => {
