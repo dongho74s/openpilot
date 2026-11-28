@@ -364,6 +364,21 @@ class CarInterface(CarInterfaceBase):
       # The Bolt ACC with pedal in mode 1 drives through the ECM's ACC (camera long) and uses the pedal only to leave its
       # standstill, so it does not take PEDAL_LONG, which makes the controller cancel the ECM's ACC whenever it is on.
 
+      if candidate in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_ACC_PEDAL) and ret.openpilotLongitudinalControl and \
+         not ret.enableGasInterceptorDEPRECATED:
+        # The same car and ECM as the Bolt ACC with pedal in mode 1, without the pedal (user request 2026-11-28: its
+        # mode 1 fixes, the pedal parts aside); the pedal block below sets these for mode 1.
+        # - The ECM allows its ACC only above 5 km/h or at a stop with the brake pressed: engaging stopped without the
+        #   brake faulted it 0.5 s later (rlog 00000021--282be5cb94--1, 2026-11-19). StarPilot also keeps 5 km/h for
+        #   this car on camera long. GM's belowEngageSpeed then blocks such an engage unless stopped with brake >= 20.
+        # - Starts like mode 1 (StarPilot's start for this car): 1.0 held 0x2CB gas 673 for 0.7 s and the car then
+        #   jumped at 1.4 m/s^2 (rlog 00000028--02c4808d1b--21, 2026-11-20); LongControl also follows a slow plan
+        #   behind a lead (longcontrol.py BOLT_MODE_1_PLAN_START_MAX_ACCEL).
+        ret.minEnableSpeed = 5 * CV.KPH_TO_MS
+        ret.startAccel = 0.55
+        ret.vEgoStopping = 0.25
+        ret.vEgoStarting = 0.25
+
     elif candidate == CAR.CHEVROLET_SILVERADO:
       # On the Bolt, the ECM and camera independently check that you are either above 5 kph or at a stop
       # with foot on brake to allow engagement, but this platform only has that check in the camera.

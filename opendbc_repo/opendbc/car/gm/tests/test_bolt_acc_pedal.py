@@ -237,20 +237,71 @@ HYSTERESIS_DIGESTS = {
 }
 
 
+# 2026-11-28: the Bolt EUV takes mode 1's fixes without the pedal parts (user request; values.is_bolt_camera_long):
+# - every Bolt EUV case: the Bolt No-ACC's 33 Hz steering timing (0x180 only);
+# - without a pedal on openpilot long (/False/True/): the stop hold kept through controlsd's resume (ticks 472-479: 0x315
+#   brake 40 with mode 0xD instead of the lookup's 55) and the 0x370 gap level following the HUD only with CAN valid and
+#   ACC main on (0 here: these drives leave canValid unset), and mode 1's LongControl start and stop.
+# With the port switched off every stream is still the frozen one (test_..._without_the_bolt_euv_port).
+PORT_DIGESTS = {
+  "ctrl:CHEVROLET_BOLT_EUV/True/False/0": "f810624923d5d91e09d4c1361cde1228beb9bbd4be2bb52cee85192e183b8e18",
+  "ctrl:CHEVROLET_BOLT_EUV/True/False/1": "33c4389972ea90a47254d00d23848971adc26a51a6ec459789722b40f42d9e74",
+  "ctrl:CHEVROLET_BOLT_EUV/False/True/0": "66e054789065faa03e95a888ed06d1acdd4453ca565ab81d6cb0fbc66b973bc7",
+  "ctrl:CHEVROLET_BOLT_EUV/False/True/1": "7c7556ce7b1f5077861cad681cc0b430d2090da235db4c478fe73abd7e5a0061",
+  "ctrl:CHEVROLET_BOLT_EUV/False/False/0": "a30b1449f498af59fac9e218f60516184452e70851cd779b5069dae861634fe2",
+  "ctrl:CHEVROLET_BOLT_EUV/False/False/1": "a30b1449f498af59fac9e218f60516184452e70851cd779b5069dae861634fe2",
+  "lc:CHEVROLET_BOLT_EUV/False/True": "3e3bbece1d29d218df8405eb2311f02840315ca1693c5538086443e18f822972",
+}
+PORT_DIGESTS_WITHOUT_HYSTERESIS = {
+  "ctrl:CHEVROLET_BOLT_EUV/True/False/0": "f810624923d5d91e09d4c1361cde1228beb9bbd4be2bb52cee85192e183b8e18",
+  "ctrl:CHEVROLET_BOLT_EUV/True/False/1": "1e6dab3f9e1447ff7dcc7fee52440d5bdc4247b8b970bcec43025a4ab87fd91c",
+  "ctrl:CHEVROLET_BOLT_EUV/False/True/0": "66e054789065faa03e95a888ed06d1acdd4453ca565ab81d6cb0fbc66b973bc7",
+  "ctrl:CHEVROLET_BOLT_EUV/False/True/1": "7099d857d5defc3d79ac25c34e8668567e74674ae55a052b36ce501bfb56751a",
+  "ctrl:CHEVROLET_BOLT_EUV/False/False/0": "a30b1449f498af59fac9e218f60516184452e70851cd779b5069dae861634fe2",
+  "ctrl:CHEVROLET_BOLT_EUV/False/False/1": "a30b1449f498af59fac9e218f60516184452e70851cd779b5069dae861634fe2",
+}
+
+
 def digest(stream):
   return hashlib.sha256(json.dumps(stream).encode()).hexdigest()
+
+
+def without_the_bolt_euv_port(runtime, monkeypatch):
+  """The code as it was before the Bolt EUV port: its 25 Hz steering, mode 1's fixes for the pedal car only."""
+  from opendbc.car.gm import values
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(values, "FROGPILOT_STEER_TIMING_CAR", values.FROGPILOT_STEER_TIMING_CAR - {CAR.CHEVROLET_BOLT_EUV})
+  mode_1_only = lambda CP: values.is_bolt_camera_long(CP) and bool(CP.enableGasInterceptorDEPRECATED)
+  monkeypatch.setattr(runtime.controller, "is_bolt_camera_long", mode_1_only)
+  monkeypatch.setattr(longcontrol, "is_bolt_camera_long", mode_1_only)
+
+
+def pre_port_cp(runtime, *key):
+  cp = bolt_cp(runtime, *key)
+  if not cp.enableGasInterceptorDEPRECATED and cp.openpilotLongitudinalControl:  # the camera-ACC branch's values
+    cp.minEnableSpeed, cp.startAccel, cp.vEgoStopping, cp.vEgoStarting = -1 / 3.6, 1.0, 0.5, 0.4
+  return cp
 
 
 @pytest.mark.parametrize("key", BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
 def test_other_bolt_controller_streams_unchanged(runtime, monkeypatch, key):
   name = "ctrl:" + "/".join(map(str, key))
-  assert digest(controller_stream(runtime, monkeypatch, *key)) == HYSTERESIS_DIGESTS.get(name, BASELINE_DIGESTS[name])
+  expected = PORT_DIGESTS.get(name, HYSTERESIS_DIGESTS.get(name, BASELINE_DIGESTS[name]))
+  assert digest(controller_stream(runtime, monkeypatch, *key)) == expected
 
 
 @pytest.mark.parametrize("key", BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
 def test_other_bolt_controller_streams_unchanged_without_the_gas_brake_hysteresis(runtime, monkeypatch, key):
   monkeypatch.setattr(runtime.controller, "has_gas_brake_step", lambda params: False)
-  assert digest(controller_stream(runtime, monkeypatch, *key)) == BASELINE_DIGESTS["ctrl:" + "/".join(map(str, key))]
+  name = "ctrl:" + "/".join(map(str, key))
+  assert digest(controller_stream(runtime, monkeypatch, *key)) == PORT_DIGESTS_WITHOUT_HYSTERESIS.get(name, BASELINE_DIGESTS[name])
+
+
+@pytest.mark.parametrize("key", BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
+def test_other_bolt_controller_streams_unchanged_without_the_bolt_euv_port(runtime, monkeypatch, key):
+  without_the_bolt_euv_port(runtime, monkeypatch)
+  name = "ctrl:" + "/".join(map(str, key))
+  assert digest(controller_stream(runtime, monkeypatch, *key)) == HYSTERESIS_DIGESTS.get(name, BASELINE_DIGESTS[name])
 
 
 @pytest.mark.parametrize("key", CARSTATE_BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
@@ -260,7 +311,15 @@ def test_other_bolt_carstate_streams_unchanged(runtime, monkeypatch, key):
 
 @pytest.mark.parametrize("key", LONGCONTROL_BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
 def test_other_bolt_longcontrol_streams_unchanged(runtime, monkeypatch, key):
+  name = "lc:" + "/".join(map(str, key))
   stream = longcontrol_stream(runtime, monkeypatch, bolt_cp(runtime, *key))
+  assert digest(stream) == PORT_DIGESTS.get(name, BASELINE_DIGESTS[name])
+
+
+@pytest.mark.parametrize("key", LONGCONTROL_BASELINE_CASES, ids=lambda k: "/".join(map(str, k)))
+def test_other_bolt_longcontrol_streams_unchanged_without_the_bolt_euv_port(runtime, monkeypatch, key):
+  without_the_bolt_euv_port(runtime, monkeypatch)
+  stream = longcontrol_stream(runtime, monkeypatch, pre_port_cp(runtime, *key))
   assert digest(stream) == BASELINE_DIGESTS["lc:" + "/".join(map(str, key))]
 
 
@@ -476,19 +535,19 @@ def controller_stream_cp(runtime, monkeypatch, cp, pitch, resume=True):
   return stream
 
 
+@pytest.mark.parametrize("resume", [False, True])
 @pytest.mark.parametrize("pitch", [0, 1])
-def test_longitudinal_frames_are_the_bolt_euvs_without_pedal_long(runtime, monkeypatch, pitch):
-  """Every frame but the 33 Hz steering equals the Bolt EUV with pedal once PEDAL_LONG (its stock-ACC cancel) is off and
-  its stop hold is the no-pedal one (autoResumeSng off there drops FullStop and mode 0xD at a stop). controlsd's resume
-  is left out: this car keeps holding through it while stopping (test_resume_while_stopping_keeps_the_hold)."""
+def test_longitudinal_frames_are_the_bolt_euvs_without_pedal_long(runtime, monkeypatch, pitch, resume):
+  """Every frame but the steering equals the Bolt EUV with pedal once PEDAL_LONG (its stock-ACC cancel) is off and its
+  stop hold is the no-pedal one (autoResumeSng off there drops FullStop and mode 0xD at a stop): that is the Bolt EUV on
+  camera long, which since 2026-11-28 also keeps the hold through controlsd's resume and shows the standby gap. The
+  pedal taps only to leave the ECM's standstill, which this drive never asks for."""
   euv = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False)
   euv.flags &= ~GMFlags.PEDAL_LONG.value
   euv.autoResumeSng = False
-  bolt_stream = controller_stream_cp(runtime, monkeypatch, bolt_cp(runtime, BOLT, True, False), pitch, resume=False)
-  euv_stream = controller_stream_cp(runtime, monkeypatch, euv, pitch, resume=False)
-  # The 0x370 gap level differs only before engaging (test_cluster_gap_shows_before_engaging)
-  assert without_gap_level(bolt_stream) == without_gap_level(euv_stream)
-  assert bolt_stream != euv_stream
+  bolt_stream = controller_stream_cp(runtime, monkeypatch, bolt_cp(runtime, BOLT, True, False), pitch, resume=resume)
+  euv_stream = controller_stream_cp(runtime, monkeypatch, euv, pitch, resume=resume)
+  assert bolt_stream == euv_stream
 
 
 def without_gap_level(stream):
@@ -528,12 +587,14 @@ def cluster_gaps(runtime, monkeypatch, cp, *, enabled, available, bars, can_vali
   return set(gaps)
 
 
+@pytest.mark.parametrize("car,pedal", [(BOLT, True), (BOLT, False), (CAR.CHEVROLET_BOLT_EUV, False)])
 @pytest.mark.parametrize("bars", [1, 2, 3, 4])
-def test_cluster_gap_shows_before_engaging(runtime, monkeypatch, bars):
+def test_cluster_gap_shows_before_engaging(runtime, monkeypatch, bars, car, pedal):
   """User report 2026-11-21: after a gap press the cluster kept an old gap (2) while the comma showed the new one (3).
   The stock camera sends its gap in 0x370 before engaging too (00 02 22 cd 00 00 in rlog 00000028--02c4808d1b--21);
-  this sent 0 there. Now: up to 3 bars (2 bits) with ACC main on, engaged or not, and ACCCmdActive only when engaged."""
-  cp = bolt_cp(runtime, BOLT, True, False)
+  this sent 0 there. Now: up to 3 bars (2 bits) with ACC main on, engaged or not, and ACCCmdActive only when engaged.
+  The same camera is in the Bolt EUV without a pedal (2026-11-28)."""
+  cp = bolt_cp(runtime, car, pedal, not pedal)
   shown = min(bars, 3)
   assert cluster_gaps(runtime, monkeypatch, cp, enabled=False, available=True, bars=bars) == {(shown, 0)}
   assert cluster_gaps(runtime, monkeypatch, cp, enabled=True, available=True, bars=bars) == {(shown, 1)}
@@ -542,7 +603,7 @@ def test_cluster_gap_shows_before_engaging(runtime, monkeypatch, bars):
 
 
 def test_other_bolts_keep_no_gap_before_engaging(runtime, monkeypatch):
-  euv = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True)
+  euv = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False)  # the Bolt EUV with a pedal: pedal long
   assert cluster_gaps(runtime, monkeypatch, euv, enabled=False, available=True, bars=2) == {(0, 0)}
   assert cluster_gaps(runtime, monkeypatch, euv, enabled=True, available=True, bars=2) == {(2, 1)}
 
@@ -748,7 +809,7 @@ def test_mode_1_stop_takes_a_weaker_stopping_accel(runtime, monkeypatch):
 def test_other_cars_still_stop_at_stopping_accel(runtime, monkeypatch):
   from openpilot.selfdrive.controls.lib import longcontrol
   monkeypatch.setattr(longcontrol, "Params", MemoryParams)
-  for cp in (bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True), bolt_cp(runtime, BOLT, False, True),
+  for cp in (bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False), bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, False),
              runtime.interface.CarInterface.get_params(CAR.CHEVROLET_TRAVERSE, bolt_fingerprint(CAR.CHEVROLET_BOLT_EUV, False),
                                                        [], True, True, False)):
     loc = longcontrol.LongControl(cp)
@@ -779,7 +840,120 @@ def test_mode_1_start_follows_a_slow_plan_behind_a_lead(runtime, monkeypatch, a_
 def test_other_cars_still_start_at_start_accel(runtime, monkeypatch):
   from openpilot.selfdrive.controls.lib import longcontrol
   monkeypatch.setattr(longcontrol, "Params", MemoryParams)
-  cp = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, False, True)
+  cp = bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False)  # the Bolt EUV with a pedal: pedal long
   loc = longcontrol.LongControl(cp)
   lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True)
   assert lc_step(runtime, loc, cp, 0.21, 0.0, 0.0, lead=True) == pytest.approx(cp.startAccel) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The Bolt EUV without a pedal on camera long (CHEVROLET_BOLT_EUV, or this car with no pedal) takes mode 1's fixes but the
+# pedal ones (user request 2026-11-28): the same ECM and camera. With no pedal to tap, leaving the ECM's standstill stays
+# the driver's (RES or the accelerator, with "Press Resume"): in the pedal car's logs carrot's own RES button frames never
+# took the ECM out of its standstill while the hold was on (00000023--f5c4a454cd--13: 159 frames in 12.9 s, left by the
+# driver's gas; 00000028--02c4808d1b--21: 257 frames in 20.5 s, left after the pedal tap), so nothing here relies on them.
+
+NO_PEDAL_CAMERA_LONG = [(CAR.CHEVROLET_BOLT_EUV, False, True), (BOLT, False, True)]
+
+
+def test_bolt_camera_long_setups(runtime, monkeypatch):
+  from openpilot.cereal import car
+  from opendbc.car.gm.values import is_bolt_camera_long
+  for key in NO_PEDAL_CAMERA_LONG + [(BOLT, True, False)]:  # and mode 1
+    assert is_bolt_camera_long(bolt_cp(runtime, *key)), key
+  for key in [(CAR.CHEVROLET_BOLT_EUV, False, False), (BOLT, False, False),  # the stock ACC
+              (CAR.CHEVROLET_BOLT_EUV, True, False), (CAR.CHEVROLET_BOLT_EUV, True, True),  # pedal long
+              (CAR.CHEVROLET_BOLT_CC, False, True), (CAR.CHEVROLET_BOLT_CC, True, False)]:
+    assert not is_bolt_camera_long(bolt_cp(runtime, *key)), key
+  monkeypatch.setattr(runtime.interface, "Params", memory_params(BoltPedalLongMode=2))
+  assert not is_bolt_camera_long(bolt_cp(runtime, BOLT, True, False))  # mode 2
+  # LongControl gets controlsd's capnp CarParams
+  assert is_bolt_camera_long(car.CarParams.new_message(carFingerprint="CHEVROLET_BOLT_EUV", openpilotLongitudinalControl=True))
+  assert not is_bolt_camera_long(car.CarParams.new_message(carFingerprint="CHEVROLET_BOLT_EUV", openpilotLongitudinalControl=True,
+                                                           flags=int(GMFlags.PEDAL_LONG)))
+  assert not is_bolt_camera_long(car.CarParams.new_message(carFingerprint="CHEVROLET_BOLT_EUV"))
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_camera_long_car_params_are_mode_1s(runtime, key):
+  cp = bolt_cp(runtime, *key)
+  # the ECM's own rule (above 5 km/h, or stopped with the brake), as in mode 1 and StarPilot: engaging stopped without
+  # the brake faulted this ECM (rlog 00000021--282be5cb94--1)
+  assert cp.minEnableSpeed == pytest.approx(5 / 3.6)
+  assert (cp.startAccel, cp.vEgoStarting, cp.vEgoStopping) == (pytest.approx(0.55), pytest.approx(0.25), pytest.approx(0.25))
+  assert not cp.autoResumeSng and not cp.enableGasInterceptorDEPRECATED  # "Press Resume" stays
+  mode_1 = bolt_cp(runtime, BOLT, True, False)
+  assert (mode_1.minEnableSpeed, mode_1.startAccel, mode_1.vEgoStarting, mode_1.vEgoStopping) == \
+         (cp.minEnableSpeed, cp.startAccel, cp.vEgoStarting, cp.vEgoStopping)
+
+
+@pytest.mark.parametrize("car", [CAR.CHEVROLET_BOLT_EUV, BOLT])
+def test_stock_acc_bolts_keep_their_car_params(runtime, car):
+  cp = bolt_cp(runtime, car, False, False)
+  assert (cp.minEnableSpeed, cp.startAccel) == (pytest.approx(-1 / 3.6), pytest.approx(1.0))
+  assert (cp.vEgoStarting, cp.vEgoStopping) == (pytest.approx(0.4), pytest.approx(0.5))
+
+
+def no_pedal_frames(runtime, monkeypatch, cp, **kwargs):
+  monkeypatch.setattr(runtime.controller, "Params", memory_params())
+  controller = runtime.controller.CarController(DBC[cp.carFingerprint], cp)
+  frames = []
+  for f in range(24):
+    sends = hybrid_step(controller, f, **kwargs)
+    assert not [addr for addr, dat, bus in sends if addr == 0x200]  # never a pedal frame
+    gas = [dat for addr, dat, bus in sends if addr == 0x2CB]
+    brake = [dat for addr, dat, bus in sends if addr == 0x315]
+    if gas and brake:
+      frames.append((gas[0][0] & 1, (gas[0][1] >> 5) & 1, brake[0][0] >> 4, friction_brake(brake[0])))
+  return frames
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_resume_at_the_ecm_standstill_keeps_apply_and_the_hold(runtime, monkeypatch, key):
+  """rlog 0000001d--96a597633a--10 (the pedal car, same ECM): controlsd's resume at the ECM's standstill dropped 0x2CB
+  apply, the ECM's ACC went Off and then Faulted once apply came back. The Bolt EUV without a pedal still had that rule
+  (StarPilot keeps it only for its Volt SNG option): now apply stays 1 with the FullStop / 0xD hold, as in mode 1."""
+  cp = bolt_cp(runtime, *key)
+  kwargs = dict(accel=-0.5, state="stopping", v=0.0, cruise_standstill=True, resume=True)
+  frames = no_pedal_frames(runtime, monkeypatch, cp, **kwargs)
+  assert frames and set(frames) == {(1, 1, 0xD, 40)}
+  without_the_bolt_euv_port(runtime, monkeypatch)  # before: apply dropped to 0 there
+  frames = no_pedal_frames(runtime, monkeypatch, cp, **kwargs)
+  assert frames and {f[0] for f in frames} == {0}
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_stop_hold_and_start(runtime, monkeypatch, key):
+  cp = bolt_cp(runtime, *key)
+  for standstill in (False, True):  # stopped: FullStop with 0xD, as the stock camera
+    frames = no_pedal_frames(runtime, monkeypatch, cp, accel=-0.5, state="stopping", v=0.0, cruise_standstill=standstill)
+    assert frames and set(frames) == {(1, 1, 0xD, 40)}, standstill
+  # starting once the driver has taken the ECM out of its standstill: the hold is released, apply stays 1
+  frames = no_pedal_frames(runtime, monkeypatch, cp, accel=0.55, state="starting", v=0.0, cruise_standstill=False)
+  assert frames and set(frames) == {(1, 0, 0x9, 0)}
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_longcontrol_waits_on_the_ecm_then_starts_like_mode_1(runtime, monkeypatch, key):
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(longcontrol, "Params", MemoryParams)
+  cp = bolt_cp(runtime, *key)
+  loc = longcontrol.LongControl(cp)
+  lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
+  lc_step(runtime, loc, cp, 0.21, 0.0, 0.0, lead=True, standstill=True)
+  assert loc.long_control_state == LongCtrlState.stopping  # no pedal: the driver's RES or gas leaves the standstill
+  assert lc_step(runtime, loc, cp, 0.21, 0.0, 0.0, lead=True) == pytest.approx(0.21)  # mode 1's slow plan start
+  assert loc.long_control_state == LongCtrlState.starting
+  loc = longcontrol.LongControl(cp)
+  lc_step(runtime, loc, cp, -0.5, 0.0, 0.0, stop=True, standstill=True)
+  assert lc_step(runtime, loc, cp, 0.1, 0.0, 0.0, lead=False) == pytest.approx(0.55)  # startAccel
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_stop_ramps_only_to_a_quarter(runtime, monkeypatch, key):
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(longcontrol, "Params", MemoryParams)
+  cp = bolt_cp(runtime, *key)
+  loc = longcontrol.LongControl(cp)
+  outs = stop_from(runtime, loc, cp, -0.05)
+  assert -0.25 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.25

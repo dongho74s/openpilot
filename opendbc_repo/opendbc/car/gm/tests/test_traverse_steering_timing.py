@@ -17,16 +17,18 @@ def ramp_commands(params, target, start=0, limit=500):
 
 
 def test_frogpilot_timing_cars_are_traverse_trailblazer_trax_and_bolt_cc():
-  # the Bolt ACC with pedal shares the Bolt No-ACC's steering; the Malibu ASCM harness takes StarPilot's GM timing (values.py)
+  # the Bolt ACC with pedal and the Bolt EUV share the Bolt No-ACC's steering; the Malibu ASCM harness takes StarPilot's GM
+  # timing (values.py)
   assert FROGPILOT_STEER_TIMING_CAR == {CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CHEVROLET_TRAX,
-                                        CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_MALIBU_ASCM,
-                                        CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_VOLT_2019, CAR.CHEVROLET_VOLT_CC}
+                                        CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_BOLT_ACC_PEDAL, CAR.CHEVROLET_BOLT_EUV,
+                                        CAR.CHEVROLET_MALIBU_ASCM, CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC,
+                                        CAR.CHEVROLET_VOLT_2019, CAR.CHEVROLET_VOLT_CC}
 
 
-def test_bolt_euv_with_acc_keeps_existing_timing():
-  # only the Bolt No-ACC had a log showing the slow ramp; the Bolt EUV with ACC is unchanged
+def test_bolt_euv_with_acc_takes_the_bolt_timing():
+  # the Bolt EUV with the factory ACC is the Bolt ACC with pedal's car (user request 2026-11-28); it was 25 Hz +5/-7
   p = CarControllerParams(NS(carFingerprint=CAR.CHEVROLET_BOLT_EUV))
-  assert (p.STEER_STEP, p.STEER_DELTA_UP, p.STEER_DELTA_DOWN) == (4, 5, 7)
+  assert (p.STEER_STEP, p.STEER_DELTA_UP, p.STEER_DELTA_DOWN) == (3, 10, 15)
 
 
 @pytest.mark.parametrize("candidate", sorted(FROGPILOT_STEER_TIMING_CAR))
@@ -90,11 +92,11 @@ def test_bolt_cc_controller_sends_at_33hz_with_frogpilot_steps(runtime, monkeypa
 
 def test_custom_delta_ceilings_follow_the_command_rate():
   bolt_cc = CarControllerParams(NS(carFingerprint=CAR.CHEVROLET_BOLT_CC))
-  bolt_euv = CarControllerParams(NS(carFingerprint=CAR.CHEVROLET_BOLT_EUV))
+  equinox = CarControllerParams(NS(carFingerprint=CAR.CHEVROLET_EQUINOX))  # a 25 Hz car (the Bolt EUV was, until 2026-11-28)
   assert (bolt_cc.STEER_STEP, bolt_cc.max_custom_steer_delta_up()) == (3, 12)
-  assert (bolt_euv.STEER_STEP, bolt_euv.max_custom_steer_delta_up()) == (4, 16)
+  assert (equinox.STEER_STEP, equinox.max_custom_steer_delta_up()) == (4, 16)
   # the validated defaults are below the ceilings
-  for p in (bolt_cc, bolt_euv):
+  for p in (bolt_cc, equinox):
     assert p.STEER_DELTA_UP <= p.max_custom_steer_delta_up() and p.STEER_DELTA_DOWN <= p.PANDA_MAX_RATE_DOWN
 
 

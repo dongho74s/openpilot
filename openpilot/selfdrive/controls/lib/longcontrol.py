@@ -10,6 +10,7 @@ from openpilot.selfdrive.controls.lib.cruise_coasting import (
   CruiseCoastingControl, MAX_PLAN_AGE, coasting_relief, no_coasting_lead,
 )
 from openpilot.selfdrive.controls.lib.longcontrol_bolt_acc_pedal import BoltAccPedalLongControl, is_bolt_acc_pedal_long
+from opendbc.car.gm.values import is_bolt_camera_long
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
@@ -20,7 +21,8 @@ STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
 STOPPING_ACCEL_MAX = -1
 
-# Bolt ACC with pedal, BoltPedalLongMode 1 (camera long through the ECM), as StarPilot drives this car in mode 2:
+# Bolt on camera long through the ECM (the Bolt ACC with pedal in BoltPedalLongMode 1, and the same car without a pedal:
+# opendbc gm values.is_bolt_camera_long), as StarPilot drives this car in mode 2:
 # - a stop ramps only to -0.25 m/s^2 (StarPilot's stopAccel here), not carrot's StoppingAccel (default -0.5); a
 #   weaker StoppingAccel still applies. In rlogs 00000028--02c4808d1b--18 and --21 the ramp to -0.5 raised the
 #   brake from about 25-33 to 40-51 at 0.16-0.38 m/s, just before the stop.
@@ -113,6 +115,9 @@ class LongControl:
     self.ignore_cruise_standstill = (getattr(CP, "carFingerprint", "") == "CHEVROLET_BOLT_ACC_PEDAL" and
                                      bool(getattr(CP, "enableGasInterceptorDEPRECATED", False)))
     self.bolt_acc_pedal_mode_1 = self.ignore_cruise_standstill and self.bolt_acc_pedal is None
+    # Mode 1's start and stop below also apply to the same car on camera long without a pedal (user request 2026-11-28):
+    # one ECM and one 0x2CB lookup. Only waiting on the ECM's standstill differs (no pedal to tap it away).
+    self.bolt_camera_long = self.bolt_acc_pedal is None and is_bolt_camera_long(CP)
 
   def _refresh_stopping_accel(self):
     try:
@@ -202,7 +207,7 @@ class LongControl:
 
       if soft_hold_active:
         output_accel = self.CP.stopAccel
-      stop_target = max(self.stopping_accel, BOLT_MODE_1_STOP_ACCEL) if self.bolt_acc_pedal_mode_1 else self.stopping_accel
+      stop_target = max(self.stopping_accel, BOLT_MODE_1_STOP_ACCEL) if self.bolt_camera_long else self.stopping_accel
       # Restore the original one-way ramp. Do not unwind stronger braking.
       if output_accel > stop_target:
         output_accel = min(output_accel, 0.0)
@@ -211,7 +216,7 @@ class LongControl:
 
     elif self.long_control_state == LongCtrlState.starting:
       output_accel = self.CP.startAccel
-      if self.bolt_acc_pedal_mode_1 and getattr(long_plan, 'hasLead', False) and \
+      if self.bolt_camera_long and getattr(long_plan, 'hasLead', False) and \
          a_target_ff <= BOLT_MODE_1_PLAN_START_MAX_ACCEL:
         output_accel = float(np.clip(a_target_ff, BOLT_MODE_1_PLAN_START_MIN_ACCEL, self.CP.startAccel))
       self.reset()

@@ -19,7 +19,7 @@ from opendbc.car.gm.manual_auto_hold import manual_hold_supported
 from opendbc.car.gm.bolt_acc_pedal import BoltAccPedalLongController, supports_bolt_acc_pedal_friction_experiment
 from opendbc.car.gm.gas_brake_hysteresis import GasBrakeHysteresis, has_gas_brake_step
 from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags, CC_ONLY_CAR, EV_CAR, AccState, CC_REGEN_PADDLE_CAR, CAR, \
-  CAMERA_ACC_CAR, SDGM_CAR
+  CAMERA_ACC_CAR, SDGM_CAR, is_bolt_camera_long
 from opendbc.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from opendbc.car.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
@@ -201,6 +201,9 @@ class CarController(CarControllerBase):
     # (see below). Mode 2 (PEDAL_LONG) runs StarPilot's whole longitudinal flow instead (self.bolt_acc_pedal).
     self.bolt_acc_pedal_sng = CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_PEDAL and CP.enableGasInterceptorDEPRECATED and \
                               not CP.flags & GMFlags.PEDAL_LONG.value
+    # Mode 1 and the same car on camera long without a pedal (values.is_bolt_camera_long): one ECM, so they share its
+    # stop hold, apply through a resume and the standby gap; only the pedal tap is mode 1's (user request 2026-11-28).
+    self.bolt_camera_long = is_bolt_camera_long(CP)
     # Bolt ACC with pedal, BoltPedalLongMode 2: StarPilot's whole longitudinal flow replaces the carrot one below (none of
     # carrot's SET/RES button features, 0x2CB, 0x2CD or 0x3D1), and stock ACC is cancelled toward the camera.
     self.bolt_acc_pedal = BoltAccPedalLongController(CP, self.packer_pt, self.packer_ch) \
@@ -492,9 +495,10 @@ class CarController(CarControllerBase):
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = 0
-        elif near_stop and stopping and (self.bolt_acc_pedal_sng or not CC.cruiseControl.resume):
-          # The Bolt ACC with pedal keeps holding while LongControl is stopping even if controlsd's resume is set (the
-          # plan's end speed crossing 0.1 m/s while shouldStop): it leaves the hold only when starting, with the tap.
+        elif near_stop and stopping and (self.bolt_camera_long or not CC.cruiseControl.resume):
+          # The Bolt on camera long keeps holding while LongControl is stopping even if controlsd's resume is set (the
+          # plan's end speed crossing 0.1 m/s while shouldStop): it leaves the hold only when starting (mode 1: with the
+          # tap; without a pedal: once the driver's RES or gas has taken the ECM out of its standstill).
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = int(min(-100 * self.CP.stopAccel, self.params.MAX_BRAKE))
           if self.smooth_stop:
@@ -608,10 +612,11 @@ class CarController(CarControllerBase):
             resume = actuators.longControlState != LongCtrlState.starting or CC.cruiseControl.resume
             at_full_stop = at_full_stop and not resume
 
-          # The Bolt ACC with pedal keeps apply=1 while enabled, as its stock camera does through a stop and a resume:
+          # The Bolt on camera long keeps apply=1 while enabled, as its stock camera does through a stop and a resume:
           # dropping it at the ECM's standstill turned the ECM's ACC Off, and the next apply=1 then left it Faulted
-          # (rlog 0000001d--96a597633a--10, 2026-11-19). It also lets the panda grant control on a button-less engage.
-          if CC.cruiseControl.resume and CS.pcm_acc_status == AccState.STANDSTILL and not self.bolt_acc_pedal_sng:
+          # (rlog 0000001d--96a597633a--10, 2026-11-19, the Bolt ACC with pedal; the Bolt EUV has the same ECM). StarPilot
+          # drops it only for its Volt SNG option. It also lets the panda grant control on a button-less engage.
+          if CC.cruiseControl.resume and CS.pcm_acc_status == AccState.STANDSTILL and not self.bolt_camera_long:
             acc_engaged = False
           else:
             acc_engaged = CC.enabled
@@ -665,9 +670,9 @@ class CarController(CarControllerBase):
           send_fcw = hud_alert == VisualAlert.fcw or test_fcw
           dashboard_speed_kph = get_acc_dashboard_speed_kph(self.CP, hud_v_cruise * CV.MS_TO_KPH)
           dashboard_gap_level = None
-          if self.traverse_sdgm_long or self.bolt_acc_pedal_sng:
-            # Request up to three display bars even in standby, without asserting ACC active. The Bolt ACC with pedal's
-            # stock camera sends its gap there too (0x370 00 02 22 cd 00 00 before engaging, rlog
+          if self.traverse_sdgm_long or self.bolt_camera_long:
+            # Request up to three display bars even in standby, without asserting ACC active. The Bolt's stock camera
+            # (the Bolt ACC with pedal's, the same camera as the Bolt EUV's) sends its gap there too (0x370 00 02 22 cd 00 00 before engaging, rlog
             # 00000028--02c4808d1b--21); with 0 the cluster kept an old gap while the comma showed the new one after a
             # gap press (user report 2026-11-21: cluster 2, comma 3).
             dashboard_gap_level = min(hud_control.leadDistanceBars, 3) if CS.out.canValid and CS.out.cruiseState.available else 0

@@ -283,12 +283,14 @@ def test_traverse_dashboard_gap_follows_acc_main(runtime, monkeypatch, main_on, 
   assert values["ACCCmdActive"] == int(engaged)
 
 
-@pytest.mark.parametrize("candidate,alpha,remove_sdgm,sends_dashboard", [
-  (CAR.CHEVROLET_BOLT_EUV, True, False, True),
-  (CAR.CHEVROLET_TRAVERSE, True, True, True),
-  (CAR.CHEVROLET_TRAVERSE, False, False, False),
+@pytest.mark.parametrize("candidate,alpha,remove_sdgm,sends_dashboard,standby_gap", [
+  # the Bolt EUV on camera long shows its gap in standby too since 2026-11-28, as the Bolt ACC with pedal in mode 1 (its
+  # stock camera does: test_bolt_acc_pedal.test_cluster_gap_shows_before_engaging)
+  (CAR.CHEVROLET_BOLT_EUV, True, False, True, 2),
+  (CAR.CHEVROLET_TRAVERSE, True, True, True, 0),
+  (CAR.CHEVROLET_TRAVERSE, False, False, False, 0),
 ])
-def test_other_gm_paths_keep_standby_gap_behavior(runtime, candidate, alpha, remove_sdgm, sends_dashboard):
+def test_other_gm_paths_keep_standby_gap_behavior(runtime, candidate, alpha, remove_sdgm, sends_dashboard, standby_gap):
   cp = build_cp(runtime, candidate, alpha)
   if remove_sdgm:
     cp.safetyConfigs[0].safetyParam &= ~GMSafetyFlags.HW_SDGM.value
@@ -305,7 +307,8 @@ def test_other_gm_paths_keep_standby_gap_behavior(runtime, candidate, alpha, rem
   if dashboards:
     parser = runtime.CANParser(DBC[candidate][Bus.pt], [("ASCMActiveCruiseControlStatus", 25)], 0)
     parser.update([(now, dashboards)])
-    assert parser.vl["ASCMActiveCruiseControlStatus"]["ACCGapLevel"] == 0
+    assert parser.vl["ASCMActiveCruiseControlStatus"]["ACCGapLevel"] == standby_gap
+    assert parser.vl["ASCMActiveCruiseControlStatus"]["ACCCmdActive"] == 0
 
 
 MALIBUS = (CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_ASCM)
