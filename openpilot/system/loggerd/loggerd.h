@@ -179,13 +179,27 @@ const LogCameraInfo stream_driver_camera_info{
   .encoder_infos = {stream_driver_encoder_info}
 };
 
-// Carrot Vision only requests the road track. Keep the generic three-camera
-// --stream mode intact for other WebRTC users, while avoiding two unused
-// hardware encoder sessions on C3/C3X/C4.
+// Carrot Vision 360 requests the road + wide road + driver tracks. Keep the
+// generic three-camera --stream mode intact for other WebRTC users. The
+// driver and wide road encoders stay idle (no frames encoded) until a 360
+// session sets CarrotVisionActive, so a parked car does not spend encoder
+// power on them unless someone is actually watching.
 const LogCameraInfo carrot_vision_road_camera_info{
   .thread_name = "carrot_vision_road_encoder",
   .stream_type = VISION_STREAM_ROAD,
   .encoder_infos = {stream_road_encoder_info},
+};
+
+const LogCameraInfo carrot_vision_wide_road_camera_info{
+  .thread_name = "carrot_vision_wide_road_encoder",
+  .stream_type = VISION_STREAM_WIDE_ROAD,
+  .encoder_infos = {stream_wide_road_encoder_info},
+};
+
+const LogCameraInfo carrot_vision_driver_camera_info{
+  .thread_name = "carrot_vision_driver_encoder",
+  .stream_type = VISION_STREAM_DRIVER,
+  .encoder_infos = {stream_driver_encoder_info},
 };
 
 const LogCameraInfo cameras_logged[] = {road_camera_info, wide_road_camera_info, driver_camera_info};
@@ -198,4 +212,4 @@ inline LogCameraInfo panorama_camera(LogCameraInfo camera) {
 const LogCameraInfo wayon_panorama_cameras_logged[] = {
   panorama_camera(stream_wide_road_camera_info), panorama_camera(stream_driver_camera_info)
 };
-const LogCameraInfo carrot_vision_cameras_logged[] = {carrot_vision_road_camera_info};
+const LogCameraInfo carrot_vision_cameras_logged[] = {carrot_vision_road_camera_info, carrot_vision_wide_road_camera_info, carrot_vision_driver_camera_info};

@@ -22,7 +22,7 @@ def driverview(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
 
 def normal_camera(started, params, CP):
-  return driverview(started, params, CP) and managed_processes["wayon_camerad"].proc is None
+  return (driverview(started, params, CP) or enable_parked_vision(started, params, CP)) and managed_processes["wayon_camerad"].proc is None
 
 def remote_camera(started, params, CP):
   return (wayon_camera_requested(started, params, CP) and not params.get_bool("IsDriverViewEnabled")
@@ -162,6 +162,13 @@ def enable_webrtc(started, params, CP: car.CarParams) -> bool:
   # The web encoder remains idle until a Carrot Vision session requests it.
   return params.get_bool("CarrotVisionEnabled")
 
+def enable_parked_vision(started, params, CP: car.CarParams) -> bool:
+  # Parked live view: lets the road-camera pipeline run while the car is
+  # parked (offroad) when the user explicitly enables it. Driving is
+  # unaffected — iscar still gates the onroad path. Default off so a parked
+  # car never runs the camera (and drains the battery) unless asked.
+  return params.get_bool("CarrotVisionParkedEnabled")
+
 def c3x_lite(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and params.get_bool("HardwareC3xLite")
 
@@ -182,7 +189,7 @@ procs = [
                 ["/usr/bin/env", "STREAM_BITRATE=1500000", "./encoderd", "--wayon-panorama"], wayon_panorama_requested, sigkill=True),
   # Prewarm the hardware encoder with the rest of the onroad stack. The
   # encoder process stays idle until CarrotVisionActive is set by a session.
-  NativeProcess("carrot_vision_encoderd", "openpilot/system/loggerd", ["./encoderd", "--carrot-vision-road"], and_(iscar, enable_webrtc)),
+  NativeProcess("carrot_vision_encoderd", "openpilot/system/loggerd", ["./encoderd", "--carrot-vision-road"], and_(or_(iscar, enable_parked_vision), enable_webrtc)),
   PythonProcess("logmessaged", "openpilot.system.logmessaged", always_run),
 
   # Separate ownership keeps the onroad wide-camera preference untouched.
@@ -240,7 +247,7 @@ procs = [
   # debug procs
   NativeProcess("bridge", "openpilot/cereal/messaging", ["./bridge"], notcar),
   PythonProcess("webrtcd", "openpilot.system.webrtc.webrtcd", notcar),
-  PythonProcess("carrot_webrtcd", "openpilot.system.webrtc.carrot_webrtcd", and_(iscar, enable_webrtc)),
+  PythonProcess("carrot_webrtcd", "openpilot.system.webrtc.carrot_webrtcd", and_(or_(iscar, enable_parked_vision), enable_webrtc)),
   PythonProcess("webjoystick", "openpilot.tools.bodyteleop.web", notcar, enabled=BODYTELEOP_AVAILABLE),
   PythonProcess("joystick", "openpilot.tools.joystick.joystick_control", and_(gamepad_joystick, iscar)),
   PythonProcess("rc2_joystick", "openpilot.tools.joystick.rc2_receiver", rc2_receiver),

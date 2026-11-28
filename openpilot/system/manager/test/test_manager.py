@@ -126,6 +126,35 @@ class TestManager:
     assert not managed_processes["carrot_webrtcd"].should_run(True, params, CP)
     assert not managed_processes["carrot_vision_encoderd"].should_run(True, params, CP)
 
+  def test_parked_vision_toggle_controls_camera_processes_offroad(self):
+    CP = car.CarParams.new_message()
+    CP.notCar = False
+    params = Params()
+    params.put_bool("CarrotVisionEnabled", True)
+    params.put_bool("CarrotVisionParkedEnabled", False)
+
+    # Parked + toggle off: camera pipeline stays off (battery saved).
+    assert not managed_processes["camerad"].should_run(False, params, CP)
+    assert not managed_processes["carrot_webrtcd"].should_run(False, params, CP)
+    assert not managed_processes["carrot_vision_encoderd"].should_run(False, params, CP)
+
+    # Parked + toggle on: camera pipeline runs for live view.
+    params.put_bool("CarrotVisionParkedEnabled", True)
+    assert managed_processes["camerad"].should_run(False, params, CP)
+    assert managed_processes["carrot_webrtcd"].should_run(False, params, CP)
+    assert managed_processes["carrot_vision_encoderd"].should_run(False, params, CP)
+
+    # Driving still works with the parked toggle off.
+    params.put_bool("CarrotVisionParkedEnabled", False)
+    assert managed_processes["carrot_webrtcd"].should_run(True, params, CP)
+    assert managed_processes["carrot_vision_encoderd"].should_run(True, params, CP)
+
+    # Parked live view still needs CarrotVisionEnabled.
+    params.put_bool("CarrotVisionEnabled", False)
+    params.put_bool("CarrotVisionParkedEnabled", True)
+    assert not managed_processes["carrot_webrtcd"].should_run(False, params, CP)
+    assert not managed_processes["carrot_vision_encoderd"].should_run(False, params, CP)
+
   def test_removed_cluster_hud_mode_is_inactive(self):
     CP = car.CarParams.new_message()
     CP.notCar = False
