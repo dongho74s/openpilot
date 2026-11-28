@@ -3,6 +3,11 @@
   "about": "Carrot Web > Tools > Update lists these notes for the commits a device has not pulled yet (server/services/update_notes.py). One entry per change, written for drivers: commits = hash prefixes (7+ chars), ko = Korean (shown in Korean), en = English (optional). Add an entry when you push; a commit that changes only this file is not listed.",
   "notes": [
     {
+      "commits": ["ca3a40ea"],
+      "ko": "당근웹 도구 › 업데이트: 받을 업데이트가 있으면 그 아래에 무엇이 바뀌는지 한국어 설명이 나옵니다. 설명이 없는 커밋은 '설명 없는 변경'을 누르면 커밋 제목으로 볼 수 있습니다.",
+      "en": "Carrot Web Tools > Update: a waiting update now lists what it changes in plain language; commits without a note are listed by their subject under a fold."
+    },
+    {
       "commits": ["6339565a", "d7964887", "93b71a0d", "1e05c961"],
       "ko": "볼트 EUV(순정 ACC, 페달 없음)에서 오픈파일럿이 가감속할 때: 시속 5km 미만에서는 완전히 서서 브레이크를 밟아야 켜지고, 정차 중 크루즈 고장이 나지 않도록 순정처럼 정지를 유지합니다. 오래 섰다가 출발할 때는 RES를 누르거나 가속페달을 살짝 밟으세요. 조향 반응도 페달 단 볼트처럼 빨라졌습니다. 페달 단 볼트는 정지 중 RES를 눌러도 설정속도가 오르지 않습니다.",
       "en": "Bolt EUV with the factory ACC and no pedal, on openpilot longitudinal: below 5 km/h it engages only fully stopped with the brake pressed, and it holds a stop like the stock ACC so the cruise does not fault. After a long stop, press RES or tap the accelerator to go. Steering responds as quickly as on the pedal Bolt. On the pedal Bolt (mode 1) a held RES at a stop no longer raises the set speed."
