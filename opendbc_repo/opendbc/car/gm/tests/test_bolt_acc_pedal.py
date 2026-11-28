@@ -979,15 +979,16 @@ def test_no_pedal_stop_ramps_only_to_a_quarter(runtime, monkeypatch, key):
   assert -0.25 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.25
 
 
-def ecm_standstill_carstate(runtime, cp, pedal, cruise_state=4):
-  """Real DBC, packer, parser and CarState: stopped, ACC main on, the ECM's CruiseState (4: standstill), no brake or gas."""
+def ecm_standstill_carstate(runtime, cp, pedal, cruise_state=4, wheel_kph=0.0):
+  """Real DBC, packer, parser and CarState: ACC main on, the ECM's CruiseState (4: standstill), the wheel speed (stopped
+  by default), no brake or gas."""
   cs = runtime.state.CarState(cp)
   parsers = cs.get_can_parsers(cp)
   cs.update(parsers)
   packer = runtime.CANPacker(DBC[cp.carFingerprint][Bus.pt])
   override = [
-    packer.make_can_msg("EBCMWheelSpdFront", 0, {"FLWheelSpd": 0, "FRWheelSpd": 0}),
-    packer.make_can_msg("EBCMWheelSpdRear", 0, {"RLWheelSpd": 0, "RRWheelSpd": 0}),
+    packer.make_can_msg("EBCMWheelSpdFront", 0, {"FLWheelSpd": wheel_kph, "FRWheelSpd": wheel_kph}),
+    packer.make_can_msg("EBCMWheelSpdRear", 0, {"RLWheelSpd": wheel_kph, "RRWheelSpd": wheel_kph}),
     packer.make_can_msg("ECMEngineStatus", 0, {"CruiseMainOn": 1, "BrakePressed": 0}),
     packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": cruise_state, "AcceleratorPedal2": 0}),
     packer.make_can_msg("ECMAcceleratorPos", 0, {"BrakePedalPos": 0}),
@@ -1156,3 +1157,32 @@ def test_mode_1_keeps_starting_into_the_ecm_standstill(runtime, monkeypatch):
   _, standstill = ecm_standstill_carstate(runtime, cp, pedal=True, cruise_state=4)
   steps = lc_from_can(runtime, monkeypatch, cp, [active, active, standstill], [(True, -0.5), (False, 0.21), (False, 0.21)])
   assert [s for s, _ in steps] == [LongCtrlState.stopping, LongCtrlState.starting, LongCtrlState.starting]
+
+
+@pytest.mark.parametrize("ecm_while_rolling", [1, 4])
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_holds_when_pid_stops_in_the_ecm_standstill(runtime, monkeypatch, key, ecm_while_rolling):
+  """Codex review R3-1 (2026-11-28): past vEgoStarting LongControl is in pid; when the car then stops without the plan's
+  stop and the ECM is in standstill, pid went on asking for gas with the hold off. Now stopping (the hold) once the wheels
+  have stopped; while they still turn pid goes on, even with the ECM's standstill already set."""
+  cp = bolt_cp(runtime, *key)
+  _, rolling = ecm_standstill_carstate(runtime, cp, pedal=False, cruise_state=1, wheel_kph=1.8)
+  _, slowing = ecm_standstill_carstate(runtime, cp, pedal=False, cruise_state=ecm_while_rolling, wheel_kph=1.8)
+  _, stopped = ecm_standstill_carstate(runtime, cp, pedal=False, cruise_state=4)
+  _, resumed = ecm_standstill_carstate(runtime, cp, pedal=False, cruise_state=1)
+  assert rolling.vEgo > cp.vEgoStarting and not slowing.standstill and stopped.standstill
+  go = (False, 0.21)
+  steps = lc_from_can(runtime, monkeypatch, cp, [rolling, rolling, slowing, stopped, stopped, resumed], [go] * 6)
+  states = [s for s, _ in steps]
+  assert states[1:3] == [LongCtrlState.pid, LongCtrlState.pid]
+  assert states[3:5] == [LongCtrlState.stopping, LongCtrlState.stopping] and steps[3][1] <= 0. and steps[4][1] <= 0.
+  assert states[5] == LongCtrlState.starting
+
+
+def test_mode_1_and_other_cars_keep_pid_into_the_ecm_standstill(runtime, monkeypatch):
+  for cp in (bolt_cp(runtime, BOLT, True, False), bolt_cp(runtime, CAR.CHEVROLET_BOLT_EUV, True, False)):
+    pedal = bool(cp.enableGasInterceptorDEPRECATED)
+    _, rolling = ecm_standstill_carstate(runtime, cp, pedal=pedal, cruise_state=1, wheel_kph=1.8)
+    _, stopped = ecm_standstill_carstate(runtime, cp, pedal=pedal, cruise_state=4)
+    steps = lc_from_can(runtime, monkeypatch, cp, [rolling, rolling, stopped], [(False, 0.21)] * 3)
+    assert steps[-1][0] == LongCtrlState.pid, cp.carFingerprint
