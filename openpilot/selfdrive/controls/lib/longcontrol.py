@@ -197,6 +197,13 @@ class LongControl:
                                                        CS.aEgo, self.stopping_accel, radarState)
     if active and soft_hold_active:
       self.long_control_state = LongCtrlState.stopping
+    if self.bolt_camera_long and not self.ignore_cruise_standstill and CS.cruiseState.standstill and \
+       self.long_control_state == LongCtrlState.starting:
+      # The Bolt on camera long without a pedal waits on the ECM's standstill (the driver's RES or gas ends it). When
+      # the plan let go of the stop before the ECM's standstill came in, starting had already released the FullStop /
+      # 0xD hold and asked for gas with the ECM in standstill: go back to stopping and hold (Codex review 2026-11-28
+      # R2-1). Still rolling, starting has moved on to pid; mode 1 taps the pedal instead (ignore_cruise_standstill).
+      self.long_control_state = LongCtrlState.stopping
 
     if self.long_control_state == LongCtrlState.off:
       self.reset()

@@ -9,7 +9,7 @@ from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL, Command
 from openpilot.selfdrive.car.toyota_pcm_speed import ToyotaPcmSetSpeedSync
 
 from opendbc.car import structs
-from opendbc.car.gm.values import CAR as GM_CAR, GMFlags
+from opendbc.car.gm.values import CAR as GM_CAR, GMFlags, is_bolt_camera_long
 # Stock-ACC cars whose cluster set speed is always shown. Not the Malibu CC: openpilot drives it with cruise buttons
 # while it reports pcmCruise, so its own target must stay on screen (Codex review 2026-11-20).
 STOCK_SET_SPEED_DISPLAY_CARS = (GM_CAR.CHEVROLET_TRAVERSE, GM_CAR.CHEVROLET_MALIBU_ASCM)
@@ -207,6 +207,12 @@ class VCruiseCarrot:
     self.button_long_time = 40
     self.button_big_step = False  # VW stage-2 (swipe) press -> immediate +10 (round) on release
     self._resume_button_active = False
+    # The Bolt on camera long keeps the ECM's standstill and leaves it on the driver's RES (opendbc gm CarState). A RES
+    # pressed in that standstill only resumes, even when the ECM goes active before it is released: the release then
+    # saw no standstill and raised the set speed (80 -> 81, or 90 with CruiseButtonMode 2; Codex review 2026-11-28 R2-2).
+    # Upstream's VCruiseHelper keeps the standstill of the press for the same reason (button_change_states).
+    self._standstill_res_guard = is_bolt_camera_long(CP)
+    self._standstill_res_active = False
 
     self.is_metric = True
 
@@ -662,6 +668,15 @@ class VCruiseCarrot:
         button_type = 0
       if any(b.type == ButtonType.accelCruise and not b.pressed for b in CS.buttonEvents):
         self._resume_button_active = False
+    standstill_res = False
+    if getattr(self, "_standstill_res_guard", False) and remote is None:
+      if any(b.type == ButtonType.accelCruise and b.pressed for b in CS.buttonEvents):
+        self._standstill_res_active = bool(CC.enabled and CS.cruiseState.standstill)
+      standstill_res = self._standstill_res_active and button_type == ButtonType.accelCruise
+      if standstill_res:
+        long_pressed = False  # a held RES there resumes too, never steps the speed
+      if any(b.type == ButtonType.accelCruise and not b.pressed for b in CS.buttonEvents):
+        self._standstill_res_active = False
     remote_enable = remote in ('accelCruise', 'decelCruise', 'accelCruiseLong', 'decelCruiseLong') and not CC.enabled
     # SET during soft hold retains its existing cancel behavior.
     if remote == 'decelCruise' and self._soft_hold_active > 0:
@@ -706,7 +721,7 @@ class VCruiseCarrot:
           self._soft_hold_active = 0
         elif self.carrot_cruise_active:
           self._v_cruise_kph_at_brake = 0
-        elif self._cruise_ready or not CC.enabled or CS.cruiseState.standstill:
+        elif self._cruise_ready or not CC.enabled or CS.cruiseState.standstill or standstill_res:
           if self._v_cruise_kph_at_brake > 0:
             v_cruise_kph = max(v_cruise_kph, self._v_cruise_kph_at_brake)
             self._v_cruise_kph_at_brake = 0

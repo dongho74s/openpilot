@@ -979,8 +979,8 @@ def test_no_pedal_stop_ramps_only_to_a_quarter(runtime, monkeypatch, key):
   assert -0.25 - cp.stoppingDecelRate * 0.01 - 1e-9 <= outs[-1] <= -0.25
 
 
-def ecm_standstill_carstate(runtime, cp, pedal):
-  """Real DBC, packer, parser and CarState: stopped, ACC main on, the ECM's CruiseState 4 (standstill), no brake or gas."""
+def ecm_standstill_carstate(runtime, cp, pedal, cruise_state=4):
+  """Real DBC, packer, parser and CarState: stopped, ACC main on, the ECM's CruiseState (4: standstill), no brake or gas."""
   cs = runtime.state.CarState(cp)
   parsers = cs.get_can_parsers(cp)
   cs.update(parsers)
@@ -989,7 +989,7 @@ def ecm_standstill_carstate(runtime, cp, pedal):
     packer.make_can_msg("EBCMWheelSpdFront", 0, {"FLWheelSpd": 0, "FRWheelSpd": 0}),
     packer.make_can_msg("EBCMWheelSpdRear", 0, {"RLWheelSpd": 0, "RRWheelSpd": 0}),
     packer.make_can_msg("ECMEngineStatus", 0, {"CruiseMainOn": 1, "BrakePressed": 0}),
-    packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": 4, "AcceleratorPedal2": 0}),
+    packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": cruise_state, "AcceleratorPedal2": 0}),
     packer.make_can_msg("ECMAcceleratorPos", 0, {"BrakePedalPos": 0}),
     packer.make_can_msg("ECMPRDNL2", 0, {"PRNDL2": 4}),
   ]
@@ -1012,7 +1012,6 @@ def test_no_pedal_waits_at_the_ecm_standstill_from_can_to_can(runtime, monkeypat
   from openpilot.cereal import car, log
   monkeypatch.delitem(sys.modules, "openpilot.common.realtime", raising=False)  # the runtime fixture's stub lacks what
   from openpilot.selfdrive.car.car_specific import CarSpecificEvents             # car_specific's imports need
-  from openpilot.selfdrive.car.tests.test_carrot_cruise_buttons import make_cruise_helper, make_button_tracker
   from openpilot.selfdrive.controls.lib import longcontrol
   monkeypatch.setattr(longcontrol, "Params", MemoryParams)
   cp = bolt_cp(runtime, *key)
@@ -1045,18 +1044,7 @@ def test_no_pedal_waits_at_the_ecm_standstill_from_can_to_can(runtime, monkeypat
   assert {(d[0] >> 4, friction_brake(d)) for a, d, b in sends if a == 0x315} == {(0xD, 40)}
   assert not [a for a, d, b in sends if a == 0x200]
 
-  helper, _, _ = make_cruise_helper(81, 0, False, True)
-  helper.CP = cp
-  tracker = make_button_tracker()
-  for name in ("button_cnt", "button_prev", "button_long_time", "button_big_step", "long_pressed",
-               "_cruise_speed_unit_basic", "_cruise_button_long_delay", "is_metric"):
-    setattr(helper, name, getattr(tracker, name))
-  helper._prepare_buttons = runtime.cruise.VCruiseCarrot._prepare_buttons.__get__(helper)
-  speed = 80
-  for pressed in (True, False):
-    out.buttonEvents = [car.CarState.ButtonEvent(type="accelCruise", pressed=pressed)]
-    speed = helper._update_cruise_buttons(out, cc, speed)
-  assert speed == 80
+  assert res_gesture_speeds(runtime, cp, cc, [out, out]) == [80, 80]
 
 
 @pytest.mark.parametrize("key", [(CAR.CHEVROLET_BOLT_EUV, True, False), (CAR.CHEVROLET_BOLT_EUV, False, False),
@@ -1065,3 +1053,106 @@ def test_pedal_long_and_stock_acc_bolts_still_clear_the_ecm_standstill(runtime, 
   cp = bolt_cp(runtime, *key)
   cs, out = ecm_standstill_carstate(runtime, cp, pedal=key[1])
   assert cs.pcm_acc_status == 4 and not out.cruiseState.standstill
+
+
+def res_gesture_speeds(runtime, cp, cc, states, mode=0):
+  """carrot's cruise buttons (VCruiseCarrot) for one RES press then release, each with its CarState; the set speeds."""
+  from openpilot.cereal import car
+  from openpilot.selfdrive.car.tests.test_carrot_cruise_buttons import make_cruise_helper, make_button_tracker
+  helper, _, _ = make_cruise_helper(81, mode, False, True)
+  helper.CP = cp
+  helper._standstill_res_guard = runtime.cruise.is_bolt_camera_long(cp)  # as __init__ does
+  helper._standstill_res_active = False
+  tracker = make_button_tracker()
+  for name in ("button_cnt", "button_prev", "button_long_time", "button_big_step", "long_pressed",
+               "_cruise_speed_unit_basic", "_cruise_button_long_delay", "is_metric"):
+    setattr(helper, name, getattr(tracker, name))
+  helper._prepare_buttons = runtime.cruise.VCruiseCarrot._prepare_buttons.__get__(helper)
+  speed, speeds = 80, []
+  for pressed, out in zip((True, False), states, strict=True):
+    out.buttonEvents = [car.CarState.ButtonEvent(type="accelCruise", pressed=pressed)]
+    speed = helper._update_cruise_buttons(out, cc, speed)
+    speeds.append(speed)
+  return speeds
+
+
+def test_standstill_res_guard_comes_from_car_params():
+  import inspect
+  from openpilot.selfdrive.car.cruise import VCruiseCarrot
+  assert "self._standstill_res_guard = is_bolt_camera_long(CP)" in inspect.getsource(VCruiseCarrot.__init__)
+
+
+@pytest.mark.parametrize("mode,raised", [(0, 81), (2, 90)])  # CruiseButtonMode (not BoltPedalLongMode)
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG + [(BOLT, True, False)], ids=lambda k: "/".join(map(str, k)))
+def test_res_pressed_in_the_ecm_standstill_only_resumes(runtime, key, mode, raised):
+  """Codex review R2-2 (2026-11-28): RES pressed in the ECM's standstill, the ECM goes active before it is released: the
+  release raised the set speed (80 -> 81, or 90 with CruiseButtonMode 2). Now the gesture only resumes; the next RES,
+  pressed with the ECM active, still raises it."""
+  cp = bolt_cp(runtime, *key)
+  _, standstill = ecm_standstill_carstate(runtime, cp, pedal=key[1], cruise_state=4)
+  _, active = ecm_standstill_carstate(runtime, cp, pedal=key[1], cruise_state=1)
+  assert standstill.cruiseState.standstill and not active.cruiseState.standstill
+  cc = structs.CarControl(enabled=True, longActive=True)
+  assert res_gesture_speeds(runtime, cp, cc, [standstill, active], mode) == [80, 80]
+  assert res_gesture_speeds(runtime, cp, cc, [active, active], mode) == [80, raised]
+
+
+@pytest.mark.parametrize("key", [(CAR.CHEVROLET_BOLT_EUV, True, False), (CAR.CHEVROLET_BOLT_EUV, False, False)],
+                         ids=lambda k: "/".join(map(str, k)))
+def test_other_bolts_keep_carrots_res(runtime, key):
+  cp = bolt_cp(runtime, *key)
+  assert not runtime.cruise.is_bolt_camera_long(cp)
+  _, active = ecm_standstill_carstate(runtime, cp, pedal=key[1], cruise_state=1)
+  assert res_gesture_speeds(runtime, cp, structs.CarControl(enabled=True, longActive=True), [active, active]) == [80, 81]
+
+
+def lc_from_can(runtime, monkeypatch, cp, states, plans):
+  """LongControl from the CAN parser on (a serialized CarParams, as controlsd gets it): its state after each step."""
+  from openpilot.cereal import car, log
+  from openpilot.selfdrive.controls.lib import longcontrol
+  monkeypatch.setattr(longcontrol, "Params", MemoryParams)
+  loc = longcontrol.LongControl(car.CarParams.from_bytes(cp.to_bytes()).__enter__())
+  limits = runtime.interface.CarInterface.get_pid_accel_limits(cp, 0.0, 0.0)
+  result = []
+  for out, (stop, a_target) in zip(states, plans, strict=True):
+    plan = log.LongitudinalPlan.new_message(aTarget=a_target, vTargetNow=0.0, shouldStop=stop, hasLead=True)
+    accel = float(loc.update(True, out, plan, limits, 0.0, log.RadarState.new_message())[0])
+    result.append((loc.long_control_state, accel))
+  return result
+
+
+@pytest.mark.parametrize("key", NO_PEDAL_CAMERA_LONG, ids=lambda k: "/".join(map(str, k)))
+def test_no_pedal_holds_again_when_the_ecm_standstill_comes_after_starting(runtime, monkeypatch, key):
+  """Codex review R2-1 (2026-11-28): the plan let go of the stop while the ECM was still active (1), LongControl started
+  (hold released, gas asked), then the ECM's standstill (4) came in and starting went on. Now it goes back to stopping and
+  the hold until the ECM leaves its standstill; the same in the other order."""
+  cp = bolt_cp(runtime, *key)
+  _, active = ecm_standstill_carstate(runtime, cp, pedal=False, cruise_state=1)
+  cs, standstill = ecm_standstill_carstate(runtime, cp, pedal=False, cruise_state=4)
+  steps = lc_from_can(runtime, monkeypatch, cp, [active, active, standstill, standstill, active],
+                      [(True, -0.5), (False, 0.21), (False, 0.21), (False, 0.21), (False, 0.21)])
+  assert [s for s, _ in steps] == [LongCtrlState.stopping, LongCtrlState.starting, LongCtrlState.stopping,
+                                   LongCtrlState.stopping, LongCtrlState.starting]
+  assert steps[2][1] <= 0. and steps[3][1] <= 0. and steps[4][1] == pytest.approx(0.21)
+  # what the controller sends back in the hold
+  cc = structs.CarControl(enabled=True, longActive=True, latActive=True)
+  cc.actuators.accel, cc.actuators.longControlState = steps[3][1], steps[3][0]
+  cc.cruiseControl.resume = True
+  cc.orientationNED = [0.0, 0.0, 0.0]
+  monkeypatch.setattr(runtime.controller, "Params", memory_params())
+  controller = runtime.controller.CarController(DBC[cp.carFingerprint], cp)
+  cs.out = standstill
+  sends = []
+  for tick in range(12):
+    sends += controller.update(cc.as_reader(), cs, 2_000_000_000 + tick * 10_000_000)[1]
+  assert {(d[0] & 1, (d[1] >> 5) & 1) for a, d, b in sends if a == 0x2CB} == {(1, 1)}
+  assert {(d[0] >> 4, friction_brake(d)) for a, d, b in sends if a == 0x315} == {(0xD, 40)}
+
+
+def test_mode_1_keeps_starting_into_the_ecm_standstill(runtime, monkeypatch):
+  """Mode 1 taps the pedal from there instead (ignore_cruise_standstill)."""
+  cp = bolt_cp(runtime, BOLT, True, False)
+  _, active = ecm_standstill_carstate(runtime, cp, pedal=True, cruise_state=1)
+  _, standstill = ecm_standstill_carstate(runtime, cp, pedal=True, cruise_state=4)
+  steps = lc_from_can(runtime, monkeypatch, cp, [active, active, standstill], [(True, -0.5), (False, 0.21), (False, 0.21)])
+  assert [s for s, _ in steps] == [LongCtrlState.stopping, LongCtrlState.starting, LongCtrlState.starting]
